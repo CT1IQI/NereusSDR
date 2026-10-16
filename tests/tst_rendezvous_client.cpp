@@ -91,6 +91,10 @@
 //               2 s to refuse there), and the parent watch case is skipped
 //               (POSIX only). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-15: The loopback certificate's name is built as its own
+//               X509_NAME, as OpenSSL 4's X509_get_subject_name() is
+//               const. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -1310,6 +1314,7 @@ QSslCertificate writeLoopbackCertificate(const QString& directory,
     using KeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
     using CertPtr = std::unique_ptr<X509, decltype(&X509_free)>;
     using BioPtr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+    using NamePtr = std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)>;
     KeyPtr key(EVP_RSA_gen(2048), &EVP_PKEY_free);
     CertPtr cert(X509_new(), &X509_free);
     if (!key || !cert || X509_set_version(cert.get(), 2) != 1
@@ -1325,11 +1330,15 @@ QSslCertificate writeLoopbackCertificate(const QString& directory,
     // loopback CN masks a deliberately mismatched DNS SAN.
     const char* commonName = QByteArrayView(altName).startsWith("DNS:")
         ? altName + 4 : "127.0.0.1";
-    X509_NAME* name = X509_get_subject_name(cert.get());
-    if (X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                   reinterpret_cast<const unsigned char*>(commonName), -1, -1, 0)
+    // Built as its own name: OpenSSL 4's X509_get_subject_name() is const.
+    NamePtr name(X509_NAME_new(), &X509_NAME_free);
+    if (!name
+        || X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC,
+                                      reinterpret_cast<const unsigned char*>(commonName), -1,
+                                      -1, 0)
             != 1
-        || X509_set_issuer_name(cert.get(), name) != 1) {
+        || X509_set_subject_name(cert.get(), name.get()) != 1
+        || X509_set_issuer_name(cert.get(), name.get()) != 1) {
         return QSslCertificate();
     }
     X509V3_CTX context;

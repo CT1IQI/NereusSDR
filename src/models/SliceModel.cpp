@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-14 - Capture per-band persistence values before deferred saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Guard mode/filter notification continuations against deletion
 //              and superseding commits, including a return to the same tuple.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -2832,60 +2834,70 @@ int SliceModel::savedSampleRateHz(Band band) const
     return ok && rate > 0 ? rate : 0;
 }
 
-void SliceModel::saveToSettings(Band band)
+QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
 {
-    saveNnrSettings();
-    auto& s = AppSettings::instance();
+    QList<QPair<QString, QVariant>> values;
     const QString bp = bandPrefix(m_sliceIndex, band);
-    const QString sp = slicePrefix(m_sliceIndex);
 
     // ── Per-band DSP state ────────────────────────────────────────────────────
-    s.setValue(bp + QStringLiteral("Frequency"),    m_frequency);
-    s.setValue(bp + QStringLiteral("AgcThreshold"), m_agcThreshold);
-    s.setValue(bp + QStringLiteral("AgcHang"),      m_agcHang);
-    s.setValue(bp + QStringLiteral("AgcSlope"),     m_agcSlope);
-    s.setValue(bp + QStringLiteral("AgcAttack"),    m_agcAttack);
-    s.setValue(bp + QStringLiteral("AgcDecay"),     m_agcDecay);
-    s.setValue(bp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False"));
-    s.setValue(bp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset);
-    s.setValue(bp + QStringLiteral("AgcFixedGain"), m_agcFixedGain);
-    s.setValue(bp + QStringLiteral("AgcHangThreshold"), m_agcHangThreshold);
-    s.setValue(bp + QStringLiteral("AgcMaxGain"),   m_agcMaxGain);
-    s.setValue(bp + QStringLiteral("FilterLow"),    m_filterLow);
-    s.setValue(bp + QStringLiteral("FilterHigh"),   m_filterHigh);
+    values.append({bp + QStringLiteral("Frequency"),    m_frequency});
+    values.append({bp + QStringLiteral("AgcThreshold"), m_agcThreshold});
+    values.append({bp + QStringLiteral("AgcHang"),      m_agcHang});
+    values.append({bp + QStringLiteral("AgcSlope"),     m_agcSlope});
+    values.append({bp + QStringLiteral("AgcAttack"),    m_agcAttack});
+    values.append({bp + QStringLiteral("AgcDecay"),     m_agcDecay});
+    values.append({bp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False")});
+    values.append({bp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset});
+    values.append({bp + QStringLiteral("AgcFixedGain"), m_agcFixedGain});
+    values.append({bp + QStringLiteral("AgcHangThreshold"), m_agcHangThreshold});
+    values.append({bp + QStringLiteral("AgcMaxGain"),   m_agcMaxGain});
+    values.append({bp + QStringLiteral("FilterLow"),    m_filterLow});
+    values.append({bp + QStringLiteral("FilterHigh"),   m_filterHigh});
     // Phase 3J-1 closeout Item 4 (2026-05-12): ALSO persist filter under
     // (band, currentMode) so a future mode change can restore it.  Legacy
     // (band)/FilterLow stays for backward compat with code that reads it
     // directly without going through restoreFromSettings.
     {
         const QString bmp = bandModePrefix(m_sliceIndex, band, m_dspMode);
-        s.setValue(bmp + QStringLiteral("FilterLow"),  m_filterLow);
-        s.setValue(bmp + QStringLiteral("FilterHigh"), m_filterHigh);
+        values.append({bmp + QStringLiteral("FilterLow"),  m_filterLow});
+        values.append({bmp + QStringLiteral("FilterHigh"), m_filterHigh});
     }
-    s.setValue(bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode));
-    s.setValue(bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode));
-    s.setValue(bp + QStringLiteral("StepHz"),       m_stepHz);
+    values.append({bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode)});
+    values.append({bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode)});
+    values.append({bp + QStringLiteral("StepHz"),       m_stepHz});
 
     // Noise-blanker mode (per-band). Tri-state Off/NB/NB2 mirrors Thetis
     // chkNB state per-receiver. NB TUNING (threshold / tau / lag / lead) is
     // NOT per-band in Thetis and lives globally inside NbFamily — see
     // SliceModel.h for the 2026-04-22 removal note.
-    s.setValue(bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode));
+    values.append({bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode)});
 
     // Phase 3F: per-slice DDC sample rate, persisted per-band so each band
     // can independently remember its preferred rate (e.g. 192 kHz on 40m,
     // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
-    s.setValue(bp + QStringLiteral("SampleRate"), m_sampleRateHz);
+    values.append({bp + QStringLiteral("SampleRate"), m_sampleRateHz});
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
     // slots (T3) + direction-finding fields (T11) join this block when they
     // ship. NereusSDR-original schema (Thetis persists diversity globally
     // in DSP.console.dsp / Diversity.cs; we scope per-band per-slice so
     // operators can keep distinct DF setups across bands).
-    s.setValue(bp + QStringLiteral("DiversityPhaseDeg"), m_diversityPhaseDeg);
-    s.setValue(bp + QStringLiteral("DiversityGainDb"), m_diversityGainDb);
-    s.setValue(bp + QStringLiteral("DiversityFineNullEnabled"),
-               boolStr(m_diversityFineNullEnabled));
+    values.append({bp + QStringLiteral("DiversityPhaseDeg"), m_diversityPhaseDeg});
+    values.append({bp + QStringLiteral("DiversityGainDb"), m_diversityGainDb});
+    values.append({bp + QStringLiteral("DiversityFineNullEnabled"),
+               boolStr(m_diversityFineNullEnabled)});
+
+    return values;
+}
+
+void SliceModel::saveToSettings(Band band)
+{
+    saveNnrSettings();
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    for (const QPair<QString, QVariant>& value : captureBandSettings(band)) {
+        s.setValue(value.first, value.second);
+    }
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
     // NR active slot + tuning — session-level only, no per-band suffix.

@@ -242,6 +242,12 @@
 //                does. AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd (KG4VCF): approved 6 px workspace-look TX
 //               panel row spacing. AI-assisted via OpenAI Codex.
+//   2026-10-13 - Present the window-owned DisplayDuplex preference beside PS-A.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -946,8 +952,6 @@ void TxApplet::buildUI()
         // Right-click → emit txProfileMenuRequested (mirrors Thetis
         // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
-        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
-        installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);
@@ -1077,6 +1081,16 @@ void TxApplet::buildUI()
         // applet construction (timing race observed at bench).  setBoardCapabilities
         // (TxApplet.cpp:1985) hides for caps.hasPureSignal=false (Atlas/HL2).
         row->addWidget(m_psaBtn, 1);
+
+        m_dupBtn = new QPushButton(QStringLiteral("DUP"), this);
+        m_dupBtn->setObjectName(QStringLiteral("TxAppletDupBtn"));
+        m_dupBtn->setCheckable(true);
+        m_dupBtn->setFixedHeight(22);
+        m_dupBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_dupBtn->setStyleSheet(Style::buttonBaseStyle() + Style::greenCheckedStyle());
+        m_dupBtn->setAccessibleName(QStringLiteral("Display duplex"));
+        connect(m_dupBtn, &QPushButton::clicked, this, &TxApplet::displayDuplexRequested);
+        row->addWidget(m_dupBtn, 1);
 
         vbox->addLayout(row);
     }
@@ -2865,6 +2879,14 @@ void TxApplet::setMicProfileManager(MicProfileManager* mgr)
 // authoritative state (covers the BandPlanGuard rejection clean-up
 // from Phase I.5).
 // ---------------------------------------------------------------------------
+void TxApplet::setDisplayDuplexState(bool checked, bool available, const QString& tooltip)
+{
+    const QSignalBlocker block(m_dupBtn);
+    m_dupBtn->setChecked(checked);
+    m_dupBtn->setEnabled(available);
+    m_dupBtn->setToolTip(tooltip);
+}
+
 void TxApplet::setTwoToneController(TwoToneController* controller)
 {
     if (m_twoToneCtrl == controller) { return; }
@@ -3351,6 +3373,7 @@ void TxApplet::rebuildProfileCombo()
     const QStringList names = m_micProfileMgr->profileNames();
     const QString active = m_micProfileMgr->activeProfileName();
 
+    resetItemsBeforeRowChange(m_profileCombo);
     m_profileCombo->clear();
     m_profileCombo->addItems(names);
 

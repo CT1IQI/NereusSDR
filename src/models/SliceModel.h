@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-14 - Capture per-band persistence values before deferred saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Track mode/filter commits for surviving notification continuations.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30: radeReason, why a RADE slice has no working decoder, in
@@ -243,6 +245,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QPair>
 #include <QTimer>
 #include <QString>
 #include <QVariant>
@@ -1404,6 +1407,9 @@ public:
     // slice adopt its stream's rate.
     int savedSampleRateHz(Band band) const;
 
+    // Immutable per-band values, in save order; excludes session/NNR state.
+    // RadioModel retains these until its existing coalesced save runs.
+    QList<QPair<QString, QVariant>> captureBandSettings(Band band) const;
     void saveToSettings(NereusSDR::Band band);
     void restoreFromSettings(NereusSDR::Band band);
 

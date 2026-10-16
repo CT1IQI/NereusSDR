@@ -70,6 +70,9 @@
 //               (status lights by meaning, D21); "not throttled" and the
 //               LEDs take ok and off through the colour table. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -725,8 +728,6 @@ void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
     auto* i2cLayout = new QVBoxLayout(i2cGroup);
 
     m_i2cLog = new QListWidget(i2cGroup);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Appended and trimmed with live I2C traffic.
-    installQtCocoaAccessibleTableCacheRepair(m_i2cLog);
     QFont mono;
     mono.setFamily(QStringLiteral("Monospace"));
     mono.setStyleHint(QFont::TypeWriter);
@@ -960,6 +961,7 @@ void Hl2IoBoardTab::highlightStep(int step)
 
 void Hl2IoBoardTab::appendI2cLogEntry(const QString& text)
 {
+    resetItemsBeforeRowChange(m_i2cLog);
     m_i2cLog->addItem(text);
     // Trim to max lines
     while (m_i2cLog->count() > kMaxLogLines) {

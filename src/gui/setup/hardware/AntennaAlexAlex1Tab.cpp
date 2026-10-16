@@ -59,6 +59,9 @@
 //                columns that fit side by side without a scroll bar are
 //                side by side whatever was shown before. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Reset the visible receive filter bank and LPF frequency edges.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 //
 //=================================================================
@@ -132,6 +135,7 @@
 #include <QMessageBox>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -340,6 +344,13 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
     // D25: the three columns stack in reading order when they do not fit,
     // and keep their own height: what is left of the tab goes below them.
     auto* contentVBox = new QVBoxLayout(content);
+    m_resetFilterDefaults = new QPushButton(tr("Reset filter defaults"), content);
+    m_resetFilterDefaults->setObjectName(QStringLiteral("resetFilterDefaults"));
+    m_resetFilterDefaults->setAutoDefault(false);
+    m_resetFilterDefaults->setToolTip(tr("Restore the frequency edges shown on this tab. Bypass and routing settings are kept."));
+    contentVBox->addWidget(m_resetFilterDefaults, 0, Qt::AlignLeft);
+    connect(m_resetFilterDefaults, &QPushButton::clicked,
+            this, &AntennaAlexAlex1Tab::resetFilterDefaults);
     contentVBox->setContentsMargins(0, 0, 0, 0);
     auto* colLayout = new SetupFit::FitRow;
     colLayout->setObjectName(QStringLiteral("alex1ColumnRow"));
@@ -923,11 +934,70 @@ void AntennaAlexAlex1Tab::updateBoardCapabilities(bool bpfPanel)
     }
 }
 
+void AntennaAlexAlex1Tab::updateResetFilterGate()
+{
+    if (!m_resetFilterDefaults || m_hpfRows.empty() || m_lpfRows.empty()) {
+        return;
+    }
+    // A disabled Setup parent is temporary; only the row gates inside
+    // this tab determine the button's own availability.
+    const QDoubleSpinBox* blocked = !m_hpfRows.front().start->isEnabledTo(this) ? m_hpfRows.front().start
+        : (!m_lpfRows.front().start->isEnabledTo(this) ? m_lpfRows.front().start : nullptr);
+    HardwareTransmitGate::apply(m_resetFilterDefaults, !blocked,
+                               blocked ? blocked->toolTip() : QString());
+}
+
+void AntennaAlexAlex1Tab::resetFilterDefaults()
+{
+    if (!m_resetFilterDefaults->isEnabled()) {
+        return;
+    }
+    const bool bpf = isSaturnBpf1Visible();
+    const auto& bands = bpf ? bpf1Bands() : hpfBands();
+    auto& rows = bpf ? m_bpf1Rows : m_hpfRows;
+    // Stage the complete table before notifying the existing edit paths.
+    // Otherwise a temporary edge can clamp a neighbour away from its default.
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const QSignalBlocker startBlock(rows[i].start);
+        const QSignalBlocker endBlock(rows[i].end);
+        rows[i].start->setValue(bands[i].startMhz);
+        rows[i].end->setValue(bands[i].endMhz);
+    }
+    for (std::size_t i = 0; i < m_lpfRows.size(); ++i) {
+        const QSignalBlocker startBlock(m_lpfRows[i].start);
+        const QSignalBlocker endBlock(m_lpfRows[i].end);
+        m_lpfRows[i].start->setValue(lpfBands()[i].startMhz);
+        m_lpfRows[i].end->setValue(lpfBands()[i].endMhz);
+    }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const QString prefix = QStringLiteral("alex/%1/%2/")
+            .arg(bpf ? QStringLiteral("bpf1") : QStringLiteral("hpf"), QString::fromLatin1(bands[i].slug));
+        if (bpf) {
+            onBpf1SpinChanged(rows[i].start->value(), prefix + QStringLiteral("start"));
+            onBpf1SpinChanged(rows[i].end->value(), prefix + QStringLiteral("end"));
+        } else {
+            onHpfSpinChanged(rows[i].start->value(), prefix + QStringLiteral("start"));
+            onHpfSpinChanged(rows[i].end->value(), prefix + QStringLiteral("end"));
+        }
+    }
+    // Ascending rows, start then end, also leave the Core's per-write
+    // neighbour rule with the exact final table over the ordered settings channel.
+    for (std::size_t i = 0; i < m_lpfRows.size(); ++i) {
+        const QString prefix = QStringLiteral("alex/lpf/%1/").arg(QString::fromLatin1(lpfBands()[i].slug));
+        onLpfSpinChanged(m_lpfRows[i].start->value(), prefix + QStringLiteral("start"));
+        adjustLpfNeighbours(i, true);
+        onLpfSpinChanged(m_lpfRows[i].end->value(), prefix + QStringLiteral("end"));
+        adjustLpfNeighbours(i, false);
+    }
+    updateActiveLeds();
+}
+
 // ── restoreSettings ───────────────────────────────────────────────────────────
 
 void AntennaAlexAlex1Tab::restoreSettings(const QString& macAddress)
 {
     m_currentMac = macAddress;
+    updateResetFilterGate();
     if (macAddress.isEmpty()) { return; }
 
     auto& settings = AppSettings::instance();
@@ -1201,6 +1271,7 @@ void AntennaAlexAlex1Tab::setHpfRowsAvailable(bool available, const QString& rea
             }
         }
     }
+    updateResetFilterGate();
 }
 
 void AntennaAlexAlex1Tab::setLpfRowsAvailable(bool available, const QString& reason)
@@ -1208,6 +1279,7 @@ void AntennaAlexAlex1Tab::setLpfRowsAvailable(bool available, const QString& rea
     m_lpfRowsAvailable = available;
     m_lpfRowsReason = reason;
     applyLpfGates();
+    updateResetFilterGate();
 }
 
 QString AntennaAlexAlex1Tab::lpfBypassNotOnThisRadioReason()
