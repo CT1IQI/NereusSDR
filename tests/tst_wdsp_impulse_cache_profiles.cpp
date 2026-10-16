@@ -21,11 +21,13 @@
 
 #include <QtTest>
 #include <QDir>
+#include <QFile>
 #include <QTemporaryDir>
 
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/DspCacheLocation.h"
 #include "core/WdspEngine.h"
 
 using namespace NereusSDR;
@@ -119,6 +121,40 @@ private slots:
         runProfile(folder.path(), QString(), true, true);
         if (QTest::currentTestFailed()) { return; }
         QCOMPARE(cacheFiles(folder.path()), QStringList{QStringLiteral("impulse_cache.bin")});
+    }
+
+    // A rebuild of the shared FFT plans clears every profile's cache file,
+    // since they were all built on those plans, and nothing else in the
+    // folder. (The rebuild itself takes minutes of planning, so this checks
+    // the list the engine clears.)
+    void aPlansRebuildClearsEveryProfilesCache()
+    {
+        QTemporaryDir folder;
+        QVERIFY(folder.isValid());
+        const QStringList names{
+            QStringLiteral("impulse_cache.bin"),
+            QStringLiteral("impulse_cache-alpha.bin"),
+            QStringLiteral("impulse_cache-radxa_5c_r3.bin"),
+            QStringLiteral("impulse_cache-.bin"),
+            QStringLiteral("impulse_cache-a b.bin"),
+            QStringLiteral("impulse_cache.bin.tmp"),
+            QStringLiteral("impulse_cache_notes.bin"),
+            QStringLiteral("wdspWisdom00"),
+        };
+        for (const QString& name : names) {
+            QFile file(folder.filePath(name));
+            QVERIFY2(file.open(QIODevice::WriteOnly), qPrintable(name));
+        }
+
+        QStringList cleared = DspCacheLocation::impulseCacheFileNames(folder.path());
+        cleared.sort();
+        QCOMPARE(cleared, (QStringList{QStringLiteral("impulse_cache-alpha.bin"),
+                                       QStringLiteral("impulse_cache-radxa_5c_r3.bin"),
+                                       QStringLiteral("impulse_cache.bin")}));
+        QCOMPARE(DspCacheLocation::impulseCacheFileName(QStringLiteral("radxa_5c_r3")),
+                 QStringLiteral("impulse_cache-radxa_5c_r3.bin"));
+        QCOMPARE(DspCacheLocation::impulseCacheFileName(QStringLiteral("../x")),
+                 QStringLiteral("impulse_cache.bin"));
     }
 };
 
