@@ -10,6 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - m_impulseCacheFile: each profile keeps an impulse cache
+//                 file of its own in the shared DSP folder. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01 - #299: deferred real initialization test seam for startup
 //                 wiring coverage. J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  RADE reason: test seam setRadeCreateFailsForTest and setRadeStartFailsForTest.
@@ -852,6 +855,9 @@ private:
     bool m_initializationInProgress{false};
     std::array<QString, 2> m_nnrModelPaths{};
     QString m_configDir;
+    // This profile's impulse cache file in m_configDir, named with it
+    // (DspCacheLocation::impulseCacheFileName).
+    QString m_impulseCacheFile;
 
     // True when wisdom was regenerated this session.
     // Used by finishInitialization() to skip loading a now-stale impulse
