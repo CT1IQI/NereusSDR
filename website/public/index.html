@@ -299,24 +299,39 @@
 
     <section class="section desktop" aria-labelledby="desktop-title">
       <div class="wrap"><header class="section__head" data-reveal><p class="eyebrow">The desktop console</p><h2 id="desktop-title">A familiar console. <strong>A new station behind it.</strong></h2><p>Run locally or connect to your Core. Independently tune each receiver, arrange pans across your screens, and build a workspace from applets, containers, Canvas and meters on macOS, Windows and Linux.</p></header></div>
-      <!-- The simulated radio, framed in the program's own chrome: TitleBar, the
-           SpectrumWidget (overlay panel, spectrum, dBm strip, frequency strip,
-           waterfall, VFO flag) and the bottom banner, rebuilt from the source values. -->
+      <!-- The simulated radio in the program's default workspace look, framed in its
+           own chrome: TitleBar, the pan (SpectrumWidget, SpectrumOverlayPanel,
+           SpectrumStatusOverlay, VfoWidget, the zoom bar) and the workspace status
+           bar, rebuilt from the paint and style values in the source. -->
       <figure class="app" aria-label="Simulated NereusSDR window">
+        <!-- TitleBar.cpp: ConnectionSegment, profile badge (ProfileRailDock),
+             app name, UTC clock, MasterOutputWidget (PC), RadioSpeakerWidget
+             (RADIO, no radio audio yet) and the lightbulb. -->
         <div class="app-title" aria-hidden="true">
           <div class="conn">
             <i class="conn__dot"></i>
-            <span class="conn__rate">▲ 0.2 Mbps</span>
-            <span class="conn__rtt">2 ms</span>
-            <span class="conn__rate">▼ 9.6 Mbps</span>
+            <span>▲ 0.2 Mbps</span>
+            <span>2 ms</span>
+            <span>▼ 9.6 Mbps</span>
             <span class="conn__pip">●</span>
           </div>
           <span class="app-title__fill"></span>
-          <span class="app-title__name">NereusSDR</span>
+          <span class="app-title__name"><span class="profile">D</span>NereusSDR</span>
           <span class="app-title__fill"></span>
           <span class="app-title__utc" data-utc>00:00:00 UTC</span>
-          <span class="master"><span class="master__spk">🔊</span><span class="master__slider"><i></i></span><span class="master__db">100</span></span>
-          <span class="app-title__bulb"><svg viewBox="0 0 24 24"><path d="M12 3.2a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V17h5.2v-1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3.2z" fill="#ffd23c"/><rect x="9.4" y="18" width="5.2" height="1.6" rx=".8" fill="#c8d8e8"/><rect x="10" y="20.3" width="4" height="1.5" rx=".75" fill="#c8d8e8"/></svg></span>
+          <span class="vol vol--pc">
+            <span class="vol__btn"><img src="/assets/img/icons/pc-on.svg" alt="" width="18" height="18"></span>
+            <span class="vol__word">PC</span>
+            <span class="vol__slider"><i></i></span>
+            <span class="vol__chip">100</span>
+          </span>
+          <span class="vol vol--radio">
+            <span class="vol__btn"><img src="/assets/img/icons/radio-none.svg" alt="" width="18" height="18"></span>
+            <span class="vol__word">RADIO</span>
+            <span class="vol__slider"><i></i></span>
+            <span class="vol__chip">--</span>
+          </span>
+          <span class="app-title__bulb"><img src="/assets/img/icons/bulb.svg" alt="" width="22" height="22"></span>
         </div>
 
         <div class="pan" data-pan>
@@ -327,7 +342,9 @@
           <div class="pan__freq" data-ruler aria-hidden="true"></div>
           <div class="pan__waterfall">
             <canvas data-waterfall aria-hidden="true"></canvas>
+            <canvas class="pan__time" data-wf-scale aria-hidden="true"></canvas>
           </div>
+          <span class="pan__live" aria-hidden="true">LIVE</span>
 
           <div class="pan__pass pan__pass--spec" data-pass-spec aria-hidden="true"></div>
           <div class="pan__pass pan__pass--wf" data-pass-wf aria-hidden="true"></div>
@@ -335,6 +352,8 @@
           <div class="pan__tri" data-vfo-tri aria-hidden="true"></div>
           <div class="pan__readout" data-cursor aria-hidden="true"></div>
 
+          <!-- SpectrumOverlayPanel: the ANT button shows because an ANAN-G2 has
+               Alex antenna ports (updateLayout, m_antAvailable). -->
           <div class="ovl" data-inert aria-hidden="true">
             <span class="ovl__btn ovl__btn--toggle">◀</span>
             <span class="ovl__btn">+RX</span>
@@ -343,10 +362,16 @@
             <span class="ovl__btn">ANT</span>
             <span class="ovl__btn">Display</span>
             <span class="ovl__btn">VAX</span>
-            <span class="ovl__btn is-off">ATT</span>
+            <span class="ovl__btn">ATT</span>
           </div>
 
-          <!-- VFO flag, a copy of the app's VfoWidget -->
+          <!-- SpectrumStatusOverlay: channel tag and the TX pill -->
+          <div class="pstat" aria-hidden="true"><span class="pstat__ch">CH 0</span><span class="pstat__tx">TX</span></div>
+
+          <!-- SpectrumOverlayPanel::buildZoomButtons -->
+          <div class="zbtns" data-inert-zoom aria-hidden="true"><span>S</span><span>B</span><span>-</span><span>+</span></div>
+
+          <!-- VFO flag, a copy of the app's VfoWidget in the workspace look -->
           <div class="vfo" data-vfo role="slider" tabindex="0"
                aria-label="Demo receiver frequency. Use the arrow keys to tune."
                aria-valuemin="7000000" aria-valuemax="7300000" aria-valuenow="7236400"
@@ -359,48 +384,49 @@
               <span class="vfo__txb">TX</span>
               <span class="vfo__slice">A</span>
             </div>
+            <div class="vfo__access" aria-hidden="true">You control</div>
             <output class="vfo__freq" data-vfo-freq>7.236.400</output>
-            <canvas class="vfo__level" data-vfo-level width="240" height="26" aria-hidden="true"></canvas>
+            <canvas class="vfo__level" data-vfo-level width="240" height="33" aria-hidden="true"></canvas>
             <div class="vfo__tabs" aria-hidden="true">
-              <span>🔊</span><i>|</i><span>DSP</span><i>|</i><span data-vfo-mode>LSB</span><i>|</i><span>X/RIT</span><i>|</i><span>VAX</span>
+              <span><img src="/assets/img/icons/pc-on.svg" alt="" width="16" height="16"></span><i>|</i><span>DSP</span><i>|</i><span data-vfo-mode>LSB</span><i>|</i><span>X/RIT</span><i>|</i><span>VAX</span>
             </div>
           </div>
           <div class="vfo-fbtns" data-vfo-fbtns aria-hidden="true">
-            <span>🔓</span><span>⏺</span><span>▶</span>
+            <span><img src="/assets/img/icons/unlock.svg" alt="" width="16" height="16"></span>
           </div>
         </div>
 
+        <!-- The pan's zoom slider (MainWindow, below the SpectrumWidget) -->
+        <div class="zoombar" aria-hidden="true"><i></i></div>
+
+        <!-- MainWindow::buildStatusBar in the workspace look. fold-N follows the
+             ChromeBarItems fold rungs: fold-1 leaves first. -->
         <div class="banner" aria-hidden="true">
           <div class="banner__group">
-            <svg class="banner__stack" viewBox="0 0 10 22" width="10" height="22"><ellipse cx="4.5" cy="3" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="10" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="17" rx="4.5" ry="3" fill="#404858"/></svg>
-            <svg class="banner__pan" viewBox="0 0 36 28" width="36" height="28"><polyline fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="1.6" stroke-linejoin="round" points="0,22 1,21 2,22 3,19 4,22 5,21 6,18 7,12 8,17 9,22 10,21 11,22 12,16 13,22 14,21 15,19 16,22 17,20 18,12 19,4 20,11 21,21 22,22 23,21 24,17 25,22 26,21 27,22 28,18 29,22 30,22"/><path d="M30 4v10M25 9h10" stroke="rgba(255,255,255,0.82)" stroke-width="2.2"/></svg>
+            <svg class="banner__pan" viewBox="0 0 36 28" width="36" height="28"><polyline fill="none" stroke="rgba(220,220,225,0.824)" stroke-width="1.6" stroke-linejoin="round" points="0,22 1,21 2,22 3,19 4,22 5,21 6,18 7,12 8,17 9,22 10,21 11,22 12,16 13,22 14,21 15,19 16,22 17,20 18,12 19,4 20,11 21,21 22,22 23,21 24,17 25,22 26,21 27,22 28,18 29,22 30,22"/><path d="M30 4v10M25 9h10" stroke="rgba(220,220,225,0.824)" stroke-width="2.2"/></svg>
             <span class="banner__chain fold-3"><b>CH 0</b><i>40m</i></span>
             <span class="banner__glyph">☰</span>
-            <span class="banner__dim banner__tnf fold-1">TNF</span>
-            <span class="banner__dim fold-1">CWX</span>
-            <span class="banner__dim fold-1">DVK</span>
-            <span class="banner__dim fold-1">FDX</span>
-            <span class="banner__sep fold-1">·</span>
+            <span class="banner__tnf fold-5">TNF</span>
             <span class="dash">
+              <span class="picker"><span class="picker__rx">RX</span><span class="picker__tag">A</span><span class="picker__who">You control</span><span class="picker__arrow">▾</span></span>
               <span class="badge badge--info"><svg viewBox="0 0 12 12"><path d="M 1,6 Q 3,1.5 5,6 T 9,6 L 11,6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-mode>LSB</span></span>
               <span class="badge badge--on"><svg viewBox="0 0 12 12"><path d="M 1,9 C 3,9 3,4 5,4 L 7,4 C 9,4 9,9 11,9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-bw>2.9k</span></span>
-              <span class="badge badge--info fold-2"><svg viewBox="0 0 12 12"><path d="M 7,1 L 3,7 L 5.5,7 L 5,11 L 9,5 L 6.5,5 L 7,1 Z" fill="currentColor"/></svg><span>M</span></span>
+              <span class="badge badge--info fold-4"><svg viewBox="0 0 12 12"><path d="M 7,1 L 3,7 L 5.5,7 L 5,11 L 9,5 L 6.5,5 L 7,1 Z" fill="currentColor"/></svg><span>M</span></span>
             </span>
           </div>
           <span class="banner__fill"></span>
-          <span class="station fold-4"><b>ANAN-G2</b><i>Saturn · v27</i></span>
+          <span class="station fold-site"><b>ANAN-G2</b><i>Saturn · v27</i></span>
           <span class="banner__fill"></span>
           <div class="banner__group">
             <span class="banner__ind fold-2"><b>CAT</b><i>Off</i></span>
             <span class="banner__sep fold-2">·</span>
             <span class="banner__ind fold-2"><b>TCI</b><i>Off</i></span>
             <span class="banner__sep fold-2">·</span>
-            <span class="systile fold-3"><span><b>PA</b><i>13.8V</i></span><span><b>CPU</b><i>9%</i></span></span>
-            <span class="banner__sep fold-3">·</span>
+            <span class="systile fold-1"><b>CPU</b><i>9%</i></span>
+            <span class="banner__sep fold-1">·</span>
             <span class="safety">
-              <span class="slot"><span class="badge badge--on">PA</span></span>
-              <span class="slot slot--ovl fold-3"><span class="ovld">OVERLOAD</span></span>
-              <span class="slot"><span class="badge badge--off">TX</span></span>
+              <span class="slot slot--ovl fold-site"><span class="ovld">OVERLOAD</span></span>
+              <span class="slot"><span class="badge badge--off"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg><span>TX</span></span></span>
             </span>
             <span class="banner__more">…</span>
           </div>
@@ -408,7 +434,7 @@
       </figure>
       <p class="app-caption">
         <i class="led led--green" aria-hidden="true"></i>
-        A simulated 40 m band, drawn live in your browser in the program's own layout. Click or tap
+        A simulated 40 m band, drawn live in your browser in the program's default look. Click or tap
         the waterfall to tune.
       </p>
     </section>
