@@ -1,4 +1,4 @@
-# 16. Spots and reporters
+# Spots and reporters
 
 Spot Hub joins cluster spots, digital decodes and reporter activity into the panadapter and a shared spot list. A callsign/grid identity is used by the services that sign in or publish reception reports. Spot source connections and the stored spot list belong to the Core; the way labels look on a particular band display is local to that computer or phone.
 

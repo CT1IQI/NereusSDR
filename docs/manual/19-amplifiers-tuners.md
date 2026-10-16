@@ -1,4 +1,4 @@
-# 19. Amplifiers and tuners
+# Amplifiers and tuners
 
 The desktop and iPhone/iPad can show and control supported station accessories through the Core. The Core owns the device connections and telemetry. A remote desktop or phone sends a supported command to the Core, then follows the Core's reported state; a click by itself is not confirmation. Read the device state and any refusal beside the control before transmitting.
 
