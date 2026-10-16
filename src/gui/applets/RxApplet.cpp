@@ -106,6 +106,9 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the mode combo resets too before a
+//               RADE v2 mode is added or removed. AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 //=================================================================
@@ -355,10 +358,12 @@ RxApplet::RxApplet(SliceModel* slice, RadioModel* model, QWidget* parent)
         for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
             const int index = m_modeCombo->findText(name);
             if (enabled && index < 0) {
+                resetItemsBeforeRowChange(m_modeCombo);
                 m_modeCombo->addItem(name);
                 m_modeCombo->setItemData(m_modeCombo->count() - 1,
                     QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
             } else if (!enabled && index >= 0) {
+                resetItemsBeforeRowChange(m_modeCombo);
                 m_modeCombo->removeItem(index);
             }
         }

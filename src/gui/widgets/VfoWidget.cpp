@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The mode combo resets before a RADE v2 mode is added or
+//                removed (resetItemsBeforeRowChange), so accessibility
+//                cannot read a deleted cell. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - The flag's squelch slider tooltip says it sets SSB
 //                squelch, 0 to 100, and that AM and FM thresholds are on
 //                their Settings > DSP pages in dB. J.J. Boyd (KG4VCF),
@@ -435,6 +439,7 @@ warren@wpratt.com
 #include "gui/AntennaPopupBuilder.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/OperatorReasonText.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
 #include "core/SkuUiProfile.h"
@@ -2669,10 +2674,12 @@ void VfoWidget::refreshRadeV2Modes()
     for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
         const int index = m_modeCmb->findText(name);
         if (enabled && index < 0) {
+            resetItemsBeforeRowChange(m_modeCmb);
             m_modeCmb->addItem(name);
             m_modeCmb->setItemData(m_modeCmb->count() - 1,
                 QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
         } else if (!enabled && index >= 0) {
+            resetItemsBeforeRowChange(m_modeCmb);
             m_modeCmb->removeItem(index);
         }
     }
