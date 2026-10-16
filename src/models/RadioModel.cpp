@@ -10839,6 +10839,9 @@ void RadioModel::applyPanGridSetting(const QString& key)
             pan->applyStationGridSetting(key);
         }
     }
+    // Display pill plan Task 9: a window's pans have models of their own
+    // (PanModels), not in m_panadapters; the window passes this on to them.
+    emit panGridSettingChanged(key);
 }
 
 void RadioModel::reportStationCatTestReply(quint32 commandId, const QString& reply)
@@ -26159,6 +26162,9 @@ QString RadioModel::sharedLnaReason(const QList<const SliceModel*>& lna,
     return parts.join(QLatin1Char(' '));
 }
 
+// From Thetis console.cs:33357 [v2.10.3.15]: the constant term of
+// agc_cal_offset, `agc_cal_offset = 2.0f + (Display.RX1DisplayCalOffset +`.
+static constexpr float kAutoAgcCalOffsetDb = 2.0f;
 namespace {
 // DaemonAgcSource.cpp kFftDbmFloor: what the headless Core publishes with
 // a reading that is not valid.
@@ -26232,7 +26238,21 @@ void RadioModel::updateAutoAgc()
         }
 
         // From Thetis v2.10.3.13 console.cs:46107-46115
-        const double noiseFloor = static_cast<double>(nfTracker->noiseFloor());
+        //
+        // NereusSDR, based on Thetis: the floor referred to a 4096-point
+        // FFT (agcNoiseFloor), not the floor per bin at the running size.
+        // Thetis hands WDSP its real display FFT size
+        // (console.cs:46055-46056 [v2.10.3.15],
+        // `size = (double)specRX.GetSpecRX(0).FFTSize; // MW0LGE_21k7`; the
+        // old literal shows as `size/*4096.0*/` at display.cs:9879-9880
+        // [v2.10.3.15]), so its per-bin floor and its size agree. NereusSDR
+        // hands WDSP a fixed 4096 (RxChannel::setAgcThreshold) and its
+        // running FFT size follows the zoom, so each frame's floor is
+        // referred to 4096 instead: 10 * log10(N / 4096), 3.01 dB per
+        // doubling (NoiseFloorTracker::agcReferenceOffsetDb). The tracker is
+        // the slice's own stream's, so a slice on stream 1 or higher reads
+        // its own frames and nothing here reads stream 0's engine.
+        const double noiseFloor = static_cast<double>(nfTracker->agcNoiseFloor());
 
         // From Thetis v2.10.3.13 console.cs:33292-33319 — agcCalOffset(rx)
         // Full Thetis formula:
@@ -26250,11 +26270,21 @@ void RadioModel::updateAutoAgc()
         // with the spectrum knee-line overlay work).  They sum to ~0 on
         // most current radios so the AGC drift was negligible until the
         // FFT slider made FFTSizeOffset user-tunable.
+        //
+        // NereusSDR, based on Thetis (maintainer's ruling, 2026-10-11):
+        // FFTSizeOffset is not subtracted here. Thetis keeps the term
+        // (console.cs:33346-33376 [v2.10.3.15],
+        // `agc_cal_offset = 2.0f + (... - Display.RX1FFTSizeOffset)`;
+        // setup.cs:16195 [v2.10.3.15],
+        // `Display.RX1FFTSizeOffset = tbDisplayFFTSize.Value * 2;`) beside
+        // the real size it hands WDSP. Here the floor above is already
+        // referred to the 4096 WDSP is given, which is the whole size
+        // correction, so the cal offset is the 2.0 alone: the same formula
+        // in a local window at any running size and in the Core, whose own
+        // FFT is 4096 (DaemonAgcSource).
         float calOffset = 0.0f;
         if (slice->agcMode() != AGCMode::Off) {
-            const double fftOffsetDb = m_fftEngine
-                ? m_fftEngine->fftSizeOffsetDb() : 0.0;
-            calOffset = 2.0f - static_cast<float>(fftOffsetDb);
+            calOffset = kAutoAgcCalOffsetDb;
         }
 
         // From Thetis v2.10.3.13 console.cs:45965-45968 — apply cal offset
@@ -27769,19 +27799,30 @@ void RadioModel::applyClaritySmoothDefaults()
 
     // 4. Trace colour — pure white, thin, sits cleanly in front of the
     //    waterfall without competing. Visual target: 2026-04-14 reference.
-    sw->setFillColor(QColor(0xff, 0xff, 0xff, 230));
+    const QColor smoothWhite(0xff, 0xff, 0xff, 230);
+    sw->setFillColor(smoothWhite);
+    //    The trace line takes the same white: a trace color chosen earlier
+    //    would otherwise stay, and the profile's trace would not be white.
+    sw->setTraceColor(smoothWhite);
 
     // 5. Pan fill OFF — trace renders as a thin line, not a filled curve.
     //    NereusSDR's default is fill-on; turn it off to match the reference.
     sw->setPanFillEnabled(false);
 
     // 6. Waterfall AGC — tracks band conditions automatically. With AGC on,
-    sw->setWfAgcEnabled(true);
+    // Approved Display rebuild: only Manual becomes Auto. The sink keeps
+    // Clarity, Floor and Scale and their remembered inactive flags.
+    sw->enableWaterfallAgcIfManual();
 
     // 7. Waterfall update period — 30 ms for smooth scroll motion.
     sw->setWfUpdatePeriodMs(30);
 
     // Mark the profile as applied so the gate short-circuits on next launch.
+    markDisplayProfileApplied();
+}
+
+void RadioModel::markDisplayProfileApplied()
+{
     AppSettings::instance().setValue(
         QStringLiteral("DisplayProfileApplied"),
         QStringLiteral("True"));

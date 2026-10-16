@@ -235,8 +235,11 @@ enum SetupTree {
     /// The app's own pages and the described ones in the desktop's order.
     /// A described page the desktop's list lacks follows the page before it.
     private static func merged(_ skeleton: Skeleton, description: SetupDescription?) -> [PageEntry] {
+        let pageOrder = skeleton.coreId == "display" && (description?.version ?? 0) >= 29
+            ? ["On this phone", "Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"]
+            : skeleton.pageOrder
         func rank(_ title: String) -> Double? {
-            skeleton.pageOrder.firstIndex { $0.caseInsensitiveCompare(title) == .orderedSame }.map(Double.init)
+            pageOrder.firstIndex { $0.caseInsensitiveCompare(title) == .orderedSame }.map(Double.init)
         }
         var ranked: [(rank: Double, sequence: Int, entry: PageEntry)] = []
         for (index, entry) in skeleton.native.enumerated() {

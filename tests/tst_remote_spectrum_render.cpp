@@ -454,6 +454,14 @@ private slots:
             local.setDbmCalOffset(offset);
             local.setWaterfallNFAGCEnabled(true);
             alreadyCalibrated.setWaterfallNFAGCEnabled(true);
+            // Fix wave I1: each pan's noise floor is measured on the pixels
+            // it is given, before its own calibration. The local pan sees
+            // the raw row; the other sees a row that already carries the
+            // offset. (Neither floor was set before, and NF-AGC used the
+            // uncalibrated floor against a calibrated row, so both pans
+            // agreed whatever the offset.)
+            local.setMeasuredNoiseFloorForTest(-100.0f);
+            alreadyCalibrated.setMeasuredNoiseFloorForTest(-100.0f + offset);
             local.pushWaterfallRow(rawRow);
             alreadyCalibrated.pushWaterfallRow(QVector<float>(8, -100.0f + offset));
             QCOMPARE(local.wfActiveLowThreshold(), alreadyCalibrated.wfActiveLowThreshold());

@@ -574,9 +574,14 @@ import Testing
                     "subscribe": control.subscribe, "page": control.page, "group": control.group,
                     "label": control.label, "kind": control.kind.name,
                 ]
-                if let value = control.defaultValue { out["default"] = value }
+                if let value = control.defaultValue {
+                    // A choice of words sends its default as the word.
+                    out["default"] = control.options.first { $0.value == value }?.token.map { $0 as Any } ?? value
+                }
                 if !control.options.isEmpty {
-                    out["options"] = control.options.map { ["value": $0.value, "label": $0.label] as [String: Any] }
+                    out["options"] = control.options.map {
+                        ["value": $0.token.map { $0 as Any } ?? $0.value, "label": $0.label] as [String: Any]
+                    }
                 }
                 if let value = control.min { out["min"] = value }
                 if let value = control.max { out["max"] = value }
@@ -585,6 +590,7 @@ import Testing
                 if let value = control.decimals { out["decimals"] = value }
                 if let value = control.offValue { out["offValue"] = value }
                 if let value = control.offLabel { out["offLabel"] = value }
+                if let value = control.rememberedKey { out["rememberedKey"] = value }
                 return out
             },
             "binWidth": ["label": d.binWidth.label, "decimals": d.binWidth.decimals],

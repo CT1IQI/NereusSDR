@@ -47,6 +47,10 @@
 //               Its exact TX analyzer window is admitted separately from
 //               the inclusive RX FFT crop.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-10: R-DSP-59: a remote pan's FFT size comes from the rule a
+//               local pan uses (ControlRanges::planAutoZoomFft); the pan's
+//               width in pixels no longer changes it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: reset collector stall diagnostics between runs, so an
 //               intentional pause is not counted as a stall. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
@@ -285,6 +289,10 @@
 //               switch is shown held with the Core's reason
 //               (ctunHeldReason). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-10: Display pill plan Task 15: each accepted receive context
+//               gives its pan the decimation it was asked for, for the
+//               pan's hold after an un-key. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 
 #include "gui/RemoteMediaController.h"
 #include "core/AppSettings.h"
@@ -306,6 +314,7 @@
 #include "gui/PanClarityRegistry.h"
 #include "core/spectrum/SpectrumReducer.h"
 #include "core/ControlRanges.h"
+#include "core/DisplayFftSizing.h"
 #include "core/FFTEngine.h"
 #include "core/session/SliceAccessMirror.h"
 #include "core/session/StationClient.h"
@@ -661,8 +670,8 @@ bool runtimeWaterfallLevels(const SpectrumWidget* widget)
     if (widget->coreWaterfallLevelsInUse()) {
         return widget->coreWaterfallLevels().has_value();
     }
-    return widget->clarityActive() || widget->wfAgcEnabled()
-        || widget->waterfallNFAGCEnabled();
+    // NF-AGC is an option under AGC: alone it leaves the stored levels.
+    return widget->clarityActive() || widget->wfAgcEnabled();
 }
 
 // The pan's own floor, in the frame's un-normalised values.
@@ -787,36 +796,29 @@ int requestedFps()
                          .toString().toInt(), 60);
 }
 
-// The FFT size a pan asks for: the stored size, raised by a deep zoom or
-// the Hz/bin target. 0 when the pan cannot ask yet.
+// The FFT size a pan asks for, from the station's sizing mode (design D38,
+// D42): 4096 raised by a deep zoom in Auto, the Hz/bin target's size in
+// Hz/bin, exactly the stored size in Fixed. 0 when the pan cannot ask yet.
+// `baseSizeOut` takes the size the mode's own control chose, which is what
+// the shared Wide engine runs: a request above it asks for its own tier.
 int plannedFftSize(SpectrumWidget* widget, SliceModel* slice, int* baseSizeOut = nullptr)
 {
-    auto& settings = AppSettings::instance();
-    const int baseSize = fftSizeFor(settings.value(
-        QLatin1String(ControlRanges::kDisplayFftSizeKey),
-        QString::number(ControlRanges::kDisplayFftSizeDefault)).toString().toInt());
-    if (baseSizeOut) { *baseSizeOut = baseSize; }
-    const int pixels = qBound(1, widget->width() - widget->reservedRightEdgeWidth(),
-                             SpectrumEndpoint::kMaxPixels);
+    const DisplayFftSizing sizing = readDisplayFftSizing(AppSettings::instance());
+    if (baseSizeOut) { *baseSizeOut = sizing.baseline(); }
     const double span = widget->bandwidth();
     if (!std::isfinite(span) || span <= 0 || !std::isfinite(widget->centerFrequency())
         || slice->sampleRateHz() <= 0) {
         return 0;
     }
     // R-R3-08: a deep zoom requests its own tier; it cannot lengthen the
-    // shared Wide engine. A zoom grows the size no further than a local
-    // pan's auto-zoom does at this rate (ControlRanges::autoZoomMaxFftSize,
-    // about 0.7 s per transform), unless the stored size is already larger;
-    // that is honoured exactly.
-    double target = double(slice->sampleRateHz()) * pixels / span;
-    const double hzPerBin = settings.value(
-        QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey),
-        QString::number(ControlRanges::kDisplayHzPerBinTargetDefault)).toString().toDouble();
-    if (std::isfinite(hzPerBin) && hzPerBin > 0) {
-        target = std::max(target, slice->sampleRateHz() / hzPerBin);
-    }
-    return ControlRanges::autoZoomFftSize(fftSizeFor(target), baseSize,
-                                          double(slice->sampleRateHz()));
+    // shared Wide engine. R-DSP-59: the size is the one rule a local pan
+    // uses too (ControlRanges::planDisplayFft): 4096 kept across the span in
+    // Auto, or the Hz/bin target, no further than about 0.7 s per
+    // transform. In Fixed it is the stored size exactly, whatever the span,
+    // so it equals the base size and stays on the Wide tier, and a zoom
+    // plans the same size again. The pan's width in pixels does not change
+    // the size.
+    return sizing.plan(double(slice->sampleRateHz()), span).size;
 }
 
 // Parity Task 17 (R-R3-12): the averaging constants for the rate the Core
@@ -881,10 +883,11 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
     }
     if (inputs.coreWaterfallLevels && widget->coreWaterfallLevelsInUse()) {
         // JJ's ruling of 2026-09-28 (display extras v1, `waterfallLevels`):
-        // the Core runs the pan's waterfall AGC (the desktop's follower,
-        // 12 dB outside each line's lowest and highest values) or NF-AGC
-        // (the line's floor plus the offset, 60 dB above it) and sends the
-        // levels beside each frame.
+        // the Core runs the pan's waterfall AGC (the desktop's follower:
+        // the low level 12 dB under each line's smoothed lowest value) or,
+        // as an option under AGC, NF-AGC (the low level at the noise floor
+        // plus the offset) and sends the levels beside each frame. The
+        // high level stays the stored one.
         request.insert(QStringLiteral("waterfallLevels"), QJsonObject{
             {QStringLiteral("mode"), widget->waterfallNFAGCEnabled() ? QStringLiteral("noiseFloorAgc")
                                                                      : QStringLiteral("agc")},
@@ -7858,6 +7861,16 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     const int grantedFftSize = decoded->grant ? decoded->grant->grantedFftSize
         : (budgetMode ? binding.acceptedRequest : binding.observed)
               .value(QStringLiteral("fftSize")).toInt();
+    // Display pill plan Task 15 (design 5.6): the decimation this context
+    // was asked for, which is what the Core runs the pan's FFT at; a Core
+    // with no decimation control was sent none and runs 1. The pan's hold
+    // after an un-key is twice that FFT's fill time
+    // (SpectrumWidget::moxHoldLengthMs). Neither key edge changes the
+    // request: Clarity stays on the pan through a key, so
+    // coreWaterfallLevelsInUse() and the dBm window stay as they were.
+    binding.widget->setRemoteDecimation(
+        (budgetMode ? binding.acceptedRequest : binding.observed)
+            .value(QStringLiteral("decimation")).toInt(1));
     // R-DISP-HOLD: the decoder and the presenter's chain are renewed for
     // every context and a keyframe is asked for below. What the pan has
     // drawn and measured is the widget's to keep or empty: it keeps it for

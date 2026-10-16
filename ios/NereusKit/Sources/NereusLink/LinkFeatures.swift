@@ -21,8 +21,8 @@
 /// reads `txState`. A Core that is sent it at minor 11 watches the app's
 /// keepalives and stops a key of the app's that goes quiet.
 ///
-/// `setupDescription` 25: the app draws every Setup page the Core
-/// describes, through description version 25 (Display's Grid & Scales,
+/// `setupDescription` 29: the app draws every Setup page the Core
+/// describes, through description version 28 (Display's Grid & Scales,
 /// 3D View and the rest of Setup > Display, Appearance's Reset all
 /// colors, then the pages versions 13 to 24 add: 17 the Alex-1 low-pass
 /// rows, 18 the HL2 clock rows, 19 the CFC band editor, 20 the PA
@@ -30,7 +30,11 @@
 /// the RX buffer rows' on-air state, 23 Calibration's Rx1 6m LNA row and
 /// 24 Audio > TX Input's Line In Gain in 1.5 dB steps and the Saturn G2's
 /// Mic Tip-Ring row, 25 Audio > Outputs' radio speaker rows and TX Input
-/// retitled Microphone), and sends each control to its owner
+/// retitled Microphone, 26 Waterfall Defaults' level rows gated on
+/// Clarity, Use spectrum min/max and AGC, 27 Appearance's Trace Color row
+/// beside Fill Color, 28 Spectrum Defaults' Sizing row with the Size and
+/// Hz/bin Target rows it gates, and the two averaging times from 1 ms),
+/// and sends each control to its owner
 /// (the Setup description contract); the Core sends the `setup` object
 /// and projects each category to this version. A Core that offers less
 /// is read at its own version; rows it cannot run on a phone stay greyed
@@ -208,7 +212,7 @@
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
     public static let app: [String: Int] = ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                            "setupDescription": 25, "settingsHygiene": 2,
+                                            "setupDescription": 29, "settingsHygiene": 2,
                                             "radioAntennaRows": 1,
                                             "vax": 1, "txEqCurve": 2,
                                             "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1,

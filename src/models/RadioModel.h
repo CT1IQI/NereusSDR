@@ -4371,6 +4371,12 @@ public:
     // each value.
     void applyClaritySmoothDefaults();
 
+    // Records that the smooth-defaults profile has been applied (the
+    // "DisplayProfileApplied" key). The key is this model's bookkeeping:
+    // Setup's "Reset to Smooth Defaults" calls this instead of writing the
+    // key itself, as it uses setClarityEnabled for "ClarityEnabled".
+    void markDisplayProfileApplied();
+
     // Radio info
     QString name() const { return m_name; }
     QString model() const { return m_model; }
@@ -6286,6 +6292,9 @@ signals:
     /// physical ADC (the extended pan's wideband wings) has to listen here.
     /// Codex, PR #318.
     void streamAdcRoutingChanged();
+    // Display pill plan Task 9: applyPanGridSetting(key) ran. A window's
+    // own pan models (PanModels) re-read the band's dB max and min from it.
+    void panGridSettingChanged(const QString& key);
 
     /// iPhone app Task 75 (the several-devices design, ruling 5.11a, D61):
     /// slice `sliceId` crossed a band edge and the receive antenna stayed on

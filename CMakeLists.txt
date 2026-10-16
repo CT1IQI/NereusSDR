@@ -1489,6 +1489,10 @@ set(CORE_SOURCES
     # extracts every key literal this tree passes to an AppSettings
     # accessor and cross-checks this table against it.
     src/core/settings/SettingsScope.cpp
+    # Display pill plan Task 1: where a per-pan display setting is stored.
+    # The bare key is the Setup default, base_N is pan N's own override,
+    # and overrides are written only when they differ from the default.
+    src/core/settings/PanDisplayKeys.cpp
     # R2 Task 15: the AppSettings delegation seam's two live components.
     # SettingsProxy.cpp is the client-side cache installed via
     # AppSettings::setRemoteBackend() on a remote-mode GUI. SettingsProxyServer.cpp
@@ -1749,6 +1753,11 @@ set(GUI_SOURCES
     # Remote-window parity Task 29 (A11, R-R3-49): one MOX display
     # controller for both windows, and its local and remote sources.
     src/gui/PanClarityRegistry.cpp
+    # Display pill plan Task 9: a per-band model for every window pan.
+    src/gui/PanModels.cpp
+    # Display pill plan Task 18: one pan's Display pill, wired to hooks.
+    src/gui/DisplayPillWiring.cpp
+    src/gui/DisplayPillWiring.h
     src/gui/MoxDisplayController.cpp
     src/gui/TxDisplaySource.cpp
     # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the

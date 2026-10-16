@@ -35,6 +35,18 @@
 //                 keys saved inside profiles are removed and a live level
 //                 saved at the retired -6 dB default becomes 0, once.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 3:
+//                 convertWaterfallLevelsForClarityModel(), the one-time
+//                 conversion of stored waterfall Black Level and Color Gain.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 8:
+//                 resetPollutedDisplayCalOffset(), the one-time removal of
+//                 stored Cal Offset values that held the station's offset.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 12:
+//                 clearUncalibratedClarityFloors(), the one-time removal of
+//                 per-band noise floors stored before they were calibrated.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - saveInBackground(): the timed settings save writes the
 //                 file on a writer thread, so the Core's main thread, which
 //                 also sends the receive audio, no longer waits for the
@@ -104,6 +116,7 @@
 #include "core/LogCategories.h"
 #include "core/settings/ISettingsBackend.h"
 #include "core/SettingsFileWriter.h"
+#include "core/spectrum/ClarityLevels.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -124,6 +137,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace NereusSDR {
@@ -1896,6 +1910,158 @@ void AppSettings::migrateRenamedKeys(AppSettings& s)
     }
     if (changed) {
         s.save();
+    }
+}
+
+void AppSettings::convertWaterfallLevelsForClarityModel(AppSettings& settings)
+{
+    namespace CL = ClarityLevels;
+    const QString markerKey = QStringLiteral("DisplayWfClarityLevelsConverted");
+    if (settings.value(markerKey).toString() == QLatin1String("True")) {
+        return;  // already converted: these values are in the new model
+    }
+
+    const QString blackBase = QStringLiteral("DisplayWfBlackLevel");
+    const QString gainBase  = QStringLiteral("DisplayWfColorGain");
+
+    // A stored value counts when it is a whole number. Anything else was
+    // never shown (the reader fell back to what the pan inherits), so it
+    // is left as it is.
+    const auto stored = [&settings](const QString& key) -> std::optional<int> {
+        if (!settings.contains(key)) { return std::nullopt; }
+        bool ok = false;
+        const int v = settings.value(key).toString().trimmed().toInt(&ok);
+        return ok ? std::optional<int>(v) : std::nullopt;
+    };
+
+    // Every pan that has a value of its own for either key.
+    static const QRegularExpression panKeyPattern(
+        QStringLiteral("^DisplayWf(?:BlackLevel|ColorGain)_(\\d+)$"));
+    QList<int> pans;
+    const QStringList keys = settings.allKeys();
+    for (const QString& key : keys) {
+        const QRegularExpressionMatch match = panKeyPattern.match(key);
+        if (!match.hasMatch()) { continue; }
+        bool ok = false;
+        const int pan = match.captured(1).toInt(&ok);
+        if (ok && !pans.contains(pan)) { pans.append(pan); }
+    }
+
+    // Read every old value before writing any: a Color Gain converts
+    // against the old Black Level, never a converted one.
+    const std::optional<int> oldDefaultBlack = stored(blackBase);
+    const std::optional<int> oldDefaultGain  = stored(gainBase);
+    const int shownDefaultBlack = oldDefaultBlack.value_or(CL::kLegacyBlackLevelDefault);
+    const int shownDefaultGain  = oldDefaultGain.value_or(CL::kLegacyColorGainDefault);
+
+    struct PanValues {
+        QString suffix;
+        std::optional<int> black;
+        std::optional<int> gain;
+    };
+    QList<PanValues> panValues;
+    for (const int pan : std::as_const(pans)) {
+        const QString suffix = QLatin1Char('_') + QString::number(pan);
+        panValues.append({suffix, stored(blackBase + suffix), stored(gainBase + suffix)});
+    }
+
+    int converted = 0;
+
+    // The Setup defaults. With only a Black Level stored the old span was
+    // not the ship one, so the Color Gain that keeps it is stored too.
+    if (oldDefaultBlack) {
+        settings.setValue(blackBase,
+            QString::number(CL::convertLegacyBlackLevel(*oldDefaultBlack)));
+        ++converted;
+    }
+    const int newDefaultGain =
+        CL::convertLegacyColorGain(shownDefaultGain, shownDefaultBlack);
+    if (oldDefaultGain || newDefaultGain != CL::kColorGainDefault) {
+        settings.setValue(gainBase, QString::number(newDefaultGain));
+        ++converted;
+    }
+
+    // Each pan's own values. A pan with no Color Gain of its own follows
+    // the Setup default; when its own Black Level made its span differ
+    // from the default's, it gets the Color Gain that keeps its span.
+    for (const PanValues& values : std::as_const(panValues)) {
+        const int shownBlack = values.black.value_or(shownDefaultBlack);
+        const int shownGain  = values.gain.value_or(shownDefaultGain);
+        if (values.black) {
+            settings.setValue(blackBase + values.suffix,
+                QString::number(CL::convertLegacyBlackLevel(*values.black)));
+            ++converted;
+        }
+        const int newGain = CL::convertLegacyColorGain(shownGain, shownBlack);
+        if (values.gain || newGain != newDefaultGain) {
+            settings.setValue(gainBase + values.suffix, QString::number(newGain));
+            ++converted;
+        }
+    }
+
+    settings.setValue(markerKey, QStringLiteral("True"));
+    settings.save();
+    if (converted > 0) {
+        qDebug() << "Converted" << converted
+                 << "waterfall Black Level / Color Gain value(s) to the Clarity level model";
+    }
+}
+
+void AppSettings::resetPollutedDisplayCalOffset(AppSettings& settings)
+{
+    const QString markerKey = QStringLiteral("DisplayCalOffsetReset");
+    if (settings.value(markerKey).toString() == QLatin1String("True")) {
+        return;  // already reset: what is stored now is the operator's
+    }
+
+    // The Setup default and every pan's own value, pan 0 included
+    // (PanDisplayKeys: <base>_<N>). Nothing else: RX1_DisplayCalOffsetDb
+    // is the station's calibration and is not this key.
+    static const QRegularExpression calOffsetPattern(
+        QStringLiteral("^DisplayCalOffset(?:_\\d+)?$"));
+    int removed = 0;
+    const QStringList keys = settings.allKeys();
+    for (const QString& key : keys) {
+        if (calOffsetPattern.match(key).hasMatch()) {
+            settings.remove(key);
+            ++removed;
+        }
+    }
+
+    settings.setValue(markerKey, QStringLiteral("True"));
+    settings.save();
+    if (removed > 0) {
+        qDebug() << "Removed" << removed
+                 << "stored display Cal Offset value(s) that held the station's offset";
+    }
+}
+
+void AppSettings::clearUncalibratedClarityFloors(AppSettings& settings)
+{
+    const QString markerKey = QStringLiteral("ClarityFloorsCalibrated");
+    if (settings.value(markerKey).toString() == QLatin1String("True")) {
+        return;  // already cleared: what is stored now is calibrated
+    }
+
+    // Every band's stored floor (PanadapterModel: <base>_<band>). Nothing
+    // else: the per-band grid and 3D floor keys are not floors Clarity
+    // measured.
+    static const QRegularExpression floorPattern(
+        QStringLiteral("^(?:DisplayBandNFEstimate|ClarityFloor)_.+$"));
+    int removed = 0;
+    const QStringList keys = settings.allKeys();
+    for (const QString& key : keys) {
+        if (floorPattern.match(key).hasMatch()) {
+            settings.remove(key);
+            ++removed;
+        }
+    }
+
+    settings.setValue(markerKey, QStringLiteral("True"));
+    settings.save();
+    if (removed > 0) {
+        qDebug() << "Removed" << removed
+                 << "stored per-band noise floor(s) measured before calibration";
     }
 }
 

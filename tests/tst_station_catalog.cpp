@@ -366,9 +366,10 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
         displayKeys.append(value.toObject().value(QStringLiteral("settingsKey")).toString());
     }
     QCOMPARE(displayKeys,
-             (QStringList{QString::fromLatin1(kDisplayFftSizeKey),
-                          QString::fromLatin1(kDisplayFftWindowKey),
+             (QStringList{QString::fromLatin1(kDisplayFftSizingModeKey),
+                          QString::fromLatin1(kDisplayFftSizeKey),
                           QString::fromLatin1(kDisplayHzPerBinTargetKey),
+                          QString::fromLatin1(kDisplayFftWindowKey),
                           QString::fromLatin1(kDisplaySpectrumFpsKey),
                           QString::fromLatin1(kDisplaySpectrumDetectorKey),
                           QString::fromLatin1(kDisplaySpectrumAveragingKey),

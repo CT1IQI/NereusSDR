@@ -1502,9 +1502,12 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
-// The highest Setup description version the Core sends (25: Audio's
-// Outputs page and Microphone title, R-SPK-23).
-constexpr int kSetupDescriptionCap = 25;
+// The highest Setup description version the Core sends (29: the accepted
+// eight Display pages and scoped picture controls; 28: Display's FFT
+// sizing rows and the averaging times from 1 ms; 27: Appearance's Trace
+// Color row beside Fill Color; 26: Display's Waterfall Defaults level gates
+// and the allOf form of enabledWhen).
+constexpr int kSetupDescriptionCap = 29;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -9588,7 +9591,9 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // on-the-air lock. 23: Hardware > Calibration's Rx1 6m LNA row.
             // 24: Audio > TX Input's Line In Gain in 1.5 dB steps and the
             // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
-            // speaker rows; TX Input titled Microphone.
+            // speaker rows; TX Input titled Microphone. 26: Display >
+            // Waterfall Defaults' level rows grey out as the desktop page's
+            // do (the allOf form of enabledWhen).
             const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;

@@ -5464,8 +5464,9 @@ subscribe, page, group, label, kind, default}` and, by `kind`, either
 
 - `settingsKey`: the desktop's settings key for pan 0 (`null` for
   Decimation, which the desktop keeps in its engines, not its settings).
-- `scope`: `station` for the Core's own settings (`DisplayFftSize`,
-  `DisplayFftWindow`, `DisplayHzPerBinTarget`, `DisplaySpectrumFps`), which
+- `scope`: `station` for the Core's own settings (`DisplayFftSizingMode`,
+  `DisplayFftSize`, `DisplayHzPerBinTarget`, `DisplayFftWindow`,
+  `DisplaySpectrumFps`), which
   a device reads and writes with `settings.write` (section 8); `device` for
   each device's own value, which it keeps per pan and sends in its spectrum
   subscription.
@@ -5481,23 +5482,54 @@ subscribe, page, group, label, kind, default}` and, by `kind`, either
 - `kind`: `choice` (a list; `value` is what is stored and sent), or
   `slider` (a range). A slider with `options` steps through them in order:
   the FFT Size slider's seven sizes, 4096 to 262144, each a power of two.
+  An option's `value` is a number on every control but Sizing, whose
+  setting holds a word: its three values and its `default` are text
+  (`Auto`, `HzPerBin`, `Fixed`).
 - `default`: the value the desktop applies when nothing is stored.
-- The Hz/bin Target adds `offValue` 0 and `offLabel` `Off`: the control
-  shows Off at 0.
+- The Hz/bin Target adds `offValue` 0 and `offLabel` `Off`, and
+  `rememberedKey`, the station setting that holds the last target chosen
+  (`DisplayHzPerBinLastTarget`).
+
+Sizing says which control sets the FFT size (pill design D38): `Auto`, the
+zoom picks it; `HzPerBin`, it follows Hz/bin Target; `Fixed`, it is Size. A
+device that draws Sizing lets Size be changed in `Fixed` only and Hz/bin
+Target in `HzPerBin` only, as the desktop does and as Setup description
+version 28 says with `enabledWhen`. It writes the mode first and the target
+second: into `HzPerBin`, the mode and then a target above 0 (the value under
+`rememberedKey` when that is above 0); out of it, the mode and then the
+target's `offValue`. The Core keeps `rememberedKey` level with every target
+above 0 a device writes and tells every device. With the mode never written,
+it is read from the target: above 0 is `HzPerBin`, anything else `Auto`.
+
+The stored `DisplayHzPerBinTarget` is 0 in `Auto` and `Fixed`, which is why
+the entry keeps a minimum of 0 that reads Off: the catalog is not fitted to
+a version, and a device built before Sizing shows the control as it always
+has. That device cannot read the Sizing entry (it reads an option's `value`
+as a number) and leaves it out, keeping the rest; its Hz/bin Target still
+works, since the Core moves the mode on a target write that comes without
+one (above 0 sets `HzPerBin`; 0 sets `Auto` from `HzPerBin`). A device that
+draws Sizing shows targets from one `step` up and takes a grayed control's
+number from `rememberedKey`.
 
 | Control | Key | Scope | Kind and range | Default |
 | --- | --- | --- | --- | --- |
+| Sizing | `DisplayFftSizingMode` | station | Auto, Hz/bin, Fixed (`Auto`, `HzPerBin`, `Fixed`) | `Auto` |
 | Size | `DisplayFftSize` | station | slider over 4096, 8192, ..., 262144 | 4096 |
+| Hz/bin Target | `DisplayHzPerBinTarget` | station | 0 to 200 step 0.5, 2 places, `Hz/bin`, 0 is Off; remembered in `DisplayHzPerBinLastTarget` | 0 |
 | Window | `DisplayFftWindow` | station | Rectangular, Blackman-Harris 4T, Hann, Flat-Top, Hamming, Kaiser, Blackman-Harris 7T (0 to 6) | 1 |
-| Hz/bin Target | `DisplayHzPerBinTarget` | station | 0 to 200 step 0.5, 2 places, `Hz/bin`, 0 is Off | 0 |
 | FPS | `DisplaySpectrumFps` | station | 10 to 60 step 1, `fps` | 30 |
 | Spectrum Detector | `DisplaySpectrumDetector` | device | Peak, Rosenfell, Average, Sample, RMS (0 to 4) | 0 |
 | Spectrum Averaging | `DisplaySpectrumAveraging` | device | None, Recursive, Time Window, Log Recursive (0 to 3) | 3 |
-| Spectrum Avg Time | `DisplaySpectrumAverageTimeMs` | device | 10 to 9999 step 10, `ms` | 30 |
+| Spectrum Avg Time | `DisplaySpectrumAverageTimeMs` | device | 1 to 9999 step 1, `ms` | 30 |
 | Decimation | none | device | 1 to 16 step 1 | 1 |
 | WF Detector | `DisplayWaterfallDetector` | device | Peak, Rosenfell, Average, Sample (0 to 3) | 0 |
 | WF Averaging | `DisplayWaterfallAveraging` | device | None, Recursive, Time Window, Log Recursive (0 to 3) | 0 |
-| WF Avg Time | `DisplayWaterfallAverageTimeMs` | device | 10 to 9999 step 10, `ms` | 120 |
+| WF Avg Time | `DisplayWaterfallAverageTimeMs` | device | 1 to 9999 step 1, `ms` | 120 |
+
+The two averaging times ran from 10 in steps of 10 until Setup description
+version 28; a Core from before it lists that range and refuses a time below
+10 in a display request, so a device reads the range from the catalog it is
+given, never from a constant of its own.
 
 `binWidth` is `{label, decimals}`, the readout beside the FFT size: `Bin
 Width (Hz)`, the pan's sample rate over its FFT size, to 3 places (the
@@ -5519,6 +5551,8 @@ Hz/bin target holds the bin width at or below the target at any zoom
 (`pixels` and `spanHz` are the subscription's own). The width the pan gets
 is the sample rate over the size the Core grants (its spectrum context's
 `grantedFftSize`), which may be less than asked.
+
+> Correction 2026-10-10: the per-pixel planner rule above is out of date. A remote pan's FFT size now comes from the same rule a local pan uses (`ControlRanges::planAutoZoomFft`); pan width in pixels no longer changes it.
 
 `offered` is the Core's (iPhone app plan Task 25, D41). It starts from
 the unbuilt features list the desktop hides by (`UnbuiltFeatureList.h`:
@@ -5688,6 +5722,8 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `DisplayFftWindow` | station |
 | 3. whole key | `DisplayHzPerBinTarget` | station |
 | 3. whole key | `DisplaySpectrumFps` | station |
+| 3. whole key | `DisplayFftSizingMode` | station |
+| 3. whole key | `DisplayHzPerBinLastTarget` | station |
 | 3. whole key | `DisplayTxFftSize` | station |
 | 3. whole key | `DisplayTxWindowType` | station |
 | 3. whole key | `DisplayTxPanDetector` | station |

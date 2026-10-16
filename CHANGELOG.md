@@ -8,6 +8,22 @@
 - Notices follow the main window when it moves or resizes. Closing a notice
   also closes the gap in the remaining stack.
 
+### Display controls
+
+- The Display pill has Spectrum, Levels, Waterfall, View and FFT tabs. Levels
+  holds the spectrum scale and waterfall levels together; Background is on View.
+- Child rows stay visible with the reason they cannot act. Grid spacing follows
+  Grid, averaging time follows averaging, and trace/fill/background and 3D rows
+  follow the chosen view. Each tab has a fixed area for the reason under the pointer.
+- Setting a pan's display value back to the master clears its override. Changing
+  a display master reaches every pan, including pans that are not open.
+- Spectrum groups Trace, Grid and Markers; Waterfall groups Drawing, Overlays
+  and Time. Normalize to 1 Hz is available with Average, Sample and RMS detectors.
+  Rewind explains how much history fits at the selected waterfall rate.
+- Normalization, noise-floor and peak-value markers, and Track floor choices
+  are saved for each pan. Level calibration temporarily suspends tracking and
+  restores each pan's own choice afterward.
+
 ### Wideband view
 
 - Local pans keep the DDC zoom limit when the radio's protocol or selected
@@ -102,6 +118,53 @@ Advanced, and each control appears on one page only.
 - A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a
   field to the tuner's network announcement, which NereusSDR rejected, so the
   tuner stayed disconnected after the upgrade.
+
+### A Display pill and steadier waterfall levels
+
+Each pan now has a Display pill with four tabs: Spectrum, FFT, Waterfall and
+3D View. It holds the display controls you reach for most, per pan, and the
+right-click menu keeps only what is left.
+
+- Setup's Display pages now set the defaults for every pan and follow changes
+  live. A pan you adjusted keeps its own value until you reset it.
+- New on the pill: NB Blank, a Background picture or colour with opacity, grid
+  spacing, scale text and a trace colour.
+- Waterfall Black Level now runs 0 to 100 in half-dB steps, with 50 at the noise
+  floor (default 57). Color Gain sets how many dB the colours cover (default
+  60, which is 38 dB). Your saved levels are converted once.
+- With Clarity on, AGC, NF-AGC, Low and High are greyed and Clarity sets the
+  levels. With Clarity off, Low and High set them and Black Level and Color
+  Gain are greyed. With AGC on, only the low edge follows the signal; High stays
+  where you set it. NF-AGC is an option under AGC.
+- Each pan's dB range is now kept per band, and the pill and the right-click
+  menu edit the same value.
+- On un-key every pan keeps its level. The FFT input is cleared on key and
+  un-key, and Clarity waits before it measures again: about 11 seconds at a
+  262144-point FFT and 48 kHz.
+- The FFT Size slider sets the size once for every pan and keeps it after a
+  restart, and the other FFT controls reach every pan and every open pill.
+- A remote window pan picks its FFT size by the same rule as a local pan, so the
+  pan's width in pixels no longer changes it.
+- With Auto AGC-T on, the AGC threshold no longer drops as you zoom a pan in.
+  It used to fall 3 dB each time the zoom doubled the FFT size, up to 15 dB on
+  a 192 kHz receiver, so zoomed in it now sits higher than before, where it
+  sits at full span. The FFT Size slider no longer moves it either, and a
+  local console and a Core set the same threshold for the same band noise.
+  The "NF" number beside AGC-T shows the noise floor that threshold is built
+  from, so it no longer drops as you zoom in either.
+- The phone's Display setup greys the same level rows under Clarity and "Use
+  spectrum min/max".
+- Fixed: the waterfall's Low is gray while waterfall AGC is on, in the Display
+  pill and on Setup's Waterfall Defaults page, because AGC sets it. It was live
+  and moving it did nothing. Turn AGC off to set Low yourself.
+- Fixed: Setup's dB Step (Display > Grid & Scales) now sets the spacing of the
+  horizontal dB lines on every pan. It was saved and drew nothing. With a dB
+  range of 50 or less the lines were 5 dB apart; they are now dB Step apart
+  (10 unless you change it).
+- Fixed: the FFT size looking like it reset after a restart (Setup showed the
+  zoomed size instead of the one you chose).
+- Fixed: a remote window's VFO flag level meters now work when there is no
+  S-meter item.
 
 ### Fixes
 

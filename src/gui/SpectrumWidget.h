@@ -2,6 +2,20 @@
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Test-only friend for visible-plane IMD integration evidence.
+//   2026-10-12 - Share the nine Appearance colors and RX Custom definition,
+//                 retaining per-pan picture colors and independent TX.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Share the computer TX scale without stale inactive saves;
+//                 preserve non-Manual waterfall modes in Smooth Defaults.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Apply approved effective trims, runtime level refresh and
+//                 stored-step Track floor bounds without endpoint writes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Query closed-pan ship defaults through the shared inventory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Persist each pan's requested Clarity choice; expose pure
+//                 current values and page-scoped picture reset.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Track the approved workspace text minimum in paint caches.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
@@ -26,6 +40,71 @@
 //   2026-10-11 : localSpectrumSourceForTest(), so a test can tell which
 //                 receiver's frame a pan drew. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Preserve each pan's Track floor choice during Level Cal.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Expose explicit trace/fill fallback for approved parent gating.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-10 : Display pill plan Task 19: displayPillRequested() and
+//                 bandRangeRequested() for the trimmed right-click menu.
+//                 J.J. Boyd (KG4VCF), AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 15: setRemoteDecimation(), and
+//                 moxHoldLengthMs() from the Core's FFT shape on a pan a
+//                 Core feeds. J.J. Boyd (KG4VCF), AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 13: setDisplayKeyed() (the window's
+//                 key edges on this pan), setLocalFftShape() and
+//                 moxHoldLengthMs(), and the per-band waterfall AGC run
+//                 levels kept in memory. J.J. Boyd (KG4VCF), AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 12: setClarityFloorTargetDbm(), the
+//                 Clarity floor the drawn one moves toward on every
+//                 waterfall row. J.J. Boyd (KG4VCF), AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 8: Cal Offset as its own term.
+//                 setStationCalOffsetDb() / stationCalOffsetDb() carry the
+//                 station's receive offset (never saved); setDbmCalOffset()
+//                 / dbmCalOffset() are the operator's Cal Offset alone.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 5: a trace colour of its own
+//                 (traceColor), the GPU fill's lower edge taken from the
+//                 fill colour, and a background behind the 2D spectrum
+//                 (backgroundEnabled, backgroundFillColor,
+//                 backgroundImagePath, backgroundOpacity), ported from
+//                 AetherSDR src/gui/SpectrumWidget.{h,cpp} [@1e0718ad];
+//                 attribution block below. J.J. Boyd (KG4VCF), AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 17: the waterfall NF-AGC offset
+//                 in 0.1 dB steps (waterfallAGCOffsetTenthsDb). J.J. Boyd
+//                 (KG4VCF), AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-10-11 : Follow-up wave F6: updateSpectrumLinear() is told
+//                 whether the frame was computed after the last FFT input
+//                 purge; only such a frame ends the waterfall's hold after
+//                 a key edge. J.J. Boyd (KG4VCF), AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-10-10 : Follow-up wave F3: displayKeyedChanged(), so the Display
+//                 pill can grey dB Max and dB Min while the pan is keyed.
+//                 J.J. Boyd (KG4VCF), AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-10-10 : Follow-up wave F1: NB Blank's threshold is in dB
+//                 (waterfallBlankingThresholdDb, 1 to 20, default 6), a
+//                 NereusSDR design; AetherSDR's factor is not carried
+//                 over. J.J. Boyd (KG4VCF), AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-10-10 : Display pill plan Task 4: NB Blank on the waterfall
+//                 (waterfallBlankingEnabled / Threshold), a fixed grid
+//                 spacing (freqGridSpacingHz) and the frequency scale's
+//                 text size (freqScaleFontPx, freqScaleHeight), ported
+//                 from AetherSDR src/gui/SpectrumWidget.{h,cpp}
+//                 [@1e0718ad]; attribution block below. J.J. Boyd
+//                 (KG4VCF), AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-10-10 : Display pill plan Task 3: setClarityFloorDbm() and
+//                 effectiveWaterfallLevels(); waterfall Black Level and
+//                 Color Gain defaults 57 and 60 (core/spectrum/
+//                 ClarityLevels.h). J.J. Boyd (KG4VCF), AI-assisted
+//                 transformation via Anthropic Claude Code.
 //   2026-10-11 : m_wfHistoryRescales, waterfallHistoryForTest() and its
 //                 companions, for the waterfall history's resize tests.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -163,6 +242,28 @@
 //                 change (ctunHeldReason), and setCtunEnabled then changes
 //                 nothing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+// =================================================================
+
+// =================================================================
+// Source attribution (AetherSDR, GPLv3):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors,
+//       per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   This file carries ports and structural derivatives of AetherSDR
+//   source. AetherSDR is licensed under the GNU General Public License
+//   v3. NereusSDR is also GPLv3. Attribution follows GPLv3 §5
+//   requirements. AetherSDR has no per-file license header; its project
+//   LICENSE applies.
+//
+//   Ported at 1e0718ad from src/gui/SpectrumWidget.h (with
+//   src/gui/SpectrumOverlayMenu.cpp for ranges): the NB waterfall
+//   blanker, the frequency grid spacing and the frequency scale text
+//   size (Modification history above, 2026-10-10, Task 4); the separate
+//   trace colour and the spectrum background (2026-10-10, Task 5). Each
+//   ported block carries its own "From AetherSDR" cite. The 3D
+//   stacked-trace port has its own block below.
 // =================================================================
 
 // =================================================================
@@ -353,6 +454,7 @@ mw0lge@grange-lane.co.uk
 #include "core/spectrum/SpectrumReducer.h"
 
 #include <array>
+#include <limits>
 #include "gui/DssRenderer.h"
 #include <utility>
 
@@ -625,6 +727,14 @@ public:
     /// The frame rate the Core sends this pan, 0 outside a remote window or
     /// before its first context.
     int remoteFrameRate() const { return m_remoteSpectrum ? m_remoteFps : 0; }
+    /// Display pill plan Task 15: the decimation the Core runs this pan's
+    /// FFT at, which is the one this window last asked it for through the
+    /// Core's decimation control (1 for a Core that has no such control).
+    /// RemoteMediaController gives it with each accepted receive context;
+    /// below 1 is taken as 1. With remoteGrantedFftSize() and the context's
+    /// source rate it gives a remote pan's moxHoldLengthMs().
+    void setRemoteDecimation(int decimation);
+    int remoteDecimation() const { return m_remoteDecimation; }
     /// Retire incoming/pending planes while preserving painted RF history.
     /// Used while renewing the same remote display binding; full retirement
     /// (disconnect, replacement or rejection) uses clearRemoteSpectrum().
@@ -683,6 +793,11 @@ public:
 
     // ---- Display range ----
     void setDbmRange(float minDbm, float maxDbm);
+    // Display pill plan Task 9: the RECEIVE range, as the band's stored dB
+    // Max and Min give it (PanModels). In receive this is setDbmRange().
+    // While keyed the live pair is the transmit grid, so the range goes to
+    // the receive store and shows when the pan returns to receive.
+    void setReceiveDbmRange(float minDbm, float maxDbm);
     // 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
     // fields setDbmRange() has always written directly, so
     // DisplaySettingsModel has something to bind each of the fifteen
@@ -695,6 +810,9 @@ public:
     /// Parity Task 28: the transmit grid's pair whether or not it is live
     /// (setMoxOverlay swaps it in while keyed), for the transmit window a
     /// remote pan asks the Core for.
+    /// One computer TX pair. The caller retains its current endpoint UI
+    /// rules; storage retains the native Ref -200..200 / Range 10..200.
+    void setTransmitDbmRange(float minDbm, float maxDbm);
     float transmitRefLevel() const { return m_moxOverlay ? m_refLevel : m_txRefLevel; }
     float transmitDynamicRange() const
     {
@@ -710,6 +828,9 @@ public:
 
     // ---- Waterfall settings ----
     void setWfColorScheme(WfColorScheme scheme) override;
+    Q_INVOKABLE void setRxWfGradient(QString encoded);
+    QString rxWfGradient() const { return m_rxWfGradient; }
+    static QString defaultRxWfGradient();
     WfColorScheme wfColorScheme() const { return m_wfColorScheme; }
     void setWfColorGain(int gain);
     int  wfColorGain() const { return m_wfColorGain; }
@@ -898,14 +1019,62 @@ public:
     // Display calibration offset added to every bin before it's mapped
     // to screen Y. Ported from Thetis Display.RX1DisplayCalOffset
     // (display.cs:1372). Range: -30 .. +30 dB.
+    // Display pill plan Task 8: this is the operator's Cal Offset alone
+    // (key DisplayCalOffset, default 0, saved per pan). The station's
+    // receive offset is the separate term below; the two are added in
+    // displayCalOffsetDb().
     void setDbmCalOffset(float db);
     float dbmCalOffset() const { return m_dbmCalOffset; }
+
+    // The station's receive offset for the stream this pan shows
+    // (RadioModel::rxMeterOffsetDbForStream: calibration plus preamp or
+    // attenuator). MainWindow pushes it with every frame and when the
+    // station's offsets change. Never saved and never announced: it is the
+    // station's fact, not a setting of this pan. Not held to the Cal
+    // Offset's -30 .. +30 dB, which is the range of the operator's control.
+    void setStationCalOffsetDb(float db);
+    float stationCalOffsetDb() const { return m_stationCalOffsetDb; }
 
     // Trace colour (Phase 3G-8 commit 6 wiring). Single colour used for
     // both the line and the fill in the current renderer; plan §6 S11/S13
     // track splitting these if needed by future UI polish.
     void setFillColor(const QColor& c) override;
     QColor fillColor() const { return m_fillColor; }
+
+    // Display pill plan Task 5: the trace line's own colour. Until one is
+    // chosen (on this pan or as the Setup default) the trace is drawn in
+    // the fill colour and follows it, as it always did. Per pan, key
+    // DisplayTraceColor (default: none stored).
+    // From AetherSDR src/gui/SpectrumWidget.h:461 [@1e0718ad]
+    // NereusSDR, based on AetherSDR: AetherSDR's line colour has a fixed
+    // cyan default beside a cyan fill; here "not chosen" is a state of its
+    // own, so changing the fill colour still changes an unchosen trace.
+    QColor traceColor() const { return m_traceColor.isValid() ? m_traceColor : m_fillColor; }
+    bool traceColorFollowsFill() const { return !m_traceColor.isValid(); }
+    void setTraceColor(const QColor& c) override;
+
+    // Display pill plan Task 5: a background behind the 2D spectrum's grid
+    // and trace: a fill colour, and over it an optional picture scaled to
+    // cover the spectrum area. Opacity is how strongly the colour covers
+    // the picture: 0 shows the picture alone, 100 the colour alone. With
+    // the background off (the default) nothing is drawn and the spectrum
+    // looks as it did before this existed; the picture, colour and opacity
+    // stay chosen. An empty path clears the picture. The 3D spectrum is
+    // not given a background. Per pan, keys DisplayBackgroundEnabled
+    // (False), DisplayBackgroundImage (none), DisplayBackgroundOpacity (80)
+    // and DisplayBackgroundColor (#0a0a14).
+    // From AetherSDR src/gui/SpectrumWidget.h:435-440 [@1e0718ad]
+    // NereusSDR, based on AetherSDR: on/off is a setting of its own (in
+    // AetherSDR "Off" stores the path "none" and so forgets the picture),
+    // no picture ships as a default, and every value is saved per pan.
+    bool    backgroundEnabled() const { return m_bgEnabled; }
+    void    setBackgroundEnabled(bool on);
+    QString backgroundImagePath() const { return m_bgImagePath; }
+    void    setBackgroundImagePath(const QString& path);
+    int     backgroundOpacity() const { return m_bgOpacity; }
+    void    setBackgroundOpacity(int pct);
+    QColor  backgroundFillColor() const { return m_bgFillColor; }
+    void    setBackgroundFillColor(const QColor& c);
 
     // ---- Waterfall renderer controls (Phase 3G-8 commit 4) ----
 
@@ -914,15 +1083,56 @@ public:
     void setWfLowThreshold(float dbm);
     float wfLowThreshold() const { return m_wfLowThreshold; }
     void setWfAgcEnabled(bool on) override;
+    void enableWaterfallAgcIfManual() override;
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
 
     /// Force the waterfall-AGC running min/max tracker to re-prime on the
     /// next bin push.  Use when the bin source changes dynamic range
-    /// abruptly (e.g. MOX edge: RX colormap is centered around -100 dBm,
-    /// TX bins land around -50 dBm) — without this, the 0.05 alpha
-    /// follower takes ~3 s to converge and the waterfall saturates solid
-    /// red in the meantime.
+    /// abruptly — without this, the 0.05 alpha follower takes ~3 s to
+    /// converge. Not for a MOX edge: a key keeps the run level
+    /// (setDisplayKeyed).
     void resetWaterfallAgc() { m_wfLevels.resetAgc(); }
+
+    // Display pill plan Task 13 (design 5.3 to 5.5): this pan's half of the
+    // window's key and un-key display edges. MoxDisplayController calls it
+    // on every pan of the window, the transmitting one and the others,
+    // before its rise and its fall.
+    //
+    // keyed = true: the waterfall AGC run level is saved under bandKey (the
+    // receive context) and the follower freezes: no row of the key moves
+    // the level, and rows keep drawing with the level in force.
+    // keyed = false: the run level saved under bandKey comes back, or the
+    // restart floor (WaterfallLevelFollower::kAgcRestartFloorDbm) when that
+    // band has none, and the follower holds for holdLengthMs.
+    // Either edge starts the noise-floor fast attack with holdLengthMs as
+    // its minimum.
+    //
+    // bandKey is the pan's band at that edge, as an int; a band changed
+    // while keyed restores the new band's level. The saved levels live
+    // here, in memory. A repeat of the state the pan is already in does
+    // nothing.
+    void setDisplayKeyed(bool keyed, qint64 holdLengthMs, int bandKey);
+    bool displayKeyed() const { return m_displayKeyed; }
+    /// The size, decimation and input rate of the engine that feeds this
+    /// pan in a window running its own DSP. MainWindow gives it whenever
+    /// one of the three changes; zeros mean the pan has no engine here.
+    void setLocalFftShape(int fftSize, int decimation, double sampleRateHz);
+    /// How long this pan holds its estimates after an un-key
+    /// (core/spectrum/MoxDisplayHold.h): from the local FFT shape, or
+    /// kMoxHoldMinMs with none. A pan a Core feeds (remoteGrantedFftSize()
+    /// above 0) uses the Core's shape instead: the granted size, the rate
+    /// given to setRemoteSpectrumContext and remoteDecimation(). The Core's
+    /// shape wins when both are set, because the Core's FFT is the one
+    /// whose input refills after its key.
+    qint64 moxHoldLengthMs() const;
+    /// The waterfall AGC follower's run level; empty before its first row.
+    std::optional<float> waterfallAgcRunLevel() const { return m_wfLevels.agcRunLevel(); }
+    /// Test seam: the clock the waterfall levels, the hold and the noise
+    /// floor read, in milliseconds. Empty gives the system clock back.
+    void setDisplayClockForTest(std::function<qint64()> nowMs)
+    {
+        m_displayClockForTest = std::move(nowMs);
+    }
 
     /// Clear the spectrum + waterfall avenger accumulators.  Use on bin-source
     /// changes that are abrupt enough that fading from the previous source's
@@ -938,8 +1148,31 @@ public:
         m_extendedWaterfallAvenger.clear();
     }
 
+    // The pan's saved choice, separate from whether a measured Clarity
+    // level is currently driving its waterfall (clarityActive()).
+    void setClarityEnabled(bool on);
+    bool clarityEnabled() const { return m_clarityEnabled; }
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
+
+    // Display pill plan Task 3: the noise floor Clarity measured for this
+    // pan, in dBm. While Clarity is active the waterfall's Black Level and
+    // Color Gain place the colour range against it
+    // (core/spectrum/ClarityLevels.h): 50 puts black at the floor and up is
+    // blacker. Runtime state: never saved, never announced. A value that is
+    // not finite is ignored. clarityFloorDbm() is NaN until the first one
+    // arrives, and until then an active Clarity colours with its own
+    // threshold pair.
+    void  setClarityFloorDbm(float noiseFloorDbm);
+    float clarityFloorDbm() const { return m_clarityFloorDbm; }
+    // Display pill plan Task 12: the floor to move toward. The drawn floor
+    // (clarityFloorDbm()) goes part of the way on every waterfall row
+    // (pushWaterfallRow), so a new Clarity level arrives as a glide and not
+    // as a step. setClarityFloorDbm() above is the immediate form, for a
+    // band-change snap and the first level, and it sets the target too.
+    // With no drawn floor yet the target is taken at once. A value that is
+    // not finite is ignored.
+    void  setClarityFloorTargetDbm(float noiseFloorDbm);
 
     // Issue #230 fix — Thetis-faithful split between persistent user
     // thresholds (above) and runtime render-active thresholds (below).
@@ -952,6 +1185,12 @@ public:
     // and composeWaterfallActiveThresholds().
     float wfActiveLowThreshold()  const { return m_wfActiveLowThreshold;  }
     float wfActiveHighThreshold() const { return m_wfActiveHighThreshold; }
+    // The low and high dBm the waterfall palette spans right now: the TX
+    // pair under the MOX overlay; with Clarity active, the black point and
+    // span Black Level and Color Gain set against the noise floor; else the
+    // active Low and High with no Black Level or Color Gain offset.
+    // dbmToRgb and traceWaterfallState both call it.
+    std::pair<float, float> effectiveWaterfallLevels() const;
 
     // Clarity controller writes the render-active mirror only — never
     // the persisted user field. Modeled on the AGC path in
@@ -971,17 +1210,19 @@ public:
     // use the Core's levels (display extras, the same the phone draws with),
     // not a follower of their own run on rows the Core has already clamped
     // to the dBm window. RemoteMediaController turns this on for a Core that
-    // offers display extras. While on, and AGC or NF-AGC is the mode (not
-    // Clarity), the waterfall colours against the last levels the Core sent
-    // (the stored levels until the first arrive) and the local follower
-    // does not run.
+    // offers display extras. While on, with AGC on (NF-AGC is an option
+    // under AGC, so AGC off means the stored levels, as it does locally)
+    // and Clarity not setting the levels, the waterfall colours against the
+    // last levels the Core sent (the stored levels until the first arrive)
+    // and the local follower does not run.
     void setCoreWaterfallLevelsAvailable(bool available);
     bool coreWaterfallLevelsAvailable() const { return m_coreWfLevelsAvailable; }
     /// The Core's levels are the ones in use now.
     bool coreWaterfallLevelsInUse() const
     {
-        return m_coreWfLevelsAvailable && !m_clarityActive
-            && (m_wfAgcEnabled || m_wfNfAgcEnabled);
+        // NF-AGC is an option under AGC (WaterfallLevelFollower::compose):
+        // with AGC off the levels are the stored ones, here as locally.
+        return m_coreWfLevelsAvailable && !m_clarityActive && m_wfAgcEnabled;
     }
     /// The Core's levels for the latest waterfall line (NSDX section 0x08).
     void setCoreWaterfallLevels(float lowDbm, float highDbm);
@@ -994,11 +1235,60 @@ public:
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }
+    // The offset in whole dB: Setup's control, the Display pill's slider
+    // (rulings wave R6) and the value a remote window sends its Core. The
+    // getter rounds the 0.1 dB value below.
     void setWaterfallAGCOffsetDb(int db);
-    int  waterfallAGCOffsetDb() const { return m_wfNfAgcOffsetDb; }
+    int  waterfallAGCOffsetDb() const;
+    // Display pill plan Task 17 (design S7): the value is kept in tenths
+    // of a dB, -600 to 600, saved under WaterfallAGCOffsetDb as a number of
+    // dB and given to this pan's own level follower. Both setters announce
+    // "WaterfallAGCOffsetDb". Rulings wave R6: no control sets a fraction
+    // any more (the pill's slider is whole dB), and a stored fraction is
+    // rounded to the nearest dB when the settings are read.
+    void setWaterfallAGCOffsetTenthsDb(int tenths);
+    int  waterfallAGCOffsetTenthsDb() const { return m_wfNfAgcOffsetTenthsDb; }
     // Stop-on-TX: pause pushWaterfallRow() while TX is active.
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
+
+    // NB Blank: a waterfall row whose mean power jumps over a rolling
+    // baseline (a noise burst that would draw a stripe) is replaced by the
+    // last good row. Per pan, keys WaterfallBlankingEnabled (default off)
+    // and WaterfallBlankingThresholdDb (default 6).
+    // From AetherSDR src/gui/SpectrumWidget.h:412-413 [@1e0718ad]
+    // NereusSDR design (follow-up wave F1): the threshold is in dB, 1 to
+    // 20: how far above the baseline a row's mean power must be to be
+    // replaced. AetherSDR's is a factor of raw tile intensity, which has
+    // no dB meaning; it is not carried over and its key
+    // (WaterfallBlankingThreshold) is no longer read.
+    bool waterfallBlankingEnabled() const { return m_wfBlankerEnabled; }
+    void setWaterfallBlankingEnabled(bool on);
+    int  waterfallBlankingThresholdDb() const { return m_wfBlankerThresholdDb; }
+    void setWaterfallBlankingThresholdDb(int db);
+
+    // The grid's and the frequency scale's spacing: 0 is Auto, otherwise
+    // one of kFreqGridSpacingsHz. Any other value is refused. Per pan, key
+    // DisplayFreqGridSpacing (default 0).
+    // From AetherSDR src/gui/SpectrumWidget.h:464 [@1e0718ad]
+    // NereusSDR, based on AetherSDR: Hz, not kHz, like every other
+    // frequency this widget holds.
+    int  freqGridSpacingHz() const { return m_freqGridSpacingHz; }
+    void setFreqGridSpacingHz(int hz);
+    // From AetherSDR src/gui/SpectrumOverlayMenu.cpp:1831 [@1e0718ad]
+    // (1, 2, 5, 10, 25, 50 and 100 kHz).
+    static constexpr std::array<int, 7> kFreqGridSpacingsHz{
+        1000, 2000, 5000, 10000, 25000, 50000, 100000};
+
+    // The frequency scale's text size in pixels, 8 to 14. Per pan, key
+    // DisplayFreqScaleFontPx (default 10, the size it always was).
+    // From AetherSDR src/gui/SpectrumWidget.h:465 [@1e0718ad]
+    // NereusSDR, based on AetherSDR: pixels, not points, because this
+    // widget's scale text has always been set in pixels.
+    int  freqScaleFontPx() const { return m_freqScaleFontPx; }
+    void setFreqScaleFontPx(int px);
+    // The scale strip's height: kFreqScaleH, more when the text needs it.
+    int  freqScaleHeight() const;
 
     // ── 3DSS stacked-trace mode ───────────────────────────────────────────
     // Persistence (3D Stacked-Trace Spectrum Plan Task 14): render mode,
@@ -1263,6 +1553,12 @@ public:
     void setWfUpdatePeriodMs(int ms) override;
     int  wfUpdatePeriodMs() const { return m_wfUpdatePeriodMs; }
 
+    /// Existing visible and retained row state; no allocation or refresh.
+    int visibleWaterfallRows() const { return m_waterfall.height(); }
+    int waterfallHistoryRows() const { return m_wfHistoryRowCount; }
+    int waterfallHistoryCapacityRows() const;
+    int maxWaterfallHistoryOffsetRows() const;
+    qint64 effectiveWaterfallHistorySeconds() const;
     qint64 waterfallHistoryMs() const  { return m_waterfallHistoryMs; }
     void   setWaterfallHistoryMs(qint64 ms);
     bool   wfLive() const              { return m_wfLive; }
@@ -1340,6 +1636,60 @@ public:
     void setFreqLabelAlign(FreqLabelAlign a);
     FreqLabelAlign freqLabelAlign() const { return m_freqLabelAlign; }
 
+    // Test seams (tst_spectrum_widget_additions): the grid and scale
+    // spacing the two draw functions use, the scale strip's rectangle, and
+    // the scale drawn into a painter outside the live paintEvent().
+    void drawFrequencyGridForTest(QPainter& painter, const QRect& rect) {
+        drawGrid(painter, rect);
+    }
+    double gridFreqStepHzForTest() const  { return gridFreqStepHz(); }
+    // The dB values drawGrid() draws its horizontal lines at, bottom up.
+    QVector<float> dbGridLinesForTest() const
+    {
+        QVector<float> lines;
+        forEachDbGridLine([&lines](float dbm) { lines.append(dbm); });
+        return lines;
+    }
+    double scaleFreqStepHzForTest() const { return scaleFreqStepHz(); }
+    QRect  freqScaleRectForTest() const   { return spectrumLayout().frequency; }
+    void   drawFreqScaleForTest(QPainter& p, const QRect& r) { drawFreqScale(p, r); }
+    // How many scale labels the last drawFreqScale() drew.
+    int    freqScaleLabelsDrawnForTest() const { return m_freqScaleLabelsDrawn; }
+
+    // Display pill plan Task 5 test seams. The trace as the QPainter path
+    // draws it and the background both paths paint, drawn into a caller's
+    // painter (an offscreen grab() of a QRhiWidget build shows neither),
+    // and the trace and fill vertices exactly as renderGpuFrame() uploads
+    // them.
+    void setRenderedPixelsForTest(const QVector<float>& dbm) { m_renderedPixels = dbm; }
+    void drawSpectrumForTest(QPainter& p, const QRect& r) { drawSpectrum(p, r); }
+    bool drawsSpectrumBackgroundForTest() const { return drawsSpectrumBackground(); }
+    void paintSpectrumBackgroundForTest(QPainter& p, const QRect& r) {
+        paintSpectrumBackground(p, r);
+    }
+    bool backgroundImageLoadedForTest() const { return !m_bgImage.isNull(); }
+#ifdef NEREUS_GPU_SPECTRUM
+    struct FftTraceVerticesForTest {
+        QVector<float> line;   // one vertex per display pixel
+        QVector<float> fill;   // two per display pixel: at the trace, at the base
+        int stride{kFftVertStride};  // floats per vertex: x, y, r, g, b, a
+    };
+    FftTraceVerticesForTest fftTraceVerticesForTest() const {
+        FftTraceVerticesForTest v;
+        buildFftTraceVertices(static_cast<int>(qMin<qsizetype>(m_renderedPixels.size(),
+                                                               kMaxFftBins)),
+                              true, v.line, v.fill);
+        return v;
+    }
+    // The live trace as renderGpuFrame() uploads it for a spectrum viewport
+    // of this size in device pixels at this pixel ratio: what
+    // SpectrumTraceRibbon.h builds from the line vertices above (four
+    // vertices per segment over one device pixel wide, the line's own
+    // vertices at or under it).
+    QVector<float> fftTraceRibbonForTest(float viewportWidthPx, float viewportHeightPx,
+                                         float devicePixelRatio) const;
+#endif
+
     // Configurable grid/text/zero-line/band-edge colours. Previously
     // hardcoded. Ported from Thetis setup.cs:1040-1044 Display.GridColor
     // / GridPenDark / HGridColor / GridTextColor / GridZeroColor and
@@ -1350,6 +1700,16 @@ public:
     QColor gridFineColor() const { return m_gridFineColor; }
     void setHGridColor(const QColor& c);
     QColor hGridColor() const { return m_hGridColor; }
+    // Approved scope: persisted per pan in DisplayGridStep, 1 to 40 dB.
+    // Historical model-routing description follows.
+    // The spacing of the horizontal dB grid lines, in whole dB: Setup's
+    // "dB Step" (PanadapterModel::gridStep, pushed here by PanModels). A
+    // step below 1 is refused. Not saved here: the model owns the setting.
+    // From Thetis setup.cs:7920-7923 [v2.10.3.15]: udDisplayGridStep sets
+    // Display.SpectrumGridStep, and display.cs:9653-9668 draws a line every
+    // grid_step dB. The step is what is drawn; there is no automatic step.
+    void setDbGridStep(int stepDb);
+    int  dbGridStep() const { return m_dbGridStep; }
     void setGridTextColor(const QColor& c);
     QColor gridTextColor() const { return m_gridTextColor; }
     // Plan 4 D9c-1: zero-line color split into separate RX and TX colors.
@@ -1425,7 +1785,9 @@ public:
     // m_bFastAttackNoiseFloorRX1.  When true the line + text render gray
     // (m_noiseFloorFastColor) instead of red/yellow to signal the smoothed
     // average is still settling.  Caller (MainWindow) sets on band/freq
-    // change and clears after attack-time elapses.
+    // change and clears after attack-time elapses. Its minimum is
+    // NoiseFloorFollower::kFastAttackMinMs; a MOX edge passes the un-key
+    // hold length instead, through setDisplayKeyed().
     void setNoiseFloorFastAttack(bool on);
     bool noiseFloorFastAttack() const { return m_noiseFloor.fastAttack(); }
 
@@ -1461,6 +1823,8 @@ public:
     // so a quit or a crash in the middle of a run never stores the held
     // value. std::nullopt ends the hold. One setting for every pan, so one
     // hold for the process.
+    // Display rebuild: that process hold now snapshots and restores each
+    // pan's own choice, including a pan loaded while calibration runs.
     static void setGridFollowSaveHold(std::optional<bool> saved);
     static std::optional<bool> gridFollowSaveHold();
 
@@ -1573,8 +1937,8 @@ public:
     /// RX1Offset).
     float txDisplayCalOffsetDb() const noexcept { return m_txDisplayCalOffsetDb; }
     void setTxDisplayCalOffsetDb(float db);
-    /// The preamp half of the receive calibration (setDbmCalOffset carries
-    /// both), Thetis Display.RX1PreampOffset; keyed with DUP on the trace
+    /// The preamp half of the receive calibration (setStationCalOffsetDb
+    /// carries both), Thetis Display.RX1PreampOffset; keyed with DUP on the trace
     /// adds the receive calibration without it.
     float rxPreampOffsetDb() const noexcept { return m_rxPreampOffsetDb; }
     void setRxPreampOffsetDb(float db);
@@ -1723,6 +2087,11 @@ public:
     /// instead. Every emitter routes through requestTune, which is greppable.
     void requestTuneForTest(double hz)      { requestTune(hz); }
     QRgb dbmToRgbForTest(float dbm) const  { return dbmToRgb(dbm); }
+    /// The low and high dBm dbmToRgb spans right now (tst_clarity_levels).
+    std::pair<float, float> effectiveWaterfallLevelsForTest() const
+    {
+        return effectiveWaterfallLevels();
+    }
     void setWfLowThresholdForTest(float dbm)  { m_wfLowThreshold  = dbm; }
     void setWfHighThresholdForTest(float dbm) { m_wfHighThreshold = dbm; }
     // VFO flag crash lane: this pan's VFO marker and passband, which the
@@ -1745,9 +2114,54 @@ public:
     // RadioModel::spectrumWidget()->displaySettings().
     DisplaySettingsModel* displaySettings() const { return m_displaySettings; }
     void loadSettings();
+    // Display pill plan Task 1. The base name of every per-pan display key
+    // this widget and its DisplaySettingsModel persist. The pan's own
+    // override of a base is PanDisplayKeys::panKey(base, panIndex()); the
+    // bare base is the Setup default (core/settings/PanDisplayKeys.h).
+    QStringList perPanDisplayKeyBases() const;
+    // Display pill plan Task 21: the ship default a pan falls back to for
+    // one of those bases when neither the pan nor Setup has a value, as the
+    // key stores it. Empty for a base that is not per-pan (and for the
+    // trace colour, whose ship default is "follow the fill colour").
+    QString perPanShipDefault(const QString& base) const;
+    // Canonical ship default without a widget, settings access, or runtime
+    // setup. Uses the same inventory as live values and persistence.
+    static QString perPanShipDefaultForClosedPan(const QString& base);
+    // The current value in the same format a save uses, without writing,
+    // flushing pending settings or changing the widget/model.
+    QString perPanDisplayValue(const QString& base) const;
+    // The ones "Reset this pan" clears: the list above without the pan's
+    // view, which is not its appearance (the zoom "DisplayBandwidth", the
+    // transmit view span "DisplayTxViewBandwidth" and the CTUN preference
+    // "DisplayCtunEnabled").
+    QStringList resettablePanDisplayKeyBases() const;
+    // Drops this pan's own appearance overrides (the resettable keys, for
+    // this pan only) and puts the live widget on what it now inherits; its
+    // zoom, transmit view span and CTUN preference stay as they are, live
+    // and stored. A pending save is
+    // cancelled, the widget and its DisplaySettingsModel are reloaded,
+    // whatever the reloaded values feed is rebuilt, and panDisplayReset()
+    // is emitted once. The Setup defaults and every setting that is not
+    // per pan are left alone.
+    void resetPanDisplayOverrides();
+    // Reset only known picture keys, preserving pending values on other
+    // pages. Unknown keys and view keys are never cleared.
+    void resetPanDisplayOverridesForKeys(const QStringList& bases);
+    // A change made on this pan is stored up to half a second later (the
+    // coalesced save). While one is waiting, this stores `base` now, as
+    // that save will: the pan's own key, and only when the pan already has
+    // it or its value differs from what it inherits. Setup calls it before
+    // it changes the default for `base`, so a pan that was just given a
+    // value of its own is seen to have one and keeps it. Nothing happens
+    // when no save is waiting; the waiting save still runs.
+    void storePendingPerPanSetting(const QString& base);
+    // Test seam: whether a coalesced save is waiting to run.
+    bool settingsSavePendingForTest() const { return m_settingsSaveScheduled; }
     void loadSpectrumPeaksSettings();
     // The grid's noise-floor tracking rule both feeds share, and its timer.
-    void applyGridFollow(float nfDbm);
+    void applyGridFollow(float nfDbm, bool force = false);
+    /// Last accepted finite measured floor, without deriving one from the grid.
+    std::optional<float> acceptedGridFollowFloorDbm() const;
     void updateGridFollowTimer();
     // Applies a shared (once for every pan) setting to every other pan.
     void shareWithOtherPans(const std::function<void(SpectrumWidget*)>& apply);
@@ -1929,8 +2343,14 @@ public slots:
     // [v2.10.3.13] -- the same two-stage reduction Thetis runs per
     // display plane.  Same slice feeds the waterfall pipeline (own
     // detector + avenger) and lands in m_wfRenderedPixels.
+    //
+    // computedAfterInputPurge is false for a frame whose samples are from
+    // before the last FFT input purge (the window compares the frame's
+    // generation with the pool's). Such a frame is drawn as any other, but
+    // it does not end the waterfall's hold after a key edge.
     void updateSpectrumLinear(int receiverId, const QVector<float>& binsLinear,
-                              double windowEnb, double dbmOffset);
+                              double windowEnb, double dbmOffset,
+                              bool computedAfterInputPurge = true);
 
     // NF-aware grid slot — wired to ClarityController::noiseFloorChanged in MainWindow.
     // From Thetis console.cs:46074-46086 [v2.10.3.13] tmrAutoAGC_Tick NF grid block.
@@ -2402,9 +2822,66 @@ public:
     // these appliers entirely) and that a no-op re-apply does not move it.
     int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
+    // Whether the GPU 3DSS mesh pipeline is up: the runtime half of
+    // dssRowSpanSupported() (DssMeshGeometry.h). False until the renderer
+    // has built the mesh, false again if it loses it, and always false in a
+    // CPU-only build, which has no GPU mesh at all. dssMeshReadyChanged()
+    // says when it moves, so a control that depends on it (the Display
+    // pill's 3D Span and Slice Shadow) can follow it.
+#ifdef NEREUS_GPU_SPECTRUM
+    bool dssMeshReady() const { return m_dssMeshReady; }
+#else
+    bool dssMeshReady() const { return false; }
+#endif
+    // Test seam: stands in for the renderer bringing the mesh up or losing
+    // it, where a test has no GPU to do it. No-op on a CPU-only build.
+    void setDssMeshReadyForTest(bool ready) {
+#ifdef NEREUS_GPU_SPECTRUM
+        setDssMeshReady(ready);
+#else
+        Q_UNUSED(ready);
+#endif
+    }
+
 signals:
     void imdMeasurementChanged(const ImdMeasurementFrame& frame);
     void imdPresentationChanged();
+    // The GPU 3DSS mesh came up or was lost; see dssMeshReady(). Emitted
+    // once per change, on the GUI thread, from inside the renderer's own
+    // initialize, render or release step: a receiver that touches widgets
+    // should take it queued and read dssMeshReady() when it runs.
+    void dssMeshReadyChanged(bool ready);
+    // Display pill plan Task 1: resetPanDisplayOverrides() finished. Every
+    // per-pan display value may have changed without its own signal (the
+    // reload assigns them as a load does), so a control showing one
+    // re-reads it from the widget on this.
+    void panDisplayReset();
+    // Display pill plan Task 2: a display setting that has no change signal
+    // of its own took a new value. keyBase is the setting's key base as it
+    // is stored ("DisplayGridEnabled", "DisplayWfAgc",
+    // "WaterfallNFAGCEnabled", "DisplayShowNoiseFloor", ...). Emitted once
+    // per change, after the value is in place; not for a same-value set,
+    // and not from loadSettings() or resetPanDisplayOverrides() (the reset
+    // says panDisplayReset() instead). setDbmRange() names the end that
+    // moved: "DisplayGridMax", "DisplayGridMin", or one after the other.
+    void displaySettingChanged(const QString& keyBase);
+    // The flags on this pan were just raised above their siblings: a
+    // placement pass (updateVfoPositions()), a new flag (addVfoWidget()) or
+    // a new front flag (setFrontSliceIndex()). A sibling that has to stay
+    // above the flags, an open overlay flyout, raises itself again on this
+    // (SpectrumOverlayPanel::raiseOpenFlyout()). Emitted on the GUI thread
+    // from inside the call that raised, and only while the pan has a flag.
+    // Also emitted when a flag raises its floating buttons outside a
+    // placement pass (VfoWidget::floatingButtonsRaised(): a re-show, the
+    // station presentation gate, the access line). A placement pass emits
+    // it once, at its end, not once per flag or button.
+    void flagsRaised();
+    // Task 2: Clarity started or stopped driving this pan's waterfall
+    // levels (setClarityActive()).
+    void clarityActiveChanged(bool active);
+    // Follow-up wave F3: this pan was keyed or un-keyed (setDisplayKeyed).
+    // Emitted once per edge, after the pan's keyed work is done.
+    void displayKeyedChanged(bool keyed);
     /// receiverFlagRegion() changed: a flag moved, folded, opened, showed or
     /// hid.
     void receiverFlagRegionChanged();
@@ -2518,6 +2995,19 @@ signals:
     // From AetherSDR SpectrumWidget.cpp:1734 [@0cd4559]
     void dbmRangeChangeRequested(float minDbm, float maxDbm);
 
+    // Display pill plan Task 19: the right-click menu's "Display
+    // settings..." line was chosen. The window opens this pan's Display
+    // pill.
+    void displayPillRequested();
+
+    // Display pill plan Task 19: the right-click menu's Ref Level or Dyn
+    // Range was moved, asking for this receive range in dBm (floor,
+    // ceiling). Ref Level moves the ceiling and keeps the span; Dyn Range
+    // keeps the ceiling and moves the floor. The widget does not take the
+    // range itself: the band store does (design S9), and the pan follows
+    // the store through setReceiveDbmRange().
+    void bandRangeRequested(float minDbm, float maxDbm);
+
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
 
@@ -2535,6 +3025,13 @@ signals:
     // moves.  Without this, panning the spectrum leaves MaxBin scanning
     // bins at the OLD DDC-relative position until the next slice tune.
     void ddcCenterFrequencyChanged(double hz);
+
+    // Display pill plan Task 9: the pan's receive centre frequency took a
+    // new value (setCenterFrequency(), setFrequencyRange(), a pan drag: every
+    // path through applyViewWindow()). Not emitted while the transmit view
+    // span is loaded; that centre is the transmitter's, not the pan's.
+    // PanModels follows it to know the pan's band.
+    void centerFrequencyChanged(double centreHz);
 
     // Plan 4 D9 test seam: fires from drawTxFilterOverlay() after pixel
     // coordinates are computed.  Production code ignores this signal;
@@ -2657,6 +3154,27 @@ private:
 
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);
+    // The vertical grid's line spacing and the frequency scale's label
+    // spacing, in Hz, for the span on screen.
+    double gridFreqStepHz() const;
+    double scaleFreqStepHz() const;
+    // The horizontal dB grid lines of the range on screen (the transmit
+    // range while the pan is keyed), bottom up: fn(dbm) for each.
+    // From Thetis display.cs:9653-9668 [v2.10.3.15]: a line every grid_step
+    // dB (num = grid_max - i * grid_step), grid_step being Setup's dB Step.
+    // MW0LGE [original inline comment from display.cs:9661]
+    // NereusSDR keeps its own origin: the lines count up from the bottom of
+    // the range (Thetis counts down from dB Max), left alone here so the
+    // picture at the default step of 10 is the one drawn before.
+    template <typename Fn>
+    void forEachDbGridLine(Fn&& fn) const
+    {
+        const float bottom = m_refLevel - m_dynamicRange;
+        const float step = static_cast<float>(m_dbGridStep);
+        for (float dbm = bottom + step; dbm < m_refLevel; dbm += step) {
+            fn(dbm);
+        }
+    }
 
     /// Dashed markers at the DDC edges while an extended pan is showing
     /// wideband wings. Called from drawGrid so it rides the same cached
@@ -2750,8 +3268,6 @@ private:
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
                            bool imdEligible = false, quint64 acceptedOrdinal = 0);
-    int   waterfallHistoryCapacityRows() const;
-    int   maxWaterfallHistoryOffsetRows() const;
     int   historyRowIndexForAge(int ageRows) const;
     std::optional<qreal> imdEventY(quint64 sequence, qreal glideRows) const;
     QString pausedTimeLabelForAge(int ageRows) const;
@@ -2928,6 +3444,9 @@ private:
     // [v2.10.3.13] (waterfall_data[i] indexed by pixel).
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm, bool imdEligible = false,
                             quint64 acceptedOrdinal = 0);
+    // One row's step of Clarity's drawn floor toward its target
+    // (setClarityFloorTargetDbm).
+    void   slewClarityFloor();
     QRgb   dbmToRgb(float dbm) const;
     void traceWaterfallState(const QVector<float>& calibratedPixelsDbm,
                              const QRgb* scanline, int width, qint64 rowTimeMs);
@@ -3067,8 +3586,10 @@ private:
     // ---- Waterfall display controls ----
     // From AetherSDR SpectrumWidget defaults + Thetis display.cs:2522-2536
     WfColorScheme m_wfColorScheme{WfColorScheme::Default};
-    int    m_wfColorGain{45};         // 0-100
-    int    m_wfBlackLevel{104};       // 0-125 — keep in sync with loadSettings ship default
+    // Display pill plan Task 3: 60 and 57 reproduce the look before the
+    // Clarity level model (ClarityLevels::kColorGainDefault / kBlackLevelDefault).
+    int    m_wfColorGain{60};         // 0-100
+    int    m_wfBlackLevel{57};        // 0-100, 50 = black at the noise floor — keep in sync with loadSettings ship default
     // Waterfall uses its own dBm range (narrower than spectrum for better contrast).
     // Persistent user-configured thresholds (saved/loaded as DisplayWfHigh/LowLevel).
     // Ship defaults — keep in sync with loadSettings (SpectrumWidget.cpp)
@@ -3093,6 +3614,11 @@ private:
     // ---- Layout constants ----
     // From gpu-waterfall.md:590-593
     float  m_spectrumFrac{0.40f};     // 40% spectrum, 60% waterfall
+    // From AetherSDR src/gui/SpectrumWidget.h:1574-1578 [@1e0718ad]
+    // (freqScaleHeight() here; the default text is 10 px, not 8 pt):
+    // Height of the frequency scale bar at the default 8 pt label size.
+    // Use freqScaleH() in layout code — it grows with the user's label
+    // font so larger text never clips (#3501).
     static constexpr int kFreqScaleH = 28;  // Taller for easier grab target
     static constexpr int kDividerH = 4;
     static constexpr int kDbmStripW = 36;
@@ -3103,6 +3629,36 @@ private:
     // ---- Spectrum fill ----
     // From AetherSDR defaults
     QColor m_fillColor{0x00, 0xe5, 0xff};  // cyan
+    // Display pill plan Task 5: the trace line's own colour; invalid while
+    // none is chosen, and the trace is then drawn in m_fillColor.
+    // From AetherSDR src/gui/SpectrumWidget.h:1423 [@1e0718ad]
+    QColor m_traceColor;
+
+    // Display pill plan Task 5: the spectrum background.
+    // From AetherSDR src/gui/SpectrumWidget.h:1726-1736 [@1e0718ad]
+    // Background image
+    QImage  m_bgImage;
+    QImage  m_bgScaled;     // cached at current specRect size
+    QString m_bgImagePath;
+    QSize   m_bgScaledSize;
+    int     m_bgOpacity{80};  // 0=full image, 100=solid dark (default 80%)
+    // Solid fill colour painted BENEATH the bg image (#1741).  Default
+    // matches the pre-feature compositing colour so visual is unchanged
+    // until the operator picks something else via the spectrum overlay
+    // menu's "Background:" colour swatch.
+    QColor  m_bgFillColor{QColor(0x0a, 0x0a, 0x14)};
+    // NereusSDR: the background is drawn only while this is on (S6).
+    bool    m_bgEnabled{false};
+    // Whether this frame gets the background: on, and the 2D spectrum.
+    bool drawsSpectrumBackground() const;
+    // The fill colour, then the picture over it. Shared by paintEvent() and
+    // the layer renderGpuFrame() uploads.
+    void paintSpectrumBackground(QPainter& p, const QRect& specRect);
+    // (Re)reads the picture from m_bgImagePath, or drops it while the
+    // background is off or no picture is chosen.
+    void reloadBackgroundImage();
+    // The background changed: the GPU layer is repainted on the next frame.
+    void markBackgroundDirty();
     float  m_fillAlpha{0.70f};
     bool   m_panFill{true};
 
@@ -3179,11 +3735,16 @@ private:
     QPainterPath m_specFillPathScratch;
     QPainterPath m_specPeakPathScratch;
 
-    float       m_lineWidth{1.5f};
+    // ControlRanges::kDisplayLineWidthDefaultPx (Thetis udDisplayLineWidth's
+    // Value, setup.designer.cs:53039-53043 [v2.10.3.15]).
+    float       m_lineWidth{1.0f};
     bool        m_gradientEnabled{false};
 
     // Ported from Thetis Display.RX1DisplayCalOffset (display.cs:1372).
+    // Display pill plan Task 8: the operator's Cal Offset only.
     float       m_dbmCalOffset{0.0f};
+    // The station's receive offset (setStationCalOffsetDb). Not a setting.
+    float       m_stationCalOffsetDb{0.0f};
 
     // ---- 3M-5b: TX-specific waterfall colormap settings ----
     // Active during MOX per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51]
@@ -3192,6 +3753,10 @@ private:
     int           m_txWfHighLevel{30};         // dBm, from Thetis Display.cs:1911 [v2.10.3.13+501e3f51] tx_wf_amp_max default
     WfColorScheme m_txWfPalette{WfColorScheme::Enhanced}; // Thetis Display.cs:428 [v2.10.3.13+501e3f51] _tx_color_scheme = ColorScheme.enhanced
     QColor        m_txWfLowColor{Qt::black};   // Thetis Display.cs:2516 [v2.10.3.13+501e3f51] waterfall_low_color_tx = Color.Black
+    QString       m_rxWfGradient;
+    std::array<QRgb, 101> m_rxCustomLut{};
+    bool                  m_rxCustomLutValid{false};
+    quint64               m_rxCustomPaletteRevision{0};
     QString       m_txWfGradient;              // encoded gradient string for Custom palette
     // 3M-5c: 101-entry color LUT cached from m_txWfGradient encoded text.
     // Mirrors the Thetis WaterfallTXGradient() 101-color array built at
@@ -3219,6 +3784,8 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
+    // Display pill plan Task 15 (setRemoteDecimation).
+    int m_remoteDecimation{1};
     RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
     bool m_remoteWidebandAvailable{false};
     bool m_remoteWidebandActive{false};
@@ -3284,12 +3851,45 @@ private:
     QString m_wfDiagnosticLastState;
     QString m_wfDiagnosticFirstChangedRow;
     quint64 m_wfDiagnosticCollapsedChanges{0};
+    bool  m_clarityEnabled{true};    // Persistent requested choice for this pan.
     bool  m_clarityActive{false};     // Phase 3G-9c: suppresses legacy AGC when Clarity drives thresholds
+    // Clarity's noise floor for this pan; NaN until setClarityFloorDbm().
+    float m_clarityFloorDbm{std::numeric_limits<float>::quiet_NaN()};
+    // Where the drawn floor is heading (setClarityFloorTargetDbm); NaN until
+    // a floor arrives.
+    float m_clarityFloorTargetDbm{std::numeric_limits<float>::quiet_NaN()};
     // NF-AGC: Task 2.8 — auto-track thresholds to noise floor + offset.
     bool  m_wfNfAgcEnabled{false};
-    int   m_wfNfAgcOffsetDb{0};       // offset applied above/below noise floor
+    int   m_wfNfAgcOffsetTenthsDb{0}; // offset applied above/below noise floor, in 0.1 dB
     // Stop-on-TX: Task 2.8 — gate pushWaterfallRow() while TX is active.
     bool  m_wfStopOnTx{false};
+
+    // From AetherSDR src/gui/SpectrumWidget.h:1771-1779 [@1e0718ad]
+    // NereusSDR, based on AetherSDR: the ring holds each row's mean LINEAR
+    // power (rows here are dBm, AetherSDR's are intensity), the last good
+    // row is kept in dBm, and the unused fill / interpolate mode is left
+    // out.
+    // NB Waterfall Blanker (#277)
+    bool  m_wfBlankerEnabled{false};
+    static constexpr int kWfBlankerN = 32;
+    std::array<float, kWfBlankerN> m_wfBlankerRing{};
+    int   m_wfBlankerRingIdx{0};
+    int   m_wfBlankerRingCount{0};
+    QVector<float> m_wfLastGoodRowDbm;
+    // NereusSDR design (follow-up wave F1): the threshold in dB, 1 to 20,
+    // in place of AetherSDR's m_wfBlankerThreshold{1.15f} (an impulse
+    // multiplier vs the rolling baseline of tile intensity).
+    int   m_wfBlankerThresholdDb{6};
+    // Replaces rowDbm with the last good row when it is a burst.
+    void  blankWaterfallRow(QVector<float>& rowDbm);
+    void  resetWaterfallBlanker();
+
+    // From AetherSDR src/gui/SpectrumWidget.h:1426-1427 [@1e0718ad]
+    int   m_freqGridSpacingHz{0};    // 0=Auto, or 1/2/5/10/25/50/100 kHz (#1390)
+    // NereusSDR, based on AetherSDR: pixels and a default of 10, this
+    // widget's scale text as it always was (AetherSDR: points, 8).
+    int   m_freqScaleFontPx{10};     // freq-scale label size, 8..14 pt (#3501)
+    int   m_freqScaleLabelsDrawn{0}; // test seam, see freqScaleLabelsDrawnForTest()
     int   m_wfOpacity{100};           // 0..100
     int   m_wfUpdatePeriodMs{30};     // NereusSDR default per §10 divergence
     bool  m_wfUseSpectrumMinMax{false};
@@ -3299,7 +3899,7 @@ private:
     TimestampMode     m_wfTimestampMode{TimestampMode::UTC};
 
     bool  m_showRxFilterOnWaterfall{false};
-    bool  m_showTxFilterOnRxWaterfall{false};
+    bool  m_showTxFilterOnRxWaterfall{true};   // as loadSettings() defaults it
     bool  m_showRxZeroLineOnWaterfall{false};
     bool  m_showTxZeroLineOnWaterfall{false};
 
@@ -3375,6 +3975,24 @@ private:
     // core/spectrum/DisplayFollowers since iPhone app Task 20.
     WaterfallLevelFollower m_wfLevels;
 
+    // Display pill plan Task 13 (setDisplayKeyed). The window is keyed, as
+    // this pan was last told; the AGC run level saved for each band at a
+    // key (receive context), in memory; the local engine's shape for the
+    // hold length; and the clock seam.
+    // From Thetis display.cs:2810-2829 [v2.10.3.15]: _waterfallAgcCache,
+    // keyed by band and by receive or transmit context. NereusSDR, based on
+    // Thetis: only the receive context is kept, because the transmit levels
+    // here are the static pair and no follower runs on a transmit row.
+    bool m_displayKeyed{false};
+    QHash<int, float> m_agcRunLevelByBand;
+    int    m_localFftSize{0};
+    int    m_localFftDecimation{0};
+    double m_localFftSampleRateHz{0.0};
+    std::function<qint64()> m_displayClockForTest;
+    qint64 displayNowMs() const;
+    // setNoiseFloorFastAttack with the trigger's own minimum.
+    void applyNoiseFloorFastAttack(bool on, qint64 minMs);
+
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
 
@@ -3395,6 +4013,10 @@ private:
     QVector<float>     m_pendingWfPixelsDbm;
     bool               m_pendingWfPixelsDbmDirty{false};
     quint64            m_pendingWfImdAcceptedOrdinal{0};
+    // Set on a key or un-key edge (setDisplayKeyed), cleared by the first
+    // spectrum cached after it that was computed after the purge. While
+    // set, the ticker adds no rows.
+    bool               m_pendingWfPixelsStaleSinceKeyEdge{false};
     QThread*           m_waterfallTickerThread{nullptr};
     WaterfallTicker*   m_waterfallTicker{nullptr};
 
@@ -3460,6 +4082,15 @@ private:
     QColor m_gridColor{255, 255, 255, 40};       // vertical freq grid
     QColor m_gridFineColor{255, 255, 255, 20};   // 1/5 step fine grid
     QColor m_hGridColor{255, 255, 255, 40};      // horizontal dBm grid
+    // The approved native step stays this pan's picture choice; it is
+    // loaded here rather than pushed by PanModels. Historical origin:
+    // The model's default (PanadapterModel's kDefaultGridStep), drawn until
+    // PanModels pushes the stored step.
+    static constexpr int kDefaultDbGridStep = 10;
+    // Existing Setup dB Step domain (DisplaySetupPages GridScalesPage).
+    static constexpr int kMinDbGridStep = 1;
+    static constexpr int kMaxDbGridStep = 40;
+    int    m_dbGridStep{kDefaultDbGridStep};     // dB between horizontal grid lines
     QColor m_gridTextColor{255, 255, 0};         // yellow text default
     // Plan 4 D9c-1: split zero-line color into RX + TX.
     QColor m_rxZeroLineColor{255, 0, 0};         // red default (Thetis convention)
@@ -3509,6 +4140,7 @@ private:
     DisplaySettingsModel* m_displaySettings{nullptr};
     int                   m_displaySettingsApplyCount{0};
     bool                  m_reflectingDisplaySettings{false};
+    bool                  m_loadingTransmitDisplayScale{false};
 
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
@@ -3519,6 +4151,10 @@ private:
     // Which slice's flag stays on top -- see setFrontSliceIndex(). -1 = no
     // pin; updateVfoPositions() falls back to its own ascending-index order.
     int m_frontSliceIndex{-1};
+    // True while updateVfoPositions() is placing the flags: the pass says
+    // flagsRaised() once at its end, so the buttons each flag raises on the
+    // way are not announced one by one.
+    bool m_placingFlags{false};
 
     // Re-applies the m_frontSliceIndex pin. Called by setFrontSliceIndex()
     // for an immediate effect, and again at the end of every
@@ -3544,6 +4180,9 @@ private:
 
     // ---- Overlay menu ----
     SpectrumOverlayMenu* m_overlayMenu{nullptr};
+    // Ref Level, Dyn Range and CTUN, read from the widget's own state
+    // into the menu without the menu emitting (display pill plan Task 19).
+    void seedOverlayMenu();
 
     // ---- Spot overlay state (Phase 3J-2 Task E1) ----
     // Backing store + per-frame click-rect / cluster vectors. Defaults
@@ -3744,6 +4383,7 @@ private:
     // abs() guard on fDelta: abs incase //MW0LGE [2.9.0.7] [original inline comment from console.cs:46081]
     // NereusSDR-original: applied as global default; RX1-scope dropped.
     bool m_adjustGridMinToNF{false};
+    std::optional<bool> m_gridFollowSaveHold;
     int  m_nfOffsetGridFollow{0};    // dB offset added to NF estimate (default 0)
     bool m_maintainNFAdjustDelta{false};
     // Thetis tmrAutoAGC port (gridFollowTick): the display noise floor
@@ -3751,6 +4391,7 @@ private:
     // good (m_bNoiseFloorGoodRX1), the 500 ms timer, and when Clarity last
     // fed this pan (a pan Clarity feeds keeps Clarity's grid).
     float   m_gridFollowNfDbm{-200.0f};
+    std::optional<float> m_lastAcceptedGridFollowNfDbm;
     bool    m_gridFollowNfGood{false};
     QTimer* m_gridFollowTimer{nullptr};
     qint64  m_lastClarityGridNfMs{0};
@@ -3781,7 +4422,40 @@ private:
 
     // ---- Coalesced settings save ----
     void scheduleSettingsSave();
+    // Drops a save that is waiting; the timer still fires and does nothing.
+    void cancelScheduledSettingsSave();
     bool m_settingsSaveScheduled{false};
+    quint64 m_settingsSaveGeneration{0};
+
+    // Display pill plan Task 1: base name, the value a save stores, the
+    // ship default the load falls back to (both as stored strings). See
+    // visitPerPanSettings() in the .cpp.
+    using PerPanSettingVisitor =
+        std::function<void(const QString&, const QString&, const QString&)>;
+    void visitPerPanSettings(const PerPanSettingVisitor& visit) const;
+    using SharedAppearanceVisitor = std::function<void(const QString&, QColor SpectrumWidget::*, const QColor&)>;
+    static void visitSharedAppearanceSettings(const SharedAppearanceVisitor& visit);
+    void loadSharedAppearanceSettings(bool retirePanKeys);
+    using SharedTxWfApply = std::function<void(SpectrumWidget&, const QString&)>;
+    using SharedTxWfVisitor = std::function<void(const QString&, const QString&, const QString&, const SharedTxWfApply&)>;
+    static void visitSharedTransmitWaterfallSettings(const SpectrumWidget* source, const SharedTxWfVisitor& visit);
+    void loadSharedTransmitWaterfallSettings(bool retirePanKeys);
+    void setSharedTransmitWaterfallValue(const QString& base, const QString& value);
+    void setSharedAppearanceColor(const QString& base, const QColor& color, QColor SpectrumWidget::*member);
+    void rebuildRxWfGradient();
+    void rebuildTxWfGradient();
+    void loadSharedWaterfallGradients(bool retirePanKeys);
+    void applyTransmitDbmRange(float minDbm, float maxDbm, bool persist);
+    static void visitPerPanSettings(const SpectrumWidget* source,
+                                    const PerPanSettingVisitor& visit);
+    void resetPanDisplayOverridesImpl(const QStringList& bases);
+    void writePerPanSettingNow(const QString& base);
+
+    // Display pill plan Task 2: emits displaySettingChanged(keyBase) unless
+    // a load or a pan reset is running.
+    void announceDisplaySetting(const QString& keyBase);
+    void announceEffectiveWaterfallLevels();
+    std::optional<std::pair<float, float>> m_announcedEffectiveWaterfallLevels;
 
     // 3D Stacked-Trace Spectrum Plan Task 18: wires m_displaySettings
     // bidirectionally (called once from the constructor).
@@ -3796,6 +4470,7 @@ private:
     // signal already reached the model first.
     void bindDisplaySettings();
     void syncDisplaySettingsFromWidget();
+    void loadTransmitDisplayScale(bool retirePanKeys);
 
     // Recompute m_spectrumAverageAlpha + m_waterfallAverageAlpha from the
     // current per-side time constants and live FPS using the Thetis formula:
@@ -4125,6 +4800,22 @@ private:
     // From AetherSDR: kMaxFftBins = 8192, kFftVertStride = 6
     static constexpr int kMaxFftBins = 65536;
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
+    // The trace line's vertices and, when asked, the fill's, for the first
+    // n display pixels. renderGpuFrame() uploads what this builds.
+    void buildFftTraceVertices(int n, bool buildFill, QVector<float>& lineVerts,
+                               QVector<float>& fillVerts) const;
+
+    // ---- Spectrum background layer (Display pill plan Task 5) ----
+    // A texture and SRB of its own for the same overlay pipeline, drawn in
+    // the spectrum viewport before the trace. Created the first time the
+    // background is on, so a pan that never turns it on never has them.
+    // From AetherSDR src/gui/SpectrumWidget.h:1956-1960 [@1e0718ad]
+    QRhiTexture*                m_bgGpuTex{nullptr};
+    QRhiShaderResourceBindings* m_bgSrb{nullptr};
+    QImage m_bgLayer;
+    bool   m_bgLayerDirty{true};
+    // Brings the layer's texture up to date; false when it cannot be drawn.
+    bool prepareBackgroundLayer(QRhiResourceUpdateBatch* batch, const QRect& specRect);
 
     // ---- 3DSS mesh GPU resources ----
     bool initDssMeshPipeline();
@@ -4191,6 +4882,10 @@ private:
     // Also reset on MOX/context changes in the shared path. The CPU painter
     // uses m_renderedPixels for its trace; this count remains zero there.
     int m_visibleBinCount{0};  // GPU bins rendered this frame (draw call count)
+    // The line width, in device pixels, the trace geometry in m_fftLineVbo
+    // was built for: it decides that pass's pipeline and vertex count
+    // (SpectrumTraceRibbon.h).
+    float m_traceRibbonWidthPx{1.0f};
 
     // Whether the GPU 3DSS mesh pipeline is up and has data this frame.
     // Deliberately declared OUTSIDE the NEREUS_GPU_SPECTRUM block above
@@ -4198,11 +4893,16 @@ private:
     // such as the 3D VIEW overlay menu's "3D Span" control gate
     // (dssRowSpanSupported(), DssMeshGeometry.h) need to ask this question
     // in both build configurations. A CPU-only build has no GPU mesh at
-    // all, so the answer there is always false.
+    // all, so the answer there is always false. The accessor,
+    // dssMeshReady(), is public (above, with dssMeshReadyChanged()); every
+    // write of the flag goes through this setter so the signal cannot be
+    // missed.
 #ifdef NEREUS_GPU_SPECTRUM
-    bool dssMeshReady() const { return m_dssMeshReady; }
-#else
-    bool dssMeshReady() const { return false; }
+    void setDssMeshReady(bool ready) {
+        if (m_dssMeshReady == ready) { return; }
+        m_dssMeshReady = ready;
+        emit dssMeshReadyChanged(ready);
+    }
 #endif
 
     QRegion m_receiverFlagRegion;

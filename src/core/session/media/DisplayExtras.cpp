@@ -25,6 +25,20 @@
 //                                    trace detectors, as the desktop and
 //                                    Thetis do. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  A key keeps the waterfall AGC level
+//                                    for the band and the un-key restores
+//                                    it; Clarity, the AGC and the noise
+//                                    floor hold after it; a display asked
+//                                    for again on the same receiver
+//                                    carries its levels (takeCarry,
+//                                    adoptCarry). AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  Merge of main's updateRequest with the
+//                                    key state: levels started again for a
+//                                    new mode keep the key state and drop
+//                                    the per-band AGC levels of the old
+//                                    mode. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayExtras.h"
@@ -597,6 +611,9 @@ void DisplayExtrasProcessor::startWaterfallLevels()
 {
     m_levels.resetAgc();
     m_clarity.reset();
+    // The per-band AGC levels belong to the mode that made them (as
+    // adoptCarry has it): a new mode starts without them.
+    m_agcRunLevelByBand.clear();
     m_activeLow = static_cast<float>(m_request.waterfallLevels->lowDbm);
     m_activeHigh = static_cast<float>(m_request.waterfallLevels->highDbm);
     if (m_request.waterfallLevels->mode == WaterfallLevelMode::Clarity) {
@@ -609,6 +626,12 @@ void DisplayExtrasProcessor::startWaterfallLevels()
                              m_activeHigh = high;
                          });
         m_clarity->setEnabled(true);
+        // A mode changed while keyed (updateRequest): the new Clarity is
+        // told the key state the processor holds, as adoptCarry tells it,
+        // so the un-key is its first edge and not a second key.
+        if (m_mox) {
+            m_clarity->setTransmitting(true);
+        }
     }
 }
 
@@ -724,17 +747,69 @@ DisplayExtrasFrame DisplayExtrasProcessor::process(const DisplayCodecFrame& fram
     const QVector<float>& trace = frame.traceDbm;
 
     // The desktop's triggers: fast attack on a band change, a tune of more
-    // than half a megahertz or a MOX edge (MainWindow), and on a MOX edge
-    // the waterfall follower re-primes and Clarity pauses while keyed.
-    if (m_fastAttackTrigger.observe(inputs.sliceHz, inputs.band, inputs.mox)) {
-        m_noiseFloor.setFastAttack(true, inputs.nowMs);
-    }
-    if (inputs.mox != m_mox) {
+    // than half a megahertz or a MOX edge, and Clarity pauses while keyed.
+    // A MOX edge is handled as SpectrumWidget::setDisplayKeyed handles it
+    // for a window's pan, in the same order, so a remote display and a
+    // local one behave the same.
+    const bool moxEdge = inputs.mox != m_mox;
+    const bool triggered = m_fastAttackTrigger.observe(inputs.sliceHz, inputs.band, inputs.mox);
+    if (moxEdge) {
         m_mox = inputs.mox;
-        m_levels.resetAgc();
+        if (inputs.mox) {
+            // The run level is kept for the band, not reset.
+            // NereusSDR, based on Thetis display.cs:7684 [v2.10.3.15]
+            // (updateWaterfallAgcCache on each receive row): the level
+            // cannot move between the last receive row and this edge, so
+            // saving it here keeps the same value.
+            if (const std::optional<float> level = m_levels.agcRunLevel()) {
+                m_agcRunLevelByBand.insert(inputs.band, *level);
+            }
+            // A re-key inside the hold ends the hold and keeps the level;
+            // the next un-key starts a fresh one.
+            m_levels.cancelHold();
+            // NereusSDR, based on Thetis display.cs:7651 [v2.10.3.15]
+            // (if (!local_mox && !bIgnoreAgc)): Thetis stops the AGC of the
+            // receiver that transmits. NereusSDR stops it on every display,
+            // because every receiver hears the transmitter.
+            m_levels.setKeyed(true);
+        } else {
+            m_levels.setKeyed(false);
+            // NereusSDR, based on Thetis display.cs:1585 [v2.10.3.15]
+            // (getWaterfallCachedPreviousMinOrFloor in Display.MOX): the
+            // level saved for the band the endpoint is on now, or the
+            // restart floor when that band has none (a band changed while
+            // keyed).
+            const auto saved = m_agcRunLevelByBand.constFind(inputs.band);
+            m_levels.restoreAgcRunLevel(saved != m_agcRunLevelByBand.constEnd()
+                                            ? std::optional<float>(*saved)
+                                            : std::nullopt);
+            // NereusSDR, based on Thetis display.cs:7640-7651 (bIgnoreAgc)
+            // and display.cs:5912 (the settle time) [v2.10.3.15]: no
+            // estimate is taken from any row inside one hold, because those
+            // rows still carry the transmission while the purged FFT input
+            // refills.
+            m_levels.beginHold(inputs.holdLengthMs, inputs.nowMs);
+        }
+    }
+    // NereusSDR, based on Thetis display.cs:884-891 [v2.10.3.15]
+    // (resetPeaksAndNoise, which PurgeBuffers runs on a MOX edge): either
+    // edge starts the fast attack, and its minimum is the hold length, so
+    // the fast attack and the hold are one length. The other triggers keep
+    // the default second.
+    if (moxEdge) {
+        m_noiseFloor.setFastAttack(true, inputs.nowMs, inputs.holdLengthMs);
+    } else if (triggered) {
+        m_noiseFloor.setFastAttack(true, inputs.nowMs);
     }
     if (m_clarity) {
         m_clarity->setTransmitting(inputs.mox);
+        if (moxEdge && !inputs.mox) {
+            // Clarity kept its level through the key. The hold keeps it
+            // there while the FFT refills and restarts its smoothing clock
+            // at the hold's end; without it the first reading after a key
+            // would be smoothed over the whole key.
+            m_clarity->beginHold(inputs.holdLengthMs, inputs.nowMs);
+        }
     }
 
     // In SpectrumWidget::updateReducedSpectrumOverlays' order: the active
@@ -779,8 +854,15 @@ DisplayExtrasFrame DisplayExtrasProcessor::process(const DisplayCodecFrame& fram
         }
         out.peakBlobs = std::move(blobs);
     }
-    if (m_request.noiseFloor && m_request.noiseFloor->enabled) {
+    // NF-AGC's low level is this endpoint's noise floor, so the follower
+    // runs for it too when the noise-floor line was not asked for.
+    const bool noiseFloorAsked = m_request.noiseFloor && m_request.noiseFloor->enabled;
+    const bool noiseFloorAgcAsked = m_request.waterfallLevels
+        && m_request.waterfallLevels->mode == WaterfallLevelMode::NoiseFloorAgc;
+    if (noiseFloorAsked || noiseFloorAgcAsked) {
         m_noiseFloor.process(trace, fps, inputs.nowMs);
+    }
+    if (noiseFloorAsked) {
         if (m_request.noiseFloor->fastAttack) {
             out.noiseFloorFastAttack = m_noiseFloor.fastAttack();
         }
@@ -790,21 +872,86 @@ DisplayExtrasFrame DisplayExtrasProcessor::process(const DisplayCodecFrame& fram
     }
     if (m_request.waterfallLevels) {
         const auto& levels = *m_request.waterfallLevels;
-        // As SpectrumWidget::pushWaterfallRow: a new waterfall line, and
-        // nothing while keyed (composeWaterfallActiveThresholds' MOX return).
-        if (frame.waterfallAdvance && !inputs.mox) {
+        // As SpectrumWidget::pushWaterfallRow: a new waterfall line. While
+        // keyed or in the hold the follower estimates nothing and keeps its
+        // level (setKeyed, beginHold); the operator's own Low and High stay
+        // live.
+        if (frame.waterfallAdvance) {
             WaterfallLevelSettings settings;
             settings.lowDbm = static_cast<float>(levels.lowDbm);
             settings.highDbm = static_cast<float>(levels.highDbm);
-            settings.agc = levels.mode == WaterfallLevelMode::Agc;
+            // NF-AGC is an option under AGC (Thetis display.cs:6464-6470
+            // [v2.10.3.15]). The `noiseFloorAgc` mode keeps its meaning on
+            // the station link, levels from the noise floor, so it is AGC
+            // with that option on.
             settings.noiseFloorAgc = levels.mode == WaterfallLevelMode::NoiseFloorAgc;
-            settings.noiseFloorAgcOffsetDb = levels.offsetDb;
+            settings.agc = levels.mode == WaterfallLevelMode::Agc || settings.noiseFloorAgc;
+            settings.noiseFloorAgcOffsetDb = static_cast<float>(levels.offsetDb);
+            settings.noiseFloorDbm = m_noiseFloor.lerpAverage();
+            settings.noiseFloorSettled = m_noiseFloor.settled();
             settings.clarityActive = levels.mode == WaterfallLevelMode::Clarity;
-            m_levels.compose(frame.waterfallDbm, settings, m_activeLow, m_activeHigh);
+            m_levels.compose(frame.waterfallDbm, settings, m_activeLow, m_activeHigh,
+                             inputs.nowMs);
         }
         out.waterfallLevelsDbm = std::make_pair(m_activeLow + shift, m_activeHigh + shift);
     }
     return out;
+}
+
+DisplayExtrasCarry DisplayExtrasProcessor::takeCarry()
+{
+    DisplayExtrasCarry carry;
+    if (m_request.waterfallLevels) {
+        carry.levelMode = m_request.waterfallLevels->mode;
+    }
+    if (m_clarity) {
+        carry.clarity = m_clarity->carriedState();
+    }
+    carry.levels = m_levels;
+    carry.agcRunLevelByBand = std::move(m_agcRunLevelByBand);
+    m_agcRunLevelByBand.clear();
+    carry.activeLowDbm = m_activeLow;
+    carry.activeHighDbm = m_activeHigh;
+    carry.noiseFloor = m_noiseFloor;
+    carry.mox = m_mox;
+    return carry;
+}
+
+void DisplayExtrasProcessor::adoptCarry(DisplayExtrasCarry&& carry)
+{
+    // The receiver is the same, so its noise floor and the key state are.
+    // Without the key state a display asked for again while keyed would see
+    // a second key edge, and without the floor NF-AGC would dive to the
+    // follower's -200 dBm start.
+    m_noiseFloor = carry.noiseFloor;
+    m_mox = carry.mox;
+    m_levels.setKeyed(m_mox);
+    if (m_clarity) {
+        m_clarity->setTransmitting(m_mox);
+    }
+    // The levels belong to the mode that made them: a display that changes
+    // mode starts that mode afresh, as a window's pan does when AGC is
+    // switched on or off.
+    if (!m_request.waterfallLevels || !carry.levelMode
+        || *carry.levelMode != m_request.waterfallLevels->mode) {
+        return;
+    }
+    m_levels = carry.levels;
+    m_agcRunLevelByBand = std::move(carry.agcRunLevelByBand);
+    const WaterfallLevelMode mode = m_request.waterfallLevels->mode;
+    if (m_clarity && carry.clarity) {
+        m_clarity->adoptCarriedState(*carry.clarity);
+        if (carry.clarity->hasEmitted) {
+            // Clarity writes both levels; before it has spoken the
+            // operator's own stand.
+            m_activeLow = carry.clarity->lastLow;
+            m_activeHigh = carry.clarity->lastHigh;
+        }
+    } else if ((mode == WaterfallLevelMode::Agc || mode == WaterfallLevelMode::NoiseFloorAgc)
+               && m_levels.agcRunLevel()) {
+        // The AGC moves only the low level; High is this request's.
+        m_activeLow = carry.activeLowDbm;
+    }
 }
 
 } // namespace NereusSDR

@@ -26,6 +26,16 @@
 //   2026-10-12  J.J. Boyd / KG4VCF  Display-only fixtures withhold remoteTx
 //                                    so no PC microphone preview is opened.
 //                                    AI-assisted via OpenAI Codex.
+//   2026-10-11  J.J. Boyd / KG4VCF  The two fast spin tests set Sizing to
+//                                    Fixed, the engines their frame counts
+//                                    were measured on (R-DSP-59).
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  The mini display's "more bins than
+//                                    points" row sets Sizing to Fixed, so
+//                                    its pan stays on the wide engine now
+//                                    that Auto plans a pan's size from
+//                                    its span (R-DSP-59).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  The fast spin tests end each step on the
 //                                    frames it waits for, not on a count of
 //                                    frames in a fixed time, which fell
@@ -1051,9 +1061,10 @@ private slots:
     void theMiniDisplayKeepsItsFrameWhenTheCropChangesByABin_data()
     {
         QTest::addColumn<QString>("panHzPerBin");
-        // The pan at its stored size, on the receiver's wide engine. The
-        // mini display has the fine engine to itself, at the size it asks,
-        // and its 20 kHz holds more bins than its 1 024 points.
+        // The pan at exactly its stored size (Sizing: Fixed), so it stays on
+        // the receiver's wide engine whatever its span. The mini display has
+        // the fine engine to itself, at the size it asks, and its 20 kHz
+        // holds more bins than its 1 024 points.
         QTest::newRow("moreBinsThanPoints") << QString();
         // The pan on the fine engine at 8 192, which the mini display then
         // shares. Its 20 kHz is 853.33 bins there, fewer than the points it
@@ -1067,8 +1078,18 @@ private slots:
         QFETCH(QString, panHzPerBin);
         constexpr int kMiniPointsAsked = 1024;
         const QString hzPerBinKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
-        const auto restore = qScopeGuard([&] { AppSettings::instance().remove(hzPerBinKey); });
-        if (!panHzPerBin.isEmpty()) {
+        const QString sizingModeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const auto restore = qScopeGuard([&] {
+            AppSettings::instance().remove(hzPerBinKey);
+            AppSettings::instance().remove(sizingModeKey);
+        });
+        if (panHzPerBin.isEmpty()) {
+            // In Auto, the default, a pan plans its size from its span and
+            // can take the fine engine itself, which the mini display would
+            // then share at that size.
+            AppSettings::instance().setValue(
+                sizingModeKey, QLatin1String(ControlRanges::kDisplayFftSizingModeFixedToken));
+        } else {
             AppSettings::instance().setValue(hzPerBinKey, panHzPerBin);
         }
         Fixture f(/*withCore=*/true);
@@ -1233,6 +1254,16 @@ private slots:
     {
         QFETCH(bool, statesPicture);
         QFETCH(bool, newPictureEachStep);
+        // The pan at exactly its stored size (Sizing: Fixed), 4 096 on the
+        // receiver's wide engine, as the floors were measured: the Core
+        // there makes a frame from every 4 096 samples fed. In Auto, the
+        // default, this pan takes the fine engine at 8 192, which makes a
+        // frame from every 6 400 (30 a second of the receiver's time), so
+        // the same feed gives about two thirds of the frames a step.
+        const QString sizingModeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const auto restore = qScopeGuard([&] { AppSettings::instance().remove(sizingModeKey); });
+        AppSettings::instance().setValue(
+            sizingModeKey, QLatin1String(ControlRanges::kDisplayFftSizingModeFixedToken));
         Fixture f(/*withCore=*/true, statesPicture);
         f.toneOffsetHz = 20000.0;
         QVERIFY(f.start());
@@ -1417,6 +1448,14 @@ private slots:
     void whatAMiniDisplayIsGivenWhileItsSliceIsTunedFasterThanTheLinkAnswers()
     {
         QFETCH(bool, statesPicture);
+        // Sizing: Fixed, as the pan's fast spin above and for its reason:
+        // the pan stays on the wide engine and the mini display has the fine
+        // engine to itself, as the floors were measured. In Auto it shares
+        // the pan's fine engine at 8 192 and is given fewer frames a step.
+        const QString sizingModeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const auto restore = qScopeGuard([&] { AppSettings::instance().remove(sizingModeKey); });
+        AppSettings::instance().setValue(
+            sizingModeKey, QLatin1String(ControlRanges::kDisplayFftSizingModeFixedToken));
         Fixture f(/*withCore=*/true, statesPicture);
         f.toneOffsetHz = 6000.0;
         QVERIFY(f.start());

@@ -310,6 +310,7 @@ warren@wpratt.com
 #include "DspControlThread.h"
 #include "LogCategories.h"
 #include "NbFamily.h"
+#include "NoiseFloorTracker.h"  // kAgcReferenceFftSize, asserted against kDspSize
 #include "SampleRateCatalog.h"  // bufferSizeForRate() — for setSampleRate()
 #include "WdspEngine.h"
 #include "wdsp_api.h"
@@ -731,6 +732,9 @@ double RxChannel::readBackAgcThreshAt(int sampleRate) const
     //   (MW0LGE_21k7 on the FFT-size line that follows)
     // kDspSize must match the size passed to SetRXAAGCThresh (4096).
     static constexpr double kDspSize = 4096.0;
+    // Auto AGC-T refers its noise floor to this size (NoiseFloorTracker).
+    static_assert(kDspSize == static_cast<double>(NoiseFloorTracker::kAgcReferenceFftSize),
+                  "Auto AGC-T's reference FFT size must be the size GetRXAAGCThresh is given");
     double thresh = 0.0;
     GetRXAAGCThresh(m_channelId, &thresh, kDspSize, static_cast<double>(sampleRate));
     return std::clamp(thresh, -160.0, 2.0);
@@ -790,6 +794,9 @@ void RxChannel::setAgcThreshold(int dBu)
         // NB: 'size' is the DSP analysis buffer size (4096, matching OpenChannel dsp_size),
         //     NOT the fexchange2 input chunk size (m_bufferSize).
         static constexpr double kDspSize = 4096.0;
+        // Auto AGC-T refers its noise floor to this size (NoiseFloorTracker).
+        static_assert(kDspSize == static_cast<double>(NoiseFloorTracker::kAgcReferenceFftSize),
+                      "Auto AGC-T's reference FFT size must be the size SetRXAAGCThresh is given");
         SetRXAAGCThresh(m_channelId, static_cast<double>(dBu),
                         kDspSize,
                         static_cast<double>(sampleRate));
