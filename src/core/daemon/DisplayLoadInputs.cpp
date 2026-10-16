@@ -33,19 +33,27 @@ bool receiverSharesDisplayCores(const PlacementPlan& placement, int sliceId)
         || slowedByDisplay(ThreadRole::DspThread, -1);
 }
 
-QList<int> displayGovernorCpus(const PlacementPlan& placement)
+DisplayGovernorCpus displayGovernorCpus(const PlacementPlan& placement)
 {
     if (!placement.active) {
         return {};
     }
-    QList<int> cpus = placement.housekeeping;
+    DisplayGovernorCpus cpus;
+    cpus.housekeeping = placement.housekeeping;
+    std::sort(cpus.housekeeping.begin(), cpus.housekeeping.end());
     for (const RoleAssignment& a : placement.assignments) {
-        if (a.role == ThreadRole::SpectrumThread) {
-            cpus.append(placement.coresFor(ThreadRole::SpectrumThread, a.channel));
+        if (a.role != ThreadRole::SpectrumThread) {
+            continue;
+        }
+        for (int cpu : placement.coresFor(ThreadRole::SpectrumThread, a.channel)) {
+            if (!cpus.housekeeping.contains(cpu)) {
+                cpus.spectrumOnly.append(cpu);
+            }
         }
     }
-    std::sort(cpus.begin(), cpus.end());
-    cpus.erase(std::unique(cpus.begin(), cpus.end()), cpus.end());
+    std::sort(cpus.spectrumOnly.begin(), cpus.spectrumOnly.end());
+    cpus.spectrumOnly.erase(std::unique(cpus.spectrumOnly.begin(), cpus.spectrumOnly.end()),
+                            cpus.spectrumOnly.end());
     return cpus;
 }
 

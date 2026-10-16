@@ -43,6 +43,11 @@
 //                 DSP thread, and the test checks the DSP thread keeps its
 //                 core.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-15 - (f): the test installs WDSP's thread start hook, so the
+//                 transmit worker registers from its own thread, and checks
+//                 the DSP thread keeps its core after that registration.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #define NEREUS_BUILD_TESTS 1
@@ -52,7 +57,9 @@
 #include "core/TxChannel.h"
 #include "core/WdspEngine.h"
 #include "core/platform/ThreadPlacement.h"
+#include "core/wdsp_api.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -63,15 +70,25 @@ namespace {
 
 // Accepts every move and priority change and makes none. Each thread has
 // its own ID, so a registration from another thread (a WDSP worker) never
-// replaces the test thread's.
+// replaces the test thread's. Counts the calls made from threads other than
+// the one that created it, so the test can wait for the worker's.
 class AcceptingApi final : public ThreadSchedulingApi {
 public:
+    explicit AcceptingApi(std::atomic<int>* otherThreadCalls)
+        : m_otherThreadCalls(otherThreadCalls) {}
     qint64 currentThreadId() override
     {
+        if (std::this_thread::get_id() != m_creator) {
+            m_otherThreadCalls->fetch_add(1);
+        }
         return static_cast<qint64>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
     }
     bool setAffinity(qint64, const QList<int>&) override { return true; }
     bool setNice(qint64, int) override { return true; }
+
+private:
+    std::thread::id m_creator{std::this_thread::get_id()};
+    std::atomic<int>* m_otherThreadCalls;
 };
 
 } // namespace
@@ -204,7 +221,8 @@ private slots:
         startup.rxChannels = {0};
         startup.dspThread = true;
         ThreadPlacement& placement = ThreadPlacement::instance();
-        placement.start(rock, startup, std::make_unique<AcceptingApi>(), true);
+        std::atomic<int> workerCalls{0};
+        placement.start(rock, startup, std::make_unique<AcceptingApi>(&workerCalls), true);
         QVERIFY(placement.isPlacing());
         placement.registerCurrentThread(ThreadRole::DspThread);
         for (int channel : {0, 1, 2}) {
@@ -214,8 +232,18 @@ private slots:
         const int tx = WdspEngine::kTxChannelId;
         WdspEngine engine;
         engine.m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+#ifndef Q_OS_WIN
+        // As WdspEngine::initialize does in nereusd: the transmit worker
+        // registers itself from its own thread as it starts. That
+        // registration must leave the DSP thread's entry alone.
+        WDSPSetThreadStartHook(&ThreadPlacement::wdspThreadStartHook);
+#endif
         TxChannel* ch = engine.createTxChannel(tx);
         QVERIFY(ch != nullptr);
+#ifndef Q_OS_WIN
+        QTRY_VERIFY(workerCalls.load() > 0);
+        QCOMPARE(placement.currentPlan().cpuFor(ThreadRole::DspThread), 5);
+#endif
         QVERIFY(placement.currentPlan().coresFor(ThreadRole::TxWorker, tx).isEmpty());
 
         const auto expectListening = [&]() {
@@ -256,6 +284,9 @@ private slots:
         QVERIFY(placement.currentPlan().coresFor(ThreadRole::TxWorker, tx).isEmpty());
 
         engine.destroyTxChannel(tx);
+#ifndef Q_OS_WIN
+        WDSPSetThreadStartHook(nullptr);
+#endif
 #endif
     }
 };
