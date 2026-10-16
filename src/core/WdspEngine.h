@@ -72,6 +72,9 @@
 //   2026-10-15 : Squelch persistence by J.J. Boyd (KG4VCF): test-only
 //                 friendship for the squelch channel seed test. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-10 : J.J. Boyd (KG4VCF): test-only friendship for the test of
+//                 a receive channel's first DSP > Options apply. AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -196,6 +199,9 @@ class TestRxChannelNotchWrappers;
 class TestNotchChannelSync;
 // What a live transmit channel tells thread placement while VOX listens.
 class TstTxChannelVoxListening;
+// The first apply of DSP > Options to each receive channel, on real channels
+// through openRxChannelPool.
+class TestDspOptionsFirstApply;
 // TNF Task 9: the MNF Settings page test primes the engine so it can open one
 // real RX channel and check the minimum-notch-width readout against it.
 class TestMnfSetupPage;
@@ -1134,6 +1140,8 @@ private:
     friend class ::TestRxChannelAgcFixedSeed;
     // Squelch persistence: the squelch seed test opens real RX channels.
     friend class ::TestSliceSquelchChannelSeed;
+    // Same friendship for the first DSP > Options apply test.
+    friend class ::TestDspOptionsFirstApply;
 #endif
 };
 

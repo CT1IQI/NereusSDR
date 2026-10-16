@@ -1227,6 +1227,15 @@
 //                audio, step, RIT/XIT and antenna edits on a slice that is
 //                not the active one save to that slice.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A receive channel takes its slice's DSP > Options buffer
+//                size, filter size and filter type before it runs a block
+//                (activateSliceChannel and the connect path), as Thetis's
+//                SyncDSP forces them in (console.cs:2681-2726 [v2.10.3.15]);
+//                it ran WDSP's opening buffer of 4096 until its slice's
+//                next mode change. rebuildDspOptionsForMode applies the
+//                local page's edit to every slice in the mode group, not
+//                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -11665,6 +11674,23 @@ bool RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, boo
     const QPointer<RxChannel> channel(rxCh);
     const auto alive = [&] { return self && target && channel; };
     rxCh->setMode(slice->dspMode());
+    if (!alive()) { return false; }
+    // The DSP > Options buffer size, filter size and filter type of this
+    // slice's mode, before the channel runs a block. WDSP opened it with a
+    // DSP buffer of 4096 (createRxChannel; cmaster.c:75 [v2.10.3.15]), 85 ms
+    // of signal a block at 48,000 against 1.3 ms for the default of 64, and
+    // the only other apply is the slice's next mode change. Thetis forces
+    // the size in once the channels exist:
+    //   From Thetis console.cs:2687-2691 [v2.10.3.15] — SyncDSP:
+    //     RadioDSPRX dsp_rx = radio.GetDSPRX(i, j);
+    //     dsp_rx.Update = true;
+    //     dsp_rx.Force = true;
+    //     dsp_rx.BufferSize = dsp_rx.BufferSize;
+    //     dsp_rx.Force = false;
+    // and sets each receiver from its own mode after that
+    // (console.cs:38972-38986 [v2.10.3.15]). A fresh RxChannel caches what
+    // WDSP opened with, so this reaches WDSP wherever a saved value differs.
+    rxCh->onModeChanged(slice->dspMode());
     if (!alive()) { return false; }
     rxCh->setFilterFreqs(slice->filterLow(),
                          slice->filterHigh());
@@ -31549,8 +31575,9 @@ qint64 RadioModel::setActiveRxCountLive(int newCount)
 // ---------------------------------------------------------------------------
 // Task 4.2 — rebuildDspOptionsForMode
 //
-// Called from DspOptionsPage when a per-mode combo changes and the combo's
-// mode matches the current active slice mode (design Section 4B).
+// Called from DspOptionsPage when a per-mode combo changes, with the combo's
+// mode (design Section 4B). Applies to each slice whose mode is in that
+// mode's group, and to the TX channel when the TX-bound slice's is.
 // Delegates to RxChannel::onModeChanged() and TxChannel::onModeChanged(),
 // then emits dspChangeMeasured(ms) if a rebuild occurred.
 //
@@ -31587,20 +31614,41 @@ void RadioModel::rebuildDspOptionsForMode(DSPMode forMode)
         return;
     }
 
+    // Every receiver whose slice is in forMode's group, each from its own
+    // slice's mode, as a remote window's write applies it
+    // (flushRemoteDspOptionsApply). The first receiver alone took the page's
+    // edits before, and only while the first slice was in the combo's group;
+    // the others kept the old sizes until their next mode change.
+    const QString group = dspOptionsModeGroup(forMode);
+
     // -1 = no change; 0+ = applied (in-place WDSP setters routinely finish
     // sub-millisecond, so 0 ms is a legitimate elapsed time).
-    if (RxChannel* rxCh = m_wdspEngine->rxChannel(0)) {
-        const qint64 elapsed = rxCh->onModeChanged(forMode);
-        if (elapsed >= 0) {
-            emit dspChangeMeasured(elapsed);
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const DSPMode mode = slice->dspMode();
+        if (dspOptionsModeGroup(mode) != group) {
+            continue;
+        }
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            const qint64 elapsed = rxCh->onModeChanged(mode);
+            if (elapsed >= 0) {
+                emit dspChangeMeasured(elapsed);
+            }
         }
     }
 
     // TX channel — guard: may be null (not created until radio connects).
+    // From the TX-bound slice's mode, as the mode-change handler applies it
+    // (wireSliceSignals).
     if (m_txChannel) {
-        const qint64 txElapsed = m_txChannel->onModeChanged(forMode);
-        if (txElapsed >= 0) {
-            emit dspChangeMeasured(txElapsed);
+        const SliceModel* const txSlice = txBoundSlice();
+        if (txSlice != nullptr && dspOptionsModeGroup(txSlice->dspMode()) == group) {
+            const qint64 txElapsed = m_txChannel->onModeChanged(txSlice->dspMode());
+            if (txElapsed >= 0) {
+                emit dspChangeMeasured(txElapsed);
+            }
         }
     }
 }

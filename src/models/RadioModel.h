@@ -669,6 +669,9 @@
 //                beside version(), which a Core sends and a remote window
 //                reads (firmwareBeta 1). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
+//                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 //=================================================================
@@ -4714,9 +4717,11 @@ public:
     //
     // Emits dspChangeMeasured(elapsedMs) if a WDSP channel rebuild occurred.
     //
-    // DspOptionsPage calls this when a combo changes and the combo's mode
-    // matches the current slice mode (design Section 4B: live-apply if same
-    // mode, persist-only otherwise — applies on next mode-switch).
+    // DspOptionsPage calls this when a combo changes, with the combo's mode
+    // (design Section 4B: live-apply if same mode, persist-only otherwise —
+    // applies on next mode-switch). Each slice is judged by its own mode:
+    // every receiver whose slice is in forMode's group takes the change, and
+    // the TX channel when the TX-bound slice is in it.
     //
     // Must be called on the main thread.
     void rebuildDspOptionsForMode(DSPMode forMode);

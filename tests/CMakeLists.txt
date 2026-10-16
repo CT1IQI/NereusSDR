@@ -5932,6 +5932,16 @@ nereus_add_test(tst_dsp_change_timer)
 #   radiomodel_rebuild_noop_when_disconnected — no emission when disconnected
 nereus_add_test(tst_dsp_options_per_mode_apply)
 
+# Every receive channel takes its slice's per-mode DSP > Options buffer size
+# before it runs a block (Thetis console.cs:2681-2692 SyncDSP), and on every
+# later mode change, the first receiver and the others alike. Real channels
+# through openRxChannelPool. With nothing saved, the DSP > Options page shows
+# what a receiver and the transmitter start with in every mode group. Slice
+# A's receiver on a real connect (ConnectableRadioModel) is read off WDSP.
+nereus_add_test(tst_dsp_options_first_apply
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
 # ── Task 4.3: Filter Impulse Cache toggle persistence ─────────────────────────
 # AppSettings round-trip for DspOptionsCacheImpulse and
 # DspOptionsCacheImpulseSaveRestore. Both default to "False". The WdspEngine
