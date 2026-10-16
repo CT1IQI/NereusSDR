@@ -57,6 +57,14 @@
 // under load shows whether the handshake was slow or stuck, and where.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
+// 2026-10-15: two cases that failed on the STRIX at 100% CPU. The
+// ready-first case keeps the answer from the offerer until the answerer's
+// drain is held, since a starved drain took the channels' opening with
+// the end of gathering; the held-message case offers messages until one
+// is held, since a starved sender lost the race with the first one's
+// acknowledgment. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+// Code.
+//
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -812,8 +820,15 @@ void TestMediaTransport::stalledReceiverRefusesDisplayInsteadOfQueueing()
 // taken by libdatachannel and held (Queued), not lost; a third is Busy; the
 // display channel reports writable once the held message has gone, and the
 // receiver gets both messages.
+//
+// A sender starved between the first two loses the race with the first
+// one's acknowledgment, and the second goes straight to SCTP as well (the
+// display send thread's copy of this case did so on the STRIX at 100% CPU,
+// 2026-10-15). So messages, each different, are offered until one is held:
+// every one before it was Sent, and the first always is.
 void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
 {
+    using Result = IMediaTransport::DisplaySendResult;
     LibDataChannelMediaTransport offerer;
     LibDataChannelMediaTransport answerer;
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
@@ -821,23 +836,33 @@ void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
     startPair(offerer, answerer);
 
     constexpr qsizetype kChunkBytes = 49'216; // one PureSignal display chunk
-    const QByteArray first(kChunkBytes, char(0x11));
-    const QByteArray second(kChunkBytes, char(0x22));
-    const QByteArray third(kChunkBytes, char(0x33));
-    QCOMPARE(offerer.submitDisplay(first), IMediaTransport::DisplaySendResult::Sent);
-    QCOMPARE(offerer.submitDisplay(second), IMediaTransport::DisplaySendResult::Queued);
+    // Far more than a race lost now and then: a sender that never meets a
+    // full send buffer still fails.
+    constexpr int kMostOffered = 8;
+    QList<QByteArray> offered;
+    Result result = Result::Sent;
+    while (result == Result::Sent && offered.size() < kMostOffered) {
+        offered.append(QByteArray(kChunkBytes, char(0x11 * (offered.size() + 1))));
+        result = offerer.submitDisplay(offered.constLast());
+    }
+    QVERIFY2(result == Result::Queued && offered.size() >= 2,
+             qPrintable(QStringLiteral("%1 messages offered, none held; the last answered %2")
+                            .arg(offered.size()).arg(int(result))));
     QVERIFY(offerer.displayBusy());
-    QCOMPARE(offerer.submitDisplay(third), IMediaTransport::DisplaySendResult::Busy);
+    const QByteArray busy(kChunkBytes, char(0x99));
+    QCOMPARE(offerer.submitDisplay(busy), Result::Busy);
 
     QTRY_VERIFY_WITH_TIMEOUT(!writable.isEmpty(), 10'000);
     QVERIFY(!offerer.displayBusy());
-    QTRY_COMPARE_WITH_TIMEOUT(displayReceived.count(), 2, 10'000);
-    QCOMPARE(displayReceived.at(0).at(0).toByteArray(), first);
-    QCOMPARE(displayReceived.at(1).at(0).toByteArray(), second);
+    QTRY_COMPARE_WITH_TIMEOUT(displayReceived.count(), offered.size(), 10'000);
+    for (qsizetype index = 0; index < offered.size(); ++index) {
+        QCOMPARE(displayReceived.at(index).at(0).toByteArray(), offered.at(index));
+    }
     // Busy was not taken: nothing more arrives.
     QTest::qWait(200);
-    QCOMPARE(displayReceived.count(), 2);
-    QCOMPARE(offerer.telemetry()->submittedDisplayPayloadBytes, quint64(2 * kChunkBytes));
+    QCOMPARE(displayReceived.count(), offered.size());
+    QCOMPARE(offerer.telemetry()->submittedDisplayPayloadBytes,
+             quint64(offered.size()) * quint64(kChunkBytes));
 
     offerer.stop();
     answerer.stop();
@@ -1170,11 +1195,33 @@ void TestMediaTransport::deletionFromReceivedSignalIsSafe()
 // The answerer's one drain timer is held from the end of its gathering until
 // the offerer's message has arrived, which is the interleaving the traversal
 // harness met under load.
+//
+// The answer and the answerer's candidates wait here until that hold: the
+// offerer cannot finish the handshake without them, so no channel opens
+// before it. Sent on as they came, a starved owner thread took the channels'
+// opening in the same drain as the end of gathering and was ready before
+// the hold (the STRIX at 100% CPU, 2026-10-15).
 void TestMediaTransport::readyPrecedesMessagesThatArriveWithIt()
 {
     LibDataChannelMediaTransport offerer;
     LibDataChannelMediaTransport answerer;
-    wire(offerer, answerer);
+    connect(&offerer, &IMediaTransport::localDescription, &answerer,
+            [&answerer](const QString& sdp, const QString& type) {
+                QVERIFY2(answerer.acceptDescription(sdp, type), "answerer rejected offer");
+            });
+    connect(&offerer, &IMediaTransport::localCandidate, &answerer,
+            [&answerer](const QString& candidate, const QString& mid) {
+                QVERIFY2(answerer.acceptCandidate(candidate, mid),
+                         "answerer rejected host candidate");
+            });
+    std::optional<std::pair<QString, QString>> answer;
+    QList<std::pair<QString, QString>> answerCandidates;
+    connect(&answerer, &IMediaTransport::localDescription, &answerer,
+            [&answer](const QString& sdp, const QString& type) { answer.emplace(sdp, type); });
+    connect(&answerer, &IMediaTransport::localCandidate, &answerer,
+            [&answerCandidates](const QString& candidate, const QString& mid) {
+                answerCandidates.append({candidate, mid});
+            });
     const QList<QTimer*> drainTimers =
         answerer.findChildren<QTimer*>(QString(), Qt::FindDirectChildrenOnly);
     QCOMPARE(drainTimers.size(), 1);
@@ -1204,6 +1251,12 @@ void TestMediaTransport::readyPrecedesMessagesThatArriveWithIt()
     QVERIFY(answerer.start({IMediaTransport::Role::Answerer, kTestAudioSsrc}));
     QVERIFY(offerer.start({IMediaTransport::Role::Offerer, kTestAudioSsrc}));
     QTRY_VERIFY_WITH_TIMEOUT(held, 10000);
+    QVERIFY(answer.has_value());
+    QCOMPARE(answerReady.count(), 0);
+    QVERIFY2(offerer.acceptDescription(answer->first, answer->second), "offerer rejected answer");
+    for (const auto& [candidate, mid] : std::as_const(answerCandidates)) {
+        QVERIFY2(offerer.acceptCandidate(candidate, mid), "offerer rejected host candidate");
+    }
     // The offerer becomes ready without the answerer's owner thread: its
     // display channel opens on the answerer library's acknowledgement.
     QVERIFY2(QTest::qWaitFor([&offerReady] { return offerReady.count() == 1; }, kHandshakeWaitMs),
