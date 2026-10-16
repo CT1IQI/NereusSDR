@@ -6,19 +6,29 @@
 // Modification history (NereusSDR):
 //   2026-10-15: created.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: Windows timed turns on a high-resolution waitable timer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/DaemonDisplaySendThread.h"
 
 #include "core/session/media/DisplayBudget.h"
 
+#include <QLoggingCategory>
+
+#include <algorithm>
 #include <utility>
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
 #include <pthread.h>
 #endif
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace NereusSDR {
+
+Q_DECLARE_LOGGING_CATEGORY(lcDaemonMedia)
 
 namespace {
 
@@ -87,11 +97,39 @@ void DaemonDisplayLock::setHookExemptThread(std::thread::id hookExempt)
 
 // ── DaemonDisplaySendThread ──────────────────────────────────────────────
 
-DaemonDisplaySendThread::DaemonDisplaySendThread() = default;
+DaemonDisplaySendThread::DaemonDisplaySendThread()
+{
+#ifdef Q_OS_WIN
+#ifdef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+    m_turnTimer = CreateWaitableTimerExW(nullptr, nullptr,
+                                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                         TIMER_ALL_ACCESS);
+    if (m_turnTimer != nullptr) {
+        m_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (m_wakeEvent == nullptr) {
+            CloseHandle(m_turnTimer);
+            m_turnTimer = nullptr;
+        }
+    }
+#endif
+    if (m_turnTimer == nullptr) {
+        qCWarning(lcDaemonMedia) << "no high-resolution timer; the display send thread's"
+                                    " timed turns wait a whole scheduler tick";
+    }
+#endif
+}
 
 DaemonDisplaySendThread::~DaemonDisplaySendThread()
 {
     stop();
+#ifdef Q_OS_WIN
+    if (m_wakeEvent != nullptr) {
+        CloseHandle(m_wakeEvent);
+    }
+    if (m_turnTimer != nullptr) {
+        CloseHandle(m_turnTimer);
+    }
+#endif
 }
 
 void DaemonDisplaySendThread::start(Pass pass)
@@ -113,7 +151,7 @@ void DaemonDisplaySendThread::setActive(bool active)
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_active = active;
     }
-    m_wake.notify_all();
+    notifyWake();
 }
 
 void DaemonDisplaySendThread::stop()
@@ -127,7 +165,7 @@ void DaemonDisplaySendThread::stop()
         // was set has begun waiting and is woken.
         const std::lock_guard<std::mutex> lock(m_mutex);
     }
-    m_wake.notify_all();
+    notifyWake();
     m_thread.join();
     m_threadId.store(std::thread::id(), std::memory_order_release);
 }
@@ -138,7 +176,7 @@ void DaemonDisplaySendThread::wakeFrames()
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_framesPending = true;
     }
-    m_wake.notify_all();
+    notifyWake();
 }
 
 void DaemonDisplaySendThread::wakeTurn()
@@ -147,28 +185,69 @@ void DaemonDisplaySendThread::wakeTurn()
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_turnPending = true;
     }
+    notifyWake();
+}
+
+bool DaemonDisplaySendThread::wakePending() const
+{
+    return m_stopRequested.load(std::memory_order_acquire) || m_framesPending || m_turnPending;
+}
+
+void DaemonDisplaySendThread::notifyWake()
+{
     m_wake.notify_all();
+#ifdef Q_OS_WIN
+    if (m_wakeEvent != nullptr) {
+        SetEvent(m_wakeEvent);
+    }
+#endif
+}
+
+void DaemonDisplaySendThread::waitForTurn(std::unique_lock<std::mutex>& lock,
+                                          Clock::time_point nextTurn)
+{
+#ifdef Q_OS_WIN
+    if (m_turnTimer != nullptr) {
+        // The event is set after every flag change under the mutex, so a
+        // wake between the check and the wait returns the wait at once.
+        while (!wakePending()) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                nextTurn - Clock::now()).count();
+            if (remaining <= 0) {
+                return;
+            }
+            LARGE_INTEGER due;
+            due.QuadPart = -std::max<LONGLONG>(1, remaining / 100);  // relative, in 100 ns units
+            if (!SetWaitableTimer(m_turnTimer, &due, 0, nullptr, nullptr, FALSE)) {
+                break;
+            }
+            const HANDLE handles[] = {m_wakeEvent, m_turnTimer};
+            lock.unlock();
+            WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+            lock.lock();
+        }
+        if (wakePending()) {
+            return;
+        }
+    }
+#endif
+    m_wake.wait_until(lock, nextTurn, [this] { return wakePending(); });
 }
 
 void DaemonDisplaySendThread::run()
 {
     nameThisThread();
     m_threadId.store(std::this_thread::get_id(), std::memory_order_release);
-    using Clock = std::chrono::steady_clock;
     constexpr auto kInterval = std::chrono::milliseconds(kDisplaySenderIntervalMs);
     Clock::time_point nextTurn = Clock::now() + kInterval;
     while (!m_stopRequested.load(std::memory_order_acquire)) {
         bool askedTurn = false;
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            const auto woken = [this] {
-                return m_stopRequested.load(std::memory_order_acquire) || m_framesPending
-                    || m_turnPending;
-            };
             if (m_active) {
-                m_wake.wait_until(lock, nextTurn, woken);
+                waitForTurn(lock, nextTurn);
             } else {
-                m_wake.wait(lock, [this, &woken] { return woken() || m_active; });
+                m_wake.wait(lock, [this] { return wakePending() || m_active; });
                 // Turns start again one interval after the thread is used.
                 nextTurn = Clock::now() + kInterval;
             }

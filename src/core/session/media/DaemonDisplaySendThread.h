@@ -17,6 +17,8 @@
 // Modification history (NereusSDR):
 //   2026-10-15: created.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: Windows timed turns on a high-resolution waitable timer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -116,6 +118,11 @@ private:
 // with whether a timed turn is due and whether one was asked for.  Timed
 // turns that fell behind are not made up: the next is one interval after
 // the late one.  It holds no lock of its own while the pass runs.
+//
+// On Windows the timed wait is on a high-resolution waitable timer, as the
+// Core's transmit I/Q sender's is (P2RadioConnection): a plain timed wait
+// there lasts a whole 15.6 ms scheduler tick, three intervals, where the
+// station thread's Qt sender timer this replaces keeps 5 ms.
 class DaemonDisplaySendThread final {
 public:
     // (timedTurn, askedTurn); frames are always taken in.
@@ -143,7 +150,15 @@ public:
     quint64 passes() const { return m_passes.load(std::memory_order_acquire); }
 
 private:
+    using Clock = std::chrono::steady_clock;
+
     void run();
+    // Under m_mutex: a frame, an asked turn or a stop is waiting.
+    bool wakePending() const;
+    // Under m_mutex, held on return: until a wake or nextTurn.
+    void waitForTurn(std::unique_lock<std::mutex>& lock, Clock::time_point nextTurn);
+    // Any thread, after a flag changed under m_mutex.
+    void notifyWake();
 
     std::mutex m_mutex;
     std::condition_variable m_wake;
@@ -156,6 +171,13 @@ private:
     std::atomic<bool> m_stopRequested{false};
     std::atomic<std::thread::id> m_threadId{};
     std::atomic<quint64> m_passes{0};
+#ifdef Q_OS_WIN
+    // The timed wait's high-resolution timer and the auto-reset event every
+    // wake sets (HANDLEs; both null where the system has no such timer, and
+    // the wait is the condition variable's).
+    void* m_turnTimer{nullptr};
+    void* m_wakeEvent{nullptr};
+#endif
     std::thread m_thread;
 };
 
