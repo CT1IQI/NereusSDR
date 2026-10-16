@@ -25,6 +25,9 @@
 //                 (Cat/Cwx/Dvk/Tuner/Eq/Fm/Tx/Rx/PhoneCw/Diversity/Digital/
 //                 PureSignal) inherits identical visuals without
 //                 duplicating the code.
+//   2026-10-16 - setUnavailableReason (NereusSDR-original): grays the
+//                 applet with its reason instead of hiding it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AppletWidget.h"
@@ -35,6 +38,8 @@
 #include <QSlider>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QBoxLayout>
+#include <QLabel>
 
 namespace NereusSDR {
 
@@ -51,9 +56,46 @@ AppletWidget::AppletWidget(RadioModel* model, QWidget* parent)
 
 QIcon AppletWidget::appletIcon() const { return {}; }
 
+void AppletWidget::setUnavailableReason(const QString& reason)
+{
+    // Disabled, never hidden: the applet stays where it is, grayed, with a
+    // line saying why and how to turn it on (as the Rotor does).
+    if (reason == m_unavailableReason) {
+        return;
+    }
+    m_unavailableReason = reason;
+    const bool unavailable = !reason.isEmpty();
+    if (unavailable && !m_unavailableLabel) {
+        m_unavailableLabel = new QLabel(this);
+        m_unavailableLabel->setObjectName(QStringLiteral("appletUnavailableReason"));
+        m_unavailableLabel->setWordWrap(true);
+        m_unavailableLabel->setTextFormat(Qt::PlainText);
+        m_unavailableLabel->setStyleSheet(QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+        if (auto* box = qobject_cast<QBoxLayout*>(layout())) {
+            // Under the title bar when the applet has one in its layout.
+            const int bar = m_titleBar ? box->indexOf(m_titleBar) : -1;
+            box->insertWidget(bar + 1, m_unavailableLabel);
+        }
+    }
+    if (m_unavailableLabel) {
+        m_unavailableLabel->setText(reason);
+        m_unavailableLabel->setVisible(unavailable);
+    }
+    setToolTip(reason);
+    // Gray only what this grayed: an applet its owner disabled stays so.
+    if (unavailable && !m_grayedUnavailable && !testAttribute(Qt::WA_ForceDisabled)) {
+        setEnabled(false);
+        m_grayedUnavailable = true;
+    } else if (!unavailable && m_grayedUnavailable) {
+        m_grayedUnavailable = false;
+        setEnabled(true);
+    }
+}
+
 QWidget* AppletWidget::appletTitleBar(const QString& text)
 {
     auto* bar = new QWidget(this);
+    m_titleBar = bar;
     bar->setFixedHeight(Style::kTitleBarH);
     bar->setStyleSheet(Style::titleBarStyle());
 

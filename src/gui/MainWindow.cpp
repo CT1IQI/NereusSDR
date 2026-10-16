@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: An applet whose capability is off (Power Genius, Tuner
+//               Genius, RF-Kit, RADE) is grayed in its container with the
+//               reason and how to turn it on, and ticking an applet under
+//               Containers > Applets brings its window onto a screen. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: The saved window geometry is restored last in the
 //               constructor, after the pans exist, so a window saved
 //               maximized composites its spectrum through QRhi on Linux
@@ -1439,6 +1444,27 @@ QString testTxBoundReRouteToolTip()
     return QStringLiteral("Show the question asked before the transmit antenna "
                           "moves, to see how it looks. No antenna changes, and "
                           "adding a slice does not ask it.");
+}
+// Why a capability-gated applet is grayed, and how to turn it on.
+QString appletUnavailableReason(const QString& id)
+{
+    if (id == QStringLiteral("Amp")) {
+        return QCoreApplication::translate("MainWindow",
+            "Turn on 4O3A integration in Setup > CAT & Network > 4O3A to use the Power Genius.");
+    }
+    if (id == QStringLiteral("Tuner")) {
+        return QCoreApplication::translate("MainWindow",
+            "Turn on 4O3A integration in Setup > CAT & Network > 4O3A to use the Tuner Genius.");
+    }
+    if (id == QStringLiteral("RfKit")) {
+        return QCoreApplication::translate("MainWindow",
+            "Turn on RF-Kit Amplifier integration in Setup > CAT & Network > RF-Kit to use the RF2K-S.");
+    }
+    if (id == QStringLiteral("Rade")) {
+        return QCoreApplication::translate("MainWindow",
+            "Switch the active slice to a RADE mode to use RADE.");
+    }
+    return {};
 }
 } // namespace
 
@@ -11265,6 +11291,10 @@ void MainWindow::populateDefaultMeter()
     connect(m_appletVis, &AppletVisibilityController::persistenceFailed, this, [this](const QString& error) {
         showToast(tr("Container layout could not be saved: %1").arg(error), ToastSeverity::Warning, 6000);
     });
+    // Ticked under Containers > Applets: its window is brought where its
+    // header can be reached (bench fix 2026-10-16).
+    connect(m_appletVis, &AppletVisibilityController::bringOnScreenRequested,
+            m_containerManager, &ContainerManager::bringAppletOnScreen);
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
     m_appletsById[QStringLiteral("Display")]    = m_displayApplet;
@@ -11348,29 +11378,30 @@ void MainWindow::populateDefaultMeter()
 
     // Capability gates: applets that depend on an external feature flag
     // get their availability set here. When availability is false, the
-    // applet is hidden AND its menu entries are greyed out. The user's
+    // applet is grayed in its container with the reason (disabled, never
+    // hidden, since 2026-10-16) and its menu entries are grayed out. The user's
     // persisted visibility preference is preserved across availability
     // changes (so re-enabling 4O3A pops the applet back if the user
     // wanted it visible).
     const bool fourO3AOn = m_radioModel && m_radioModel->fourO3AEnabled();
-    m_appletVis->setAvailable(QStringLiteral("Amp"),   fourO3AOn);
-    m_appletVis->setAvailable(QStringLiteral("Tuner"), fourO3AOn);
+    m_appletVis->setAvailable(QStringLiteral("Amp"),   fourO3AOn, appletUnavailableReason(QStringLiteral("Amp")));
+    m_appletVis->setAvailable(QStringLiteral("Tuner"), fourO3AOn, appletUnavailableReason(QStringLiteral("Tuner")));
     // RADE: available only in RADE_U / RADE_L modes. Startup mode is
     // USB, so initial availability=false. The dspModeChanged lambda
     // below updates this on every mode change.
-    m_appletVis->setAvailable(QStringLiteral("Rade"),  false);
+    m_appletVis->setAvailable(QStringLiteral("Rade"),  false, appletUnavailableReason(QStringLiteral("Rade")));
 
     // RF-Kit RF2K-S: available only when the master toggle is enabled.
     // Default OFF; live-updated via rfKitEnabledChanged below.
     const bool rfKitOn = m_radioModel && m_radioModel->rfKitEnabled();
-    m_appletVis->setAvailable(QStringLiteral("RfKit"), rfKitOn);
+    m_appletVis->setAvailable(QStringLiteral("RfKit"), rfKitOn, appletUnavailableReason(QStringLiteral("RfKit")));
 
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
     // Uses effective visibility (user pref AND available).
     for (const QString& id : m_appletVis->registeredIds()) {
         if (m_appletsById.value(id, nullptr)) {
-            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id));
+            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id), m_appletVis->unavailableReason(id));
         }
     }
 
@@ -11382,7 +11413,7 @@ void MainWindow::populateDefaultMeter()
             this, [this](const QString& id, bool effective) {
         Q_UNUSED(effective);
         if (m_containerManager && m_containerManager->contentRegistry()) {
-            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id));
+            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id), m_appletVis->unavailableReason(id));
             m_containerManager->reconcileWorkspace(m_containerManager->workspaceStore()->snapshot());
         }
     });
@@ -11394,8 +11425,8 @@ void MainWindow::populateDefaultMeter()
         connect(m_radioModel, &RadioModel::fourO3AEnabledChanged,
                 this, [this](bool enabled) {
             if (!m_appletVis) { return; }
-            m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled);
-            m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled);
+            m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled, appletUnavailableReason(QStringLiteral("Amp")));
+            m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled, appletUnavailableReason(QStringLiteral("Tuner")));
         });
 
         // Phase 3P-III Task 14: live-track RF-Kit master toggle so the
@@ -11403,7 +11434,7 @@ void MainWindow::populateDefaultMeter()
         connect(m_radioModel, &RadioModel::rfKitEnabledChanged,
                 this, [this](bool enabled) {
             if (!m_appletVis) { return; }
-            m_appletVis->setAvailable(QStringLiteral("RfKit"), enabled);
+            m_appletVis->setAvailable(QStringLiteral("RfKit"), enabled, appletUnavailableReason(QStringLiteral("RfKit")));
         });
     }
 
@@ -15568,7 +15599,7 @@ void MainWindow::wireSliceToSpectrum()
         // persisted preference survives the mode change.
         const bool isRade = (isRadeDspMode(mode));
         if (m_appletVis) {
-            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
+            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade, appletUnavailableReason(QStringLiteral("Rade")));
         }
         if (m_phoneCwApplet) {
             m_phoneCwApplet->setVisible(true);  // always visible

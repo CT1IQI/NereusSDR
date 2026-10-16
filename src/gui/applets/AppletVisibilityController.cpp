@@ -5,6 +5,12 @@
 // NereusSDR-original. See header for attribution.
 //
 // Modification history (NereusSDR):
+//   2026-10-16 - Bench fix: an applet reads ticked only while its container
+//                 is shown too, and ticking it shows that container (its
+//                 hidden, disabled, receive and macro flags cleared) and asks
+//                 for its window to be brought onto a screen. setAvailable
+//                 carries the reason the grayed applet shows. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 — Bench fix: missing workspace entries are added (see the
 //                 header), by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -19,6 +25,46 @@
 #include <QUuid>
 
 namespace NereusSDR {
+
+namespace {
+
+// The container's own flags that take it off the screen on receive.
+bool containerShown(const ContainerDocument& c)
+{
+    return c.visible && c.config.value(QStringLiteral("enabled")).toBool(true)
+        && !c.config.value(QStringLiteral("hiddenByMacro")).toBool(false)
+        && c.config.value(QStringLiteral("showOnRx")).toBool(true);
+}
+
+// Clears those flags; true when any was set. Only a flag that hides the
+// container is written, so a shown container keeps its exact bytes.
+bool showContainer(ContainerDocument& c)
+{
+    bool changed = false;
+    if (!c.visible) { c.visible = true; changed = true; }
+    if (!c.config.value(QStringLiteral("enabled")).toBool(true)) {
+        c.config[QStringLiteral("enabled")] = true; changed = true;
+    }
+    if (c.config.value(QStringLiteral("hiddenByMacro")).toBool(false)) {
+        c.config[QStringLiteral("hiddenByMacro")] = false; changed = true;
+    }
+    if (!c.config.value(QStringLiteral("showOnRx")).toBool(true)) {
+        c.config[QStringLiteral("showOnRx")] = true; changed = true;
+    }
+    return changed;
+}
+
+ContainerDocument* containerHolding(WorkspaceDocument& document, const QString& type)
+{
+    for (auto& c : document.containers) {
+        for (const auto& content : c.contents) {
+            if (content.typeId == type) { return &c; }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
 
 AppletVisibilityController::AppletVisibilityController(QObject* parent)
     : QObject(parent)
@@ -42,9 +88,12 @@ void AppletVisibilityController::syncWorkspace()
             for (const auto& content : c.contents) {
                 if (content.typeId != type) { continue; }
                 found = true; Entry& entry = m_entries[id];
-                if (entry.visible != content.visible) {
+                // Bench fix: on only while its container is on the screen
+                // too, so a tick never claims an applet nobody can see.
+                const bool shown = content.visible && containerShown(c);
+                if (entry.visible != shown) {
                     const bool wasEffective = entry.visible && entry.available;
-                    entry.visible = content.visible;
+                    entry.visible = shown;
                     emit visibilityChanged(id, entry.visible);
                     if (wasEffective != (entry.visible && entry.available)) { emit effectiveVisibilityChanged(id, entry.visible && entry.available); }
                 }
@@ -122,6 +171,12 @@ QStringList AppletVisibilityController::registeredIds() const
     return m_order;
 }
 
+QString AppletVisibilityController::unavailableReason(const QString& id) const
+{
+    auto it = m_entries.find(id);
+    return it != m_entries.end() ? it->unavailableReason : QString{};
+}
+
 QString AppletVisibilityController::displayName(const QString& id) const
 {
     auto it = m_entries.find(id);
@@ -136,19 +191,37 @@ void AppletVisibilityController::setVisible(const QString& id, bool visible)
     if (m_store) {
         WorkspaceDocument document = m_store->snapshot();
         bool found = false;
+        bool changed = false;
         const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
         for (auto& c : document.containers) {
             for (auto& content : c.contents) {
                 if (content.typeId == type) {
-                    if (content.visible == visible) { return; }
+                    changed = content.visible != visible;
                     content.visible = visible; found = true; break;
                 }
             }
             if (found) { break; }
         }
         // Bench fix: an applet with no workspace entry is added, not ignored.
-        if (!found && !placeInWorkspace(document, type, visible)) { return; }
-        commitVisibility(id, document);
+        if (!found) {
+            if (!placeInWorkspace(document, type, visible)) { return; }
+            changed = true;
+        }
+        // Bench fix 2026-10-16: ticked on, the applet is shown, so is the
+        // container holding it. Unticking leaves the container alone.
+        if (visible) {
+            if (ContainerDocument* holder = containerHolding(document, type); holder && showContainer(*holder)) {
+                changed = true;
+            }
+        }
+        bool saved = true;
+        if (changed) {
+            commitVisibility(id, document);
+            saved = m_storageError.isEmpty();
+        }
+        if (visible && saved) {
+            emit bringOnScreenRequested(type);
+        }
         return;
     }
     if (it->visible == visible) { return; }
@@ -219,15 +292,19 @@ void AppletVisibilityController::commitVisibility(const QString& id, const Works
     } else { m_storageError.clear(); }
 }
 
-void AppletVisibilityController::setAvailable(const QString& id, bool available)
+void AppletVisibilityController::setAvailable(const QString& id, bool available, const QString& reason)
 {
     auto it = m_entries.find(id);
     if (it == m_entries.end()) { return; }
-    if (it->available == available) { return; }
+    const QString unavailable = available ? QString() : reason;
+    if (it->available == available && it->unavailableReason == unavailable) { return; }
+    const bool flipped = it->available != available;
 
     const bool wasEffective = it->visible && it->available;
     it->available = available;
-    if (m_registry) { m_registry->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), available); }
+    it->unavailableReason = unavailable;
+    if (m_registry) { m_registry->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), available, unavailable); }
+    if (!flipped) { return; }
     const bool nowEffective = it->visible && it->available;
 
     emit availabilityChanged(id, available);

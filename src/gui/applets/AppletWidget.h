@@ -25,6 +25,9 @@
 //                 (Cat/Cwx/Dvk/Tuner/Eq/Fm/Tx/Rx/PhoneCw/Diversity/Digital/
 //                 PureSignal) inherits identical visuals without
 //                 duplicating the code.
+//   2026-10-16 - setUnavailableReason: an applet whose feature is off is
+//                 grayed with its reason, never hidden. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -56,6 +59,12 @@ public:
     /// float in its own window (AppletPanelWidget::floatApplet).
     virtual bool canFloat() const { return false; }
 
+    // Disabled, never hidden: while `reason` is not empty the applet is
+    // grayed and shows the reason at its top (as the Rotor applet does);
+    // an empty reason gives it back. Set by the container that shows it.
+    void setUnavailableReason(const QString& reason);
+    QString unavailableReason() const { return m_unavailableReason; }
+
 protected:
     // Call from subclass constructor to add the gradient title bar
     QWidget* appletTitleBar(const QString& text);
@@ -78,6 +87,12 @@ protected:
 
     RadioModel* m_model = nullptr;
     bool m_updatingFromModel = false;
+
+private:
+    QString m_unavailableReason;
+    QLabel* m_unavailableLabel = nullptr;
+    QWidget* m_titleBar = nullptr;   // the last appletTitleBar() made
+    bool m_grayedUnavailable = false; // setEnabled(false) came from here
 };
 
 } // namespace NereusSDR

@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-16 - An applet whose capability is off (Power Genius, Tuner
+//                 Genius, RF-Kit, RADE) stays in its place grayed, with its
+//                 reason, instead of being hidden: disabled, never hidden.
+//                 Its entry's own visibility still shows or hides it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: an auto-height stack scales its
 //                 bars by the width without the vertical bar, so a container
 //                 growing to fit them settles. J.J. Boyd (KG4VCF), with
@@ -69,6 +74,7 @@
 #include "ContainerWorkspaceStore.h"
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
+#include "gui/applets/AppletWidget.h"
 #include <QLoggingCategory>
 Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QDrag>
@@ -120,6 +126,30 @@ bool showsConfigLive(const QWidget* widget, const ContentEntry& current, Content
     if (!applied.isValid() || applied.toJsonObject() != current.config) { return false; }
     previous.config = current.config;
     return previous == current;
+}
+// Disabled, never hidden: a live applet view whose capability is off is
+// grayed with the registry's reason; available again, it is enabled. Only
+// graying done here is undone, so a view its owner disabled stays so.
+void presentAvailability(QWidget* view, const ContainerContentRegistry& registry, const QString& typeId)
+{
+    if (!view) { return; }
+    const bool available = registry.isAvailable(typeId);
+    if (auto* applet = qobject_cast<AppletWidget*>(view)) {
+        applet->setUnavailableReason(available ? QString() : registry.unavailableReason(typeId));
+        return;
+    }
+    static const char* const kGrayed = "containerGrayedUnavailable";
+    if (!available) {
+        view->setToolTip(registry.unavailableReason(typeId));
+        if (!view->property(kGrayed).toBool() && !view->testAttribute(Qt::WA_ForceDisabled)) {
+            view->setEnabled(false);
+            view->setProperty(kGrayed, true);
+        }
+    } else if (view->property(kGrayed).toBool()) {
+        view->setProperty(kGrayed, false);
+        view->setToolTip(QString());
+        view->setEnabled(true);
+    }
 }
 } // namespace
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
@@ -324,7 +354,9 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 label->setText(entry.name + QStringLiteral(" — ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
                     (m_registry.isAvailable(entry.typeId)?QStringLiteral("waiting for its live view"):m_registry.unavailableReason(entry.typeId))));
             }
-            row.presentationVisible = view && claim ? row.effectiveVisible : entry.visible;
+            // Unavailable, a claimed view is grayed, not hidden.
+            row.presentationVisible = entry.visible;
+            if (view && claim) { presentAvailability(view, m_registry, entry.typeId); }
             if (row.widget) { row.widget->setVisible(row.presentationVisible); }
         }
         // A row shown or hidden changes what the body needs across.
@@ -397,7 +429,10 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
                 if (entry.typeId == "applet:s_meter") { view->setMinimumHeight(130); }
                 row.widget = view; m_layout->addWidget(view);
-                view->setVisible(row.effectiveVisible);
+                // Unavailable, it is grayed with its reason, not hidden.
+                row.presentationVisible = entry.visible;
+                presentAvailability(view, m_registry, entry.typeId);
+                view->setVisible(entry.visible);
             } else {
                 auto* label = new QLabel(entry.name + QStringLiteral(" — ") +
                     (unique ? QStringLiteral("waiting for its live view") : QStringLiteral("duplicate singleton placement; original data retained")), m_body);
@@ -585,7 +620,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             else {row.widget=new QLabel(m_canvas);}
             if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
         }
-        row.widget->setProperty("freeCanvasEffectiveVisible",!row.widget->property("singletonTypeId").toString().isEmpty()?row.effectiveVisible:entry.visible);
+        // A singleton view is grayed when unavailable, never hidden for it.
+        if(!row.widget->property("singletonTypeId").toString().isEmpty()) {presentAvailability(row.widget,m_registry,entry.typeId);}
+        row.widget->setProperty("freeCanvasEffectiveVisible",entry.visible);
         retained.insert(row.widget);views[entry.id]=row.widget;m_rows.append(row);
     }
     for(const auto& row:oldRows) {
