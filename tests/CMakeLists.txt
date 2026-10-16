@@ -512,6 +512,9 @@ nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)
 nereus_add_test(tst_ps3_correction_files EXTRA_LABELS core)
 if(TARGET wdsp_static)
     nereus_add_test(tst_wdsp_nnr EXTRA_LABELS core)
+    # One profile's close never deletes the impulse cache another profile
+    # saved in the shared DSP folder.
+    nereus_add_test(tst_wdsp_impulse_cache_profiles EXTRA_LABELS core)
     nereus_add_test(tst_nnr_model_assets EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
