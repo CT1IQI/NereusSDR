@@ -185,9 +185,10 @@ it does not remove an interferer from the passband.
 The **SQL** button and threshold on the flag and in the RX applet are the
 SSB-style squelch, on a scale of 0 to 100, whatever the mode. No control in the
 flag or applet turns on AM or FM squelch. Their thresholds are on their own DSP
-pages, in dB from -160 to 0: **AM Squelch Threshold** in the **Squelch** group
-of **File > Settings... > DSP > AM/SAM**, and **Squelch Threshold** on
-**File > Settings... > DSP > FM**. Do not copy a number between these unlike
+pages: **AM Squelch Threshold** in the **Squelch** group of **File >
+Settings... > DSP > AM/SAM**, in dB from -160 to 0, and **Squelch Threshold**
+on **File > Settings... > DSP > FM**, from 0 to 100, where 100 is the tightest
+and a new receiver starts. Do not copy a number between these unlike
 scales. In a no-audio
 diagnosis, turn SQL off temporarily so that a closed gate cannot be confused
 with the wrong output device. Tone squelch and FM repeater controls are not

@@ -49,6 +49,11 @@ normally so the new version can migrate them once.
   band it opens on. Receivers B, C and D now run on the settings they show,
   so one whose saved settings differ from the defaults may sound different
   from before.
+- **FM squelch reads 0 to 100.** **Squelch Threshold** on
+  **File > Settings... > DSP > FM** now shows 0 to 100, where 100 is the
+  tightest, instead of dB. Your saved threshold is kept: the old starting
+  value now reads 6, and with FM squelch on it now opens. A new receiver
+  starts at 100.
 
 ## Core installs on a Raspberry Pi, Rock or other SBC
 

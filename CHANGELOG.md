@@ -198,6 +198,12 @@ The workspace look is now the default.
   that tab's filter edges back. Bypass and routing settings are kept.
 - On an Anvelina Pro 3, Ext2 is labeled **RX BYPASS on TX**.
 - The NNR quick controls stay on screen, and scroll when they don't fit.
+- FM squelch opens again. With FM squelch on, an FM receiver no longer stays
+  muted whatever its threshold. **Squelch Threshold** on
+  **File > Settings... > DSP > FM** now reads 0 to 100, where 100 is the
+  tightest, instead of dB. A new receiver starts at 100. A threshold you
+  saved is kept, so the old starting value now reads 6. The CAT SQ, ZZSQ
+  and ZZSX commands set the same threshold as before.
 - The radio's firmware shows its second number where the radio reports one,
   so an Anvelina Pro 3 on gateware 2.2.14 reads 22.14 instead of 22 and a
   Hermes Lite 2 on 74.2 reads 74.2. It shows in the radio list, Add Custom
