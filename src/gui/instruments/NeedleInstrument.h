@@ -61,6 +61,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Adds hasSecondValue() and clearSecondValue().
@@ -70,6 +73,7 @@
 #pragma once
 
 #include "gui/instruments/PeakHold.h"
+#include "gui/instruments/ReadingSource.h"
 
 #include <QWidget>
 
@@ -90,6 +94,9 @@ public:
     /// ein Instrument ohne Bereich zu zeigen.
     bool setPrimary(int bindingId);
     int  primary() const { return m_primary; }
+    // A caller-owned scale for the existing primary binding and value.
+    void setPrimaryScale(const ReadingDescriptor& d);
+    const ReadingDescriptor* reading() const { return primaryReading(); }
 
     /// Die zweite Anzeige, nur als Zeiger. -1 schaltet sie ab.
     bool setSecondary(int bindingId);
@@ -175,6 +182,8 @@ protected:
 
 private:
     void refreshFooter();
+    const ReadingDescriptor* primaryReading() const;
+    std::optional<ReadingDescriptor> m_ownReading;
 
     InstrumentFooter* m_footer{nullptr};
 

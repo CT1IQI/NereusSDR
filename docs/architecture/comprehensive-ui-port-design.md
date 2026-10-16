@@ -69,6 +69,8 @@ sub-panel over the spectrum.
 
 ### Display Flyout — Expanded Design
 
+> Note 2026-10-10: this flyout design is superseded by section 3 of `2026-10-09-display-pill-and-levels-design.md` (the four-tab Display pill).
+
 The Display flyout is significantly expanded vs AetherSDR. It uses **per-slice
 tabs** (RX1 / RX2 / TX) and exposes the most-used Thetis Display settings:
 

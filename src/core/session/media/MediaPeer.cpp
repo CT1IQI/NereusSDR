@@ -37,6 +37,10 @@
 //   2026-10-10: R-AUD-SEND: audioRtpSink(), sendRtp() with this peer's
 //               checks from any thread. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-15: setTxReceiptHook, given to each start's
+//               transport before it starts, for the remote transmit cut
+//               guard. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-15: Display send thread: displaySink(), the display and raw
 //               I/Q sends with this peer's checks from any thread. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -284,6 +288,9 @@ struct MediaPeer::Private {
     quint64 generation = 0;
     // TX mic thread: the microphone line's sink, installed on each start.
     IMediaTransport::MicPacketSink micSink;
+    // Remote transmit cut off the main thread: the "tx" receipt hook, given
+    // to each start's transport.
+    IMediaTransport::TxReceiptHook txReceiptHook;
     int remoteCandidateControls = 0;
     int localCandidateControls = 0;
     bool started = false;
@@ -315,7 +322,7 @@ MediaPeer::~MediaPeer()
 bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
                       int audioTargetBitrate, bool offerLosslessAudio,
                       bool receiverAudioStreams, bool headphonesMixStream, bool micLine,
-                      bool iqChannel)
+                      bool iqChannel, bool waveformChannel)
 {
     d->startRefusal = StartRefusal::None;
     if (d->started || !isCanonicalConnectionId(connectionId)) {
@@ -346,6 +353,10 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     ++d->generation;
     const quint64 generation = d->generation;
     d->transport = transport;
+    // Before the transport starts, so its first "tx" message is reported.
+    if (d->txReceiptHook) {
+        transport->setTxReceiptHook(d->txReceiptHook);
+    }
     d->connectionId = connectionId;
     d->role = role;
     d->audioSsrc = audioSsrcForConnection(connectionId);
@@ -442,6 +453,25 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
                     return;
                 }
                 emit self->displayReceived(message);
+            });
+    connect(transport, &IMediaTransport::waveformReceived, this,
+            [self, isCurrentGeneration](const QByteArray& message) {
+                if (isCurrentGeneration() && !message.isEmpty()
+                    && message.size() <= IMediaTransport::kMaxWaveformMessageBytes) {
+                    emit self->waveformReceived(message);
+                }
+            });
+    connect(transport, &IMediaTransport::waveformErrorOccurred, this,
+            [self, isCurrentGeneration](const QString& reason) {
+                if (isCurrentGeneration()) { emit self->waveformErrorOccurred(reason); }
+            });
+    connect(transport, &IMediaTransport::waveformDropped, this,
+            [self, isCurrentGeneration](quint64 packets) {
+                if (isCurrentGeneration()) { emit self->waveformDropped(packets); }
+            });
+    connect(transport, &IMediaTransport::waveformWritable, this,
+            [self, isCurrentGeneration] {
+                if (isCurrentGeneration()) { emit self->waveformWritable(); }
             });
     connect(transport, &IMediaTransport::iqReceived, this,
             [self, isCurrentGeneration](const QByteArray& message) {
@@ -550,6 +580,7 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     options.micAudioSsrc = d->micAudioSsrc;
     options.txChannel = d->micAudioSsrc != 0;
     options.iqChannel = iqChannel;
+    options.waveformChannel = waveformChannel;
     options.ice = d->ice;
     const bool backendStarted = transport->start(options);
     if (!self) {
@@ -578,6 +609,15 @@ bool MediaPeer::setMicPacketSink(IMediaTransport::MicPacketSink sink)
 {
     d->micSink = std::move(sink);
     return installMicSink();
+}
+
+bool MediaPeer::setTxReceiptHook(IMediaTransport::TxReceiptHook hook)
+{
+    d->txReceiptHook = std::move(hook);
+    if (!d->transport) {
+        return false;
+    }
+    return d->transport->setTxReceiptHook(d->txReceiptHook);
 }
 
 bool MediaPeer::installMicSink()
@@ -800,6 +840,21 @@ bool MediaPeer::iqBusy() const
 {
     return d->started && d->transport && d->transport->iqBusy();
 }
+
+IMediaTransport::DisplaySendResult MediaPeer::submitWaveform(const QByteArray& message)
+{
+    if (!d->started || !d->transport || message.isEmpty()
+        || message.size() > IMediaTransport::kMaxWaveformMessageBytes) {
+        return IMediaTransport::DisplaySendResult::Refused;
+    }
+    return d->transport->submitWaveform(message);
+}
+
+bool MediaPeer::waveformBusy() const
+{
+    return d->started && d->transport && d->transport->waveformBusy();
+}
+
 
 bool MediaPeer::displayBusy() const
 {

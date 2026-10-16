@@ -24,6 +24,10 @@
 //               pillStyleSheet(), one place per state, so the workspace
 //               look's translation and its test read what a row shows.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF): the Firmware column and the detail
+//               line show the radio's second firmware number where it
+//               reported one (RadioInfo::firmwareText). AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
@@ -958,7 +962,7 @@ void ConnectionPanel::populateRow(int row, const RadioInfo& info)
     m_radioTable->setItem(row, ColProtocol, makeItem(protoStr));
     m_radioTable->setItem(row, ColIp,       makeItem(info.address.toString()));
     m_radioTable->setItem(row, ColLastSeen, makeItem(lastSeenStr));
-    m_radioTable->setItem(row, ColFirmware, makeItem(QString::number(info.firmwareVersion)));
+    m_radioTable->setItem(row, ColFirmware, makeItem(info.firmwareText()));
     m_radioTable->setItem(row, ColInUse,    makeItem(inUseStr));
 
     // Center the status dot
@@ -1508,7 +1512,7 @@ void ConnectionPanel::updateDetailPanel()
         .arg(static_cast<int>(info.boardType), 2, 16, QLatin1Char('0')));
     m_detailProtoLabel->setText(QStringLiteral("Protocol: P%1")
         .arg(info.protocol == ProtocolVersion::Protocol2 ? 2 : 1));
-    m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareVersion));
+    m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareText()));
     m_detailIpLabel->setText(QStringLiteral("IP: %1").arg(info.address.toString()));
     m_detailMacLabel->setText(QStringLiteral("MAC: %1").arg(info.macAddress));
 

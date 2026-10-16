@@ -40,6 +40,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - wireMox(): the MOX state the wire carries, unkeyed while
+//                 the transmit is cut. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-14 - Share the four command construction boundaries with
 //                 focused in-memory tests. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. NereusSDR-original.
@@ -733,6 +736,11 @@ private:
     // sendTxIq() call, not once per sample, so the ordering cost is
     // irrelevant next to the surrounding ring arithmetic.
     std::atomic<bool> m_mox{false};
+    // The MOX state every compose site puts on the wire: m_mox, read as
+    // unkeyed while the transmit is cut (RadioConnection::transmitCut), so
+    // the window before the cut's own setMox(false) runs carries no PTT bit.
+    // Atomic reads only, so the TX I/Q send thread may call it too.
+    bool wireMox() const noexcept { return m_mox.load() && !transmitCut(); }
 
     // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
     //

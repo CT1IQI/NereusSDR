@@ -310,6 +310,33 @@ int main(int argc, char* argv[])
     // src/core/CoreInit.h for the full contract and its idempotency guard.
     NereusSDR::CoreInit::initialize(activeProfile);
 
+    // The waterfall's stored Black Level and Color Gain, converted once to
+    // the level model used under Clarity so the waterfall looks the same
+    // after the upgrade. Here, after the settings are loaded and before any
+    // window (and so any pan) reads them. These are this computer's display
+    // keys, so the window converts them and the Core (src/server_main.cpp)
+    // never does; the conversion keeps its own marker key and leaves
+    // SettingsSchemaVersion, which window and Core compare, alone.
+    NereusSDR::AppSettings::convertWaterfallLevelsForClarityModel(
+        NereusSDR::AppSettings::instance());
+
+    // The stored display Cal Offset, removed once: until now it held the
+    // station's receive offset, not a value the operator chose, and a pan
+    // would add it to the station's offset a second time. Here for the same
+    // reasons as the conversion above: before any pan reads it, the window's
+    // keys only, its own marker key.
+    NereusSDR::AppSettings::resetPollutedDisplayCalOffset(
+        NereusSDR::AppSettings::instance());
+
+    // The stored per-band noise floors, removed once: they were measured
+    // before Clarity's floor was calibrated, and a pan would start a band
+    // on a level that is off by the calibration offset. Each band is stored
+    // again after a few seconds of steady reception. Here for the same
+    // reasons as the two above: before any pan reads them, the window's
+    // keys only, its own marker key.
+    NereusSDR::AppSettings::clearUncalibratedClarityFloors(
+        NereusSDR::AppSettings::instance());
+
     qDebug() << "Starting NereusSDR" << app.applicationVersion();
     if (!activeProfile.isEmpty()) {
         const QString logDir = NereusSDR::AppSettings::resolveConfigDir(activeProfile);

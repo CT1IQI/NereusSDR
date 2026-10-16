@@ -47,6 +47,8 @@
 #include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/ClarityController.h"
+#include "core/MoxController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessController.h"
 #include "core/FFTEngine.h"
@@ -79,6 +81,9 @@
 #include "fakes/LoopbackTransport.h"
 #include "OperatorWording.h"
 #include "models/RadioModel.h"
+#include "models/RadeWaveformModel.h"
+#include "core/TxSliceArbiter.h"
+#include "core/session/media/WaveformCodec.h"
 #include "models/SliceModel.h"
 
 #include <QDeadlineTimer>
@@ -246,6 +251,14 @@ public:
         return DisplaySendResult::Sent;
     }
     bool iqBusy() const override { return stallIq; }
+    DisplaySendResult submitWaveform(const QByteArray& bytes) override {
+        if (!readyState) { return DisplaySendResult::Refused; }
+        if (stallWaveform) { return DisplaySendResult::Busy; }
+        waveforms.append(bytes); return DisplaySendResult::Sent;
+    }
+    bool waveformBusy() const override { return stallWaveform; }
+    bool stallWaveform = false;
+    QList<QByteArray> waveforms;
     // The peer acknowledges everything outstanding; a held message goes out.
     void acknowledgeDisplayWindow()
     {
@@ -638,7 +651,7 @@ struct Harness {
         QTRY_VERIFY(server.mediaAvailable() && client.mediaAvailable());
     }
 
-    void startReadyPeer(bool iq = false)
+    void startReadyPeer(bool iq = false, bool waveform = false)
     {
         // The exact condition sendMediaControl() checks before it sends.
         QTRY_VERIFY(client.mediaAvailable());
@@ -646,6 +659,7 @@ struct Harness {
             {QStringLiteral("op"), QStringLiteral("start")},
             {QStringLiteral("connectionId"), QLatin1String(kConnectionId)}};
         if (iq) { start.insert(QStringLiteral("remoteIqVersion"), 1); }
+        if (waveform) { start.insert(QStringLiteral("waveformVersion"), 1); }
         QVERIFY(client.sendMediaControl(start, client.sessionEpoch()));
         QTRY_VERIFY(mediaTransport);
         QVERIFY(mediaTransport->started);
@@ -756,6 +770,7 @@ private slots:
     void aPeerTheCoreDropsIsToldToTheAppAtOnce_data();
     void aPeerTheCoreDropsIsToldToTheAppAtOnce();
     void aNewStartReplacesTheSessionsHalfOpenPeer();
+    void aKeyEdgeResetsEveryActiveSourceOnce();
     void staleRevisionAndWrongEpochPreserveTheActiveSource();
     void streamRemovalRetiresEndpointAndSource();
     void nonoverlappingCropIsRejectedBeforeSourceActivation();
@@ -824,6 +839,12 @@ private slots:
     void radioDropTellsAnAppWaitingOnMediaThatTheRadioIsGone();
     void aBoundControllerServesItsOwnSessionAndHearsItsOwnMix();
     void aListenedSliceJoinsTheMixAtTheListenersOwnLevel();
+    void waveformDemandAuthorizationAndRetirement();
+    void waveformMicPrivacyAndContextReentrancy();
+    void waveformWritableRecoversAStalledVisibleEndpoint();
+    void waveformFullRateBudgetRefusal();
+    void waveformUnavailableVisibleDemandRefreshesWithoutCapturing();
+    void waveformStallDropsAndRetiresWithoutKeepingProducerLease();
     void rawIqRunsForSixtySecondsInSequenceAndRetires();
     void stalledRawIqFailsWithoutBlockingControl();
     void rawIqLeavesOnTheDisplayThreadAndItsStallEndsOnMain();
@@ -3293,6 +3314,13 @@ void TstDaemonMediaController::nonzeroNoiseFloorMatchesLocalFftBeforeCropAndQuan
         NoiseFloorEstimator estimator;
         const double expected = estimator.estimate(localBins) + harness.radio.rxMeterOffsetDb();
         QVERIFY(expected > -180); // This covers ordinary nonzero data, not the floor sentinel.
+        // R-DSP-60: the same number a local ClarityController with the
+        // station's calibration offset makes from the same bins.
+        NereusSDR::ClarityController localClarity;
+        localClarity.setEnabled(true);
+        localClarity.setCalibrationOffsetDb(float(harness.radio.rxMeterOffsetDb()));
+        localClarity.feedBins(localBins, 0);
+        QVERIFY(std::abs(double(localClarity.smoothedFloor()) - expected) < 0.01);
 
         controls.clear();
         QVERIFY(harness.client.sendMediaControl(subscription(
@@ -3310,6 +3338,65 @@ void TstDaemonMediaController::nonzeroNoiseFloorMatchesLocalFftBeforeCropAndQuan
         QVERIFY2(std::abs(received.value(QStringLiteral("floorDbm")).toDouble() - expected) < 0.01,
                  "Remote Clarity must match full local FFT percentile plus station calibration");
     }
+    harness.finish();
+}
+
+// S21, R-DSP-23: each end of MoxController's walk clears the FFT input of
+// every active source once, on that source's own worker thread (the counter
+// is advanced by the drain that runs there). A repeat of the same edge, as
+// a second device's controller would deliver it, clears nothing.
+void TstDaemonMediaController::aKeyEdgeResetsEveryActiveSourceOnce()
+{
+    Harness harness;
+    harness.establishSession();
+    harness.startReadyPeer();
+    // Two sources: the receiver's two spectrum tiers, each with its own
+    // engine and worker thread.
+    const double centre = harness.radio.streamCentreHz(harness.streamIndex);
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        31, 1, harness.sliceId, centre, QStringLiteral("wide"), 1024),
+        harness.client.sessionEpoch()));
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        32, 1, harness.sliceId, centre, QStringLiteral("fine"), 1024),
+        harness.client.sessionEpoch()));
+    QTRY_COMPARE(harness.controller.activeEndpointCount(), 2);
+    QTRY_COMPARE(harness.controller.activeSourceCount(), 2);
+    DaemonSpectrumSource* const source = &harness.controller.sharedSpectrum()->source();
+    const QList<MediaSourceKey> keys = source->activeSources();
+    QCOMPARE(keys.size(), 2);
+    // Each engine has taken its configuration on its own thread.
+    for (const MediaSourceKey& key : keys) {
+        QTRY_VERIFY_WITH_TIMEOUT(source->publishFrameForTest(key, harness.nowNs), 10'000);
+    }
+    QList<quint64> before;
+    for (const MediaSourceKey& key : keys) {
+        before.append(source->inputHistoryResets(key));
+    }
+    const auto resetsSince = [&](int index) {
+        return source->inputHistoryResets(keys.at(index)) - before.at(index);
+    };
+
+    MoxController* const mox = harness.radio.moxController();
+    QVERIFY(mox);
+    emit mox->moxStateChanged(true);
+    QTRY_COMPARE(resetsSince(0), quint64{1});
+    QTRY_COMPARE(resetsSince(1), quint64{1});
+
+    emit mox->moxStateChanged(false);
+    QTRY_COMPARE(resetsSince(0), quint64{2});
+    QTRY_COMPARE(resetsSince(1), quint64{2});
+
+    // The same edge again clears nothing; the next real edge does, so the
+    // count after it proves the repeat added none.
+    harness.controller.sharedSpectrum()->keyEdge(false);
+    emit mox->moxStateChanged(true);
+    QTRY_COMPARE(resetsSince(0), quint64{3});
+    QTRY_COMPARE(resetsSince(1), quint64{3});
+    QTest::qWait(50);
+    QCOMPARE(resetsSince(0), quint64{3});
+    QCOMPARE(resetsSince(1), quint64{3});
+    emit mox->moxStateChanged(false);
+    QTRY_COMPARE(resetsSince(0), quint64{4});
     harness.finish();
 }
 
@@ -7299,6 +7386,165 @@ void TstDaemonMediaController::radioDropTellsAnAppWaitingOnMediaThatTheRadioIsGo
 // A full minute at the accepted 192 kHz hardware rate uses one ordered frame
 // every five milliseconds. The fake transport verifies the same bytes the
 // real dedicated channel receives, without retaining 90 MB of test frames.
+void TstDaemonMediaController::waveformDemandAuthorizationAndRetirement()
+{
+    Harness h(DisplayBudgetLimits{10'000'000,10'000'000,1});
+    h.establishSession();
+    QCOMPARE(h.client.capabilities().waveformVersion,1);
+    h.startReadyPeer(false,true); QVERIFY(h.mediaTransport->startOptions.waveformChannel);
+    h.useManualDisplayTicks();
+    WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+    auto* model=h.radio.radeWaveformModel(); QVERIFY(model);
+    model->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,UINT64_MAX,true);
+    const QByteArray listener=h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    h.radio.sliceOwnership()->setOwner(h.sliceId,SliceOwnership::stationDevice());
+    QVERIFY(h.radio.sliceOwnership()->join(listener,h.sliceId));
+    QSignalSpy messages(&h.client,&StationClient::mediaControlReceived);
+    const auto request=[&h](int slice,WaveformKind kind,int revision,bool enabled) {
+        return QJsonObject{{"op","waveform-stream"},{"connectionId",QLatin1String(kConnectionId)},
+            {"sliceId",slice},{"kind",WaveformCodec::kindName(kind)},{"revision",revision},{"enabled",enabled}};
+    };
+    QVERIFY(h.client.sendMediaControl(request(h.sliceId,WaveformKind::DecodedSpeech,1,true),h.client.sessionEpoch()));
+    QTRY_VERIFY(publisher.bindingToken()!=0);
+    std::vector<float> pcm(2400,0.125f);
+    QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),2400,1,100000000,true));
+    QCoreApplication::processEvents(); h.nowNs=100000000; h.sendDisplayTick();
+    QVERIFY(!h.mediaTransport->waveforms.empty());
+    const auto decoded=WaveformCodec::decode(h.mediaTransport->waveforms[0]); QVERIFY(decoded);
+    QCOMPARE(decoded->sourceGeneration,quint64(UINT64_MAX)); QCOMPARE(decoded->batch.sampleRate,24000);
+    QCOMPARE(decoded->batch.samples[0],0.125f);
+    QVERIFY(h.client.sendMediaControl(request(999,WaveformKind::DecodedSpeech,1,true),h.client.sessionEpoch()));
+    QVERIFY(h.client.sendMediaControl(request(h.sliceId,WaveformKind::RawMicrophone,1,true),h.client.sessionEpoch()));
+    QCoreApplication::processEvents();
+    // A receive listener has no station microphone authority.
+    for(const auto& call:messages) {
+        const auto context=call[0].toJsonObject();
+        if(context.value("op")=="waveform-stream-context" && (context.value("sliceId").toInt()==999 || context.value("kind")=="rawMic")) {
+            QVERIFY(!context.value("enabled").toBool());
+        }
+    }
+    QVERIFY(h.radio.sliceOwnership()->leave(listener,h.sliceId));
+    QTRY_COMPARE(publisher.bindingToken(),quint64(0));
+    QVERIFY(h.client.sendMediaControl(request(h.sliceId,WaveformKind::DecodedSpeech,2,false),h.client.sessionEpoch()));
+    QTRY_COMPARE(publisher.bindingToken(),quint64(0));
+    h.finish();
+}
+
+void TstDaemonMediaController::waveformMicPrivacyAndContextReentrancy()
+{
+    Harness h(DisplayBudgetLimits{10000000,10000000,1}); h.establishSession(); h.startReadyPeer(false,true);
+    h.useManualDisplayTicks(); const QByteArray device=h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    QVERIFY(!device.isEmpty()); h.radio.sliceOwnership()->setOwner(h.sliceId,device);
+    QVERIFY(h.radio.txSliceArbiter()->requestHandoff(h.sliceId));
+    WaveformPublisher publisher(WaveformKind::RawMicrophone,48000);
+    h.radio.radeWaveformModel()->setEndpoint(h.sliceId,WaveformKind::RawMicrophone,&publisher,7,true);
+    const auto request=[&](int revision) { return QJsonObject{{"op","waveform-stream"},
+        {"connectionId",QLatin1String(kConnectionId)},{"sliceId",h.sliceId},{"kind","rawMic"},
+        {"revision",revision},{"enabled",true}}; };
+    QVERIFY(h.client.sendMediaControl(request(1),h.client.sessionEpoch())); QTest::qWait(10);
+    QCOMPARE(publisher.bindingToken(),quint64(0)); // Local microphone requires the TX holder.
+    TransmitHolder::Holder held; held.deviceId=device; held.source=TransmitHolder::Source::Device;
+    h.server.transmitHolder()->transferTo(held,QStringLiteral("waveform privacy fixture"));
+    QVERIFY(h.client.sendMediaControl(request(2),h.client.sessionEpoch())); QTRY_VERIFY(publisher.bindingToken()!=0);
+    h.radio.openRemoteMicLine(device); h.radio.setRemoteMicPriming(device,true);
+    QVERIFY(h.radio.remoteMicInUse()); QCOMPARE(h.radio.remoteMicWriter(),device);
+    // Install the physical test endpoint after the source lifecycle rebind.
+    h.radio.radeWaveformModel()->setEndpoint(h.sliceId,WaveformKind::RawMicrophone,&publisher,8,true);
+    QVERIFY(h.client.sendMediaControl(request(3),h.client.sessionEpoch())); QTRY_VERIFY(publisher.bindingToken()!=0);
+    const QByteArray other("foreign-device"); h.radio.openRemoteMicLine(other); h.radio.setRemoteMicPriming(other,true);
+    QVERIFY(h.radio.remoteMicWriter()==other); QTRY_COMPARE(publisher.bindingToken(),quint64(0));
+    h.radio.setRemoteMicPriming(other,false); h.radio.closeRemoteMicLine(other);
+    h.radio.setRemoteMicPriming(device,false); h.radio.closeRemoteMicLine(device);
+    h.radio.radeWaveformModel()->setEndpoint(h.sliceId,WaveformKind::RawMicrophone,&publisher,9,true);
+    // Closing synchronously from the context send retires every map/reference.
+    h.stationTransport->closeOnOp="waveform-stream-context";
+    QVERIFY(h.client.sendMediaControl(request(4),h.client.sessionEpoch()));
+    QTRY_COMPARE(h.controller.sessionEpoch(),quint64(0)); QCOMPARE(publisher.bindingToken(),quint64(0));
+}
+
+void TstDaemonMediaController::waveformWritableRecoversAStalledVisibleEndpoint()
+{
+    Harness h(DisplayBudgetLimits{10000000,10000000,1}); h.establishSession(); h.startReadyPeer(false,true);
+    h.useManualDisplayTicks(); WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+    h.radio.radeWaveformModel()->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,1,true);
+    QVERIFY(h.client.sendMediaControl({{"op","waveform-stream"},{"connectionId",QLatin1String(kConnectionId)},
+        {"sliceId",h.sliceId},{"kind","decodedSpeech"},{"revision",1},{"enabled",true}},h.client.sessionEpoch()));
+    QTRY_VERIFY(publisher.bindingToken()!=0); h.mediaTransport->stallWaveform=true;
+    std::vector<float> pcm(240,0.25f);
+    QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),240,1,100000000,true));
+    QCoreApplication::processEvents(); h.nowNs=100000000; h.sendDisplayTick(); h.nowNs=400000000; h.sendDisplayTick();
+    QCOMPARE(publisher.bindingToken(),quint64(0));
+    h.mediaTransport->stallWaveform=false; emit h.mediaTransport->waveformWritable();
+    QTRY_VERIFY(publisher.bindingToken()!=0);
+    QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),240,1,500000000,true));
+    QCoreApplication::processEvents(); h.nowNs=500000000; h.sendDisplayTick();
+    QVERIFY(!h.mediaTransport->waveforms.empty()); h.finish();
+}
+
+void TstDaemonMediaController::waveformUnavailableVisibleDemandRefreshesWithoutCapturing()
+{
+    Harness h(DisplayBudgetLimits{10000000,10000000,1}); h.establishSession(); h.startReadyPeer(false,true);
+    h.useManualDisplayTicks(); WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+    auto* model=h.radio.radeWaveformModel();
+    model->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,1,false,QStringLiteral("Source not active yet."));
+    QSignalSpy refresh(model,&RadeWaveformModel::localObservationRefreshRequested);
+    const auto request=[&](int revision,bool enabled) { return QJsonObject{{"op","waveform-stream"},
+        {"connectionId",QLatin1String(kConnectionId)},{"sliceId",h.sliceId},{"kind","decodedSpeech"},
+        {"revision",revision},{"enabled",enabled}}; };
+    QVERIFY(h.client.sendMediaControl(request(1,true),h.client.sessionEpoch())); QTest::qWait(10);
+    QCOMPARE(publisher.bindingToken(),quint64(0));
+    // Stand in for the existing headless physical-source refresh: no capture
+    // demand exists yet, but the already-running source becomes observable.
+    connect(model,&RadeWaveformModel::localObservationRefreshRequested,&h.controller,[&] {
+        model->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,1,true);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(!refresh.empty(),1000); QTRY_VERIFY(publisher.bindingToken()!=0);
+    QVERIFY(h.client.sendMediaControl(request(2,false),h.client.sessionEpoch())); QTRY_COMPARE(publisher.bindingToken(),quint64(0));
+    const int before=refresh.size(); QTest::qWait(75); QCOMPARE(refresh.size(),before); h.finish();
+}
+
+void TstDaemonMediaController::waveformFullRateBudgetRefusal()
+{
+    Harness h(DisplayBudgetLimits{32000,10000000,1}); h.establishSession(); h.startReadyPeer(false,true);
+    WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+    h.radio.radeWaveformModel()->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,1,true);
+    QSignalSpy messages(&h.client,&StationClient::mediaControlReceived);
+    QVERIFY(h.client.sendMediaControl({{"op","waveform-stream"},{"connectionId",QLatin1String(kConnectionId)},
+        {"sliceId",h.sliceId},{"kind","decodedSpeech"},{"revision",1},{"enabled",true}},h.client.sessionEpoch()));
+    QTRY_VERIFY(!messages.empty()); QCOMPARE(publisher.bindingToken(),quint64(0));
+    bool refused=false;
+    for(const auto& call:messages) { const auto context=call[0].toJsonObject();
+        if(context.value("op")=="waveform-stream-context") {
+            QVERIFY(!context.value("enabled").toBool());
+            refused=context.value("reason").toString().contains("full sample rate");
+        }
+    }
+    QVERIFY(refused); h.finish();
+}
+
+void TstDaemonMediaController::waveformStallDropsAndRetiresWithoutKeepingProducerLease()
+{
+    Harness h(DisplayBudgetLimits{10'000'000,10'000'000,1}); h.establishSession(); h.startReadyPeer(false,true);
+    h.useManualDisplayTicks(); WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+    auto* model=h.radio.radeWaveformModel();
+    model->setEndpoint(h.sliceId,WaveformKind::DecodedSpeech,&publisher,1,true);
+    QVERIFY(h.client.sendMediaControl({{"op","waveform-stream"},{"connectionId",QLatin1String(kConnectionId)},
+        {"sliceId",h.sliceId},{"kind","decodedSpeech"},{"revision",1},{"enabled",true}},h.client.sessionEpoch()));
+    QTRY_VERIFY(publisher.bindingToken()!=0); h.mediaTransport->stallWaveform=true;
+    std::vector<float> pcm(240,0.25f);
+    for(int i=0;i<8;++i) {
+        QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),240,1,100000000+qint64(i)*33000000,true));
+        QCoreApplication::processEvents(); h.nowNs=100000000+qint64(i)*33000000; h.sendDisplayTick();
+    }
+    QVERIFY(h.mediaTransport->waveforms.empty());
+    // A send-stall retirement context can synchronously close this session.
+    h.stationTransport->closeOnOp="waveform-stream-context";
+    h.nowNs=400000000; h.sendDisplayTick();
+    QTRY_COMPARE(h.controller.sessionEpoch(),quint64(0));
+    QCOMPARE(publisher.bindingToken(),quint64(0));
+    h.finish();
+}
+
 void TstDaemonMediaController::rawIqRunsForSixtySecondsInSequenceAndRetires()
 {
     Harness h(DisplayBudgetLimits{10'000'000, 10'000'000, 1});

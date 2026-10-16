@@ -34,6 +34,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-13: export the catalogue's Qt signal addresses from the Windows
 //               Core DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
@@ -110,10 +112,11 @@ public:
     /// What the catalogue is built from. inputsFrom() fills it from a
     /// RadioModel; a test fills it by hand.
     struct Inputs {
+        bool radeV2Enabled = false;
         HPSDRModel model = HPSDRModel::FIRST;
         BoardCapabilities board{};
         ProtocolVersion protocol = ProtocolVersion::Protocol1;
-        /// Each of the 14 modes (DSPMode 0 to 13) with its presets, in
+        /// Each of the 16 modes (DSPMode 0 to 15) with its presets, in
         /// DSPMode order.
         QList<std::pair<DSPMode, QList<FilterPreset>>> filterPresets;
         QList<int> tuneStepsHz;

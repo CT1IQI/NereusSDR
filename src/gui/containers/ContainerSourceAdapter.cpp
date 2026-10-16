@@ -70,3 +70,61 @@ double ContainerSourceAdapter::reading(RadioModel* model, const QJsonObject& con
     }
 }
 }
+
+namespace NereusSDR {
+std::optional<WaveformRequest>
+ContainerSourceAdapter::waveformRequest(RadioModel* model, const QJsonObject& context, SliceModel* inherited,
+                                        WaveformKind kind, const QString& session)
+{
+    if (!model || !model->isConnected()) {
+        return {};
+    }
+    SliceModel* resolved = slice(model, context, inherited, session);
+    if (!resolved || resolved->streamIndex() < 0 || !isRadeDspMode(resolved->dspMode())) {
+        return {};
+    }
+    if (kind != WaveformKind::DecodedSpeech && resolved != model->txBoundSlice()) {
+        return {};
+    }
+    return WaveformRequest{resolved->sliceIndex(), kind};
+}
+WaveformSnapshotPtr ContainerSourceAdapter::waveform(RadioModel* model, const QJsonObject& context,
+                                                     SliceModel* inherited, WaveformKind kind,
+                                                     const QString& session)
+{
+    auto unavailable = std::make_shared<WaveformSnapshot>();
+    unavailable->kind = kind;
+    unavailable->asOfNs = waveformNowNs();
+    unavailable->availability = WaveformAvailability::Unavailable;
+    if (context.contains("sessionId") && !context["sessionId"].toString().isEmpty() &&
+        context["sessionId"].toString() != session) {
+        unavailable->reason = "Foreign radio session";
+        return unavailable;
+    }
+    if (model && model->role() == RadioModel::Role::Remote) {
+        const WaveformSnapshotPtr support =
+            model->radeWaveformModel()->snapshot(-1, kind, unavailable->asOfNs);
+        if (support->availability == WaveformAvailability::Unsupported) {
+            return support;
+        }
+    }
+    if (!model || !model->isConnected()) {
+        unavailable->reason = "Radio source disconnected";
+        return unavailable;
+    }
+    SliceModel* resolved = slice(model, context, inherited, session);
+    if (!resolved || resolved->streamIndex() < 0) {
+        unavailable->reason = "Receive source unavailable";
+        return unavailable;
+    }
+    if (!isRadeDspMode(resolved->dspMode())) {
+        unavailable->reason = "Select a RADE slice for this waveform";
+        return unavailable;
+    }
+    if (kind != WaveformKind::DecodedSpeech && resolved != model->txBoundSlice()) {
+        unavailable->reason = "Microphone belongs to the current TX-bound slice";
+        return unavailable;
+    }
+    return model->radeWaveformModel()->snapshot(resolved->sliceIndex(), kind, unavailable->asOfNs);
+}
+}

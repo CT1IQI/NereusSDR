@@ -34,6 +34,7 @@
 #include "core/security/PairingWindow.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
+#include "core/session/PathRacer.h"
 #include "core/session/StationClient.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/StationServer.h"
@@ -1007,6 +1008,19 @@ void TestGuiConnectionController::codeOnlyDialogPairsThroughMailboxAndOpensRemot
     auto* controls = controller.sessions()->window()->findChild<RemoteConnectionController*>();
     QVERIFY(controls);
     QVERIFY(controls->endpointText().contains(QStringLiteral("Remote access")));
+    {
+        // An ICE pair not known yet is not shown as the relay; a known
+        // relay is.
+        const int rank = client->pathRank();
+        const bool pairUnknown = client->pathPairUnknown();
+        client->setPathRankForTest(PathRacer::ServiceRelayed, /*pairUnknown=*/true);
+        QCOMPARE(controls->endpointText(),
+                 QStringLiteral("Remote access service (no direct Core address)"));
+        client->setPathRankForTest(PathRacer::ServiceRelayed, /*pairUnknown=*/false);
+        QCOMPARE(controls->endpointText(),
+                 QStringLiteral("Remote access relay (no direct Core address)"));
+        client->setPathRankForTest(rank, pairUnknown);
+    }
     QVERIFY(client->connectedUrl().isEmpty());
     if (!qEnvironmentVariableIsEmpty("NEREUS_ADDRESS_EXAMPLE_DIR")) {
         controller.showConnections();

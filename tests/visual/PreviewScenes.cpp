@@ -11,6 +11,9 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Proposed workspace header scenes (header-always,
@@ -196,6 +199,11 @@
 //   2026-10-11 - flag-tab--* scenes: each tab of the open slice flag, in
 //                 today's look and the workspace look. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - accessory-readouts and accessory-readouts-classic: the
+//                 tuner, Power Genius and RF2K-S panels with forward power
+//                 as one large bar and the rest as slim rows, in four
+//                 states, with the workspace look on and off. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Scenes for the manual figures: baseline-connected (one
 //                 pan, the TX applet under RX, "You control" on slice A's
 //                 flag, the radio named in the status bar, TX profiles
@@ -215,6 +223,12 @@
 //                 applet shows. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 
+#include "models/MainPowerMeter.h"
+#include "models/AmplifierModel.h"
+#include "gui/instruments/PowerReadingDescriptor.h"
+#include "gui/instruments/NeedleInstrument.h"
+#include "gui/meters/ItemGroup.h"
+#include "gui/meters/presets/CompositePresetItem.h"
 #include "PreviewScenes.h"
 
 #include <QAction>
@@ -4821,6 +4835,203 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         captureDialog(ctx, host.get(), QStringLiteral("dialog-lit-operate"));
         host->close();
     }});
+
+    // The tuner and amplifier panels' readouts: forward power as one large
+    // bar, reflected power, SWR and temperature as slim rows. The three
+    // real panels side by side at 260 px, fed through their public setters
+    // and a never-connected TgxlConnection, in four states. Nothing
+    // connects and nothing keys. accessory-readouts wears the workspace
+    // look; accessory-readouts-classic is the same with the look off, which
+    // is what the everyday launcher shows.
+    const auto accessoryReadouts = [litHost, showThenPose](SceneContext& ctx, const QString& scene) {
+        struct State {
+            const char* slug;
+            const char* title;
+            bool keyed;
+            double fwdPeak;   // shown first, so the large bar holds it as its peak
+            double fwd;
+            int rfKitReflected;   // the RF2K-S reports it; the other two work it out
+            double swr;
+            double temp;
+        };
+        static const State kStates[] = {
+            {"keyed", "Keyed", true, 1310.0, 1236.0, 4, 1.12, 41.0},
+            {"high-swr", "High SWR", true, 800.0, 800.0, 159, 2.61, 44.0},
+            {"not-keyed", "Not keyed", false, 0.0, 0.0, 0, 1.0, 38.0},
+            {"largest", "Largest values", true, 2000.0, 2000.0, 1447, 12.4, 100.0},
+        };
+        for (const State& st : kStates) {
+            // The models outlive the host, which owns the applets.
+            TgxlConnection tgxl;
+            TunerModel tuner;
+            tuner.bindConnection(&tgxl);
+            auto host = litHost(ctx, QString::fromLatin1(st.title));
+            auto* tunerApplet = new TunerApplet(nullptr, &tuner, host.get());
+            auto* amp = new AmpApplet(nullptr, host.get());
+            auto* rf2ks = new Rf2ksApplet(nullptr, host.get());
+            for (QWidget* w : {static_cast<QWidget*>(tunerApplet), static_cast<QWidget*>(amp),
+                               static_cast<QWidget*>(rf2ks)}) {
+                w->setFixedWidth(260);
+                host->layout()->addWidget(w);
+                host->layout()->setAlignment(w, Qt::AlignTop);
+            }
+            showThenPose(host.get(), [&] {
+                tgxl.injectLineForTesting(QStringLiteral("V1.2.17"));
+                tgxl.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0"));
+                tunerApplet->setPowerScale(/*maxWatts=*/0, /*hasAmplifier=*/true);
+                amp->setMainsVoltage(240);
+                amp->setDrainCurrent(st.keyed ? 38.0f : 0.0f);
+                amp->setMeff(QStringLiteral("ACTIVE"));
+                amp->setState(st.keyed ? QStringLiteral("TRANSMIT_A") : QStringLiteral("OPERATE"));
+                rf2ks->setConnectedState(true);
+                rf2ks->setNicknameAndVersion(QStringLiteral("RF2K-S"), QStringLiteral("G190C217"));
+                rf2ks->setOperateMode(QStringLiteral("OPERATE"));
+                RfKitPowerSnapshot snap;
+                snap.swr = static_cast<float>(st.swr);
+                snap.temperatureC = static_cast<float>(st.temp);
+                snap.voltageV = 53.0f;
+                snap.currentA = st.keyed ? 31.5f : 0.0f;
+                for (const double watts : {st.fwdPeak, st.fwd}) {
+                    tunerApplet->updateMeters(static_cast<float>(watts), static_cast<float>(st.swr));
+                    amp->setFwdPower(static_cast<float>(watts));
+                    amp->setSwr(static_cast<float>(st.swr));
+                    snap.forwardW = static_cast<int>(watts);
+                    snap.reflectedW = st.rfKitReflected;
+                    rf2ks->setPower(snap);
+                }
+                amp->setTemp(static_cast<float>(st.temp));
+            });
+            ctx.notes.append(QStringLiteral("%1: forward %2 W (after %3 W), SWR %4, %5 C, %6; through "
+                                            "TunerApplet::updateMeters, AmpApplet::setState / setFwdPower / "
+                                            "setSwr / setTemp and Rf2ksApplet::setPower, after show")
+                                 .arg(QString::fromLatin1(st.slug))
+                                 .arg(st.fwd).arg(st.fwdPeak).arg(st.swr).arg(st.temp)
+                                 .arg(st.keyed ? QStringLiteral("keyed") : QStringLiteral("not keyed")));
+            captureDialog(ctx, host.get(), QStringLiteral("%1--%2").arg(scene, QString::fromLatin1(st.slug)));
+            host->close();
+            if (!ctx.failure.isEmpty()) {
+                return;
+            }
+        }
+    };
+    scenes.append({QStringLiteral("accessory-readouts"), QStringLiteral("2v"), true,
+                   [accessoryReadouts](SceneContext& ctx) {
+        accessoryReadouts(ctx, QStringLiteral("accessory-readouts"));
+    }, true});
+    scenes.append({QStringLiteral("accessory-readouts-classic"), QStringLiteral("2v"), true,
+                   [accessoryReadouts](SceneContext& ctx) {
+        accessoryReadouts(ctx, QStringLiteral("accessory-readouts-classic"));
+    }});
+    // Real main-meter consumers on a Remote-shaped model; no connection or
+    // key command. Extra overrange pose proves legal-marker/top independence.
+    const auto mainPowerScene = [litHost, showThenPose](SceneContext& ctx, const QString& scene, bool containers) {
+        struct PowerState { const char* name; bool operate; bool keyed; double forward; double drive; };
+        const PowerState states[] = {{"operate-keyed",true,true,1236,42},
+            {"standby-keyed",false,true,98,98},{"operate-idle",true,false,0,0},
+            {"overrange",true,true,2300,42}};
+        for (const PowerState& st : states) {
+            RadioModel radio(RadioModel::Role::Remote);
+            radio.setBoardForTest(HPSDRHW::Saturn);
+            radio.currentRadioChanged(RadioInfo{});
+            MeterPoller poller;
+            poller.setRadioStatus(&radio.radioStatus());
+            poller.rescalePowerMeters(100);
+            poller.setMainPowerMeter(radio.mainPowerMeter());
+            auto host = litHost(ctx, QString::fromLatin1(st.name));
+            QVector<MeterWidget*> meterWidgets;
+            auto* dial = new SMeterWidget(host.get());
+            dial->setFixedSize(260,130);
+            MainPowerMeter* meter = radio.mainPowerMeter();
+            const auto scale = [dial,meter] { dial->setPowerDisplayScale(meter->visualLimitW(),meter->scaleTopW()); };
+            const auto reading = [dial,meter] {
+                dial->setTxMeters(static_cast<float>(meter->forwardW()),static_cast<float>(meter->swr()));
+            };
+            QObject::connect(meter,&MainPowerMeter::scaleChanged,dial,scale);
+            QObject::connect(meter,&MainPowerMeter::readingChanged,dial,reading);
+            QObject::connect(&radio,&RadioModel::transmittingChanged,dial,&SMeterWidget::setTransmitting);
+            scale(); reading();
+            QLayout* dialLayout = host->layout();
+            if (!containers) {
+                auto* tx = new TxApplet(&radio,host.get());
+                tx->setFixedWidth(260);
+                host->layout()->addWidget(tx);
+                host->layout()->setAlignment(tx,Qt::AlignTop);
+            } else {
+                auto* content = new QWidget(host.get());
+                auto* contentLayout = new QVBoxLayout(content);
+                contentLayout->setContentsMargins(0,0,0,0);
+                auto* topRow = new QWidget(content);
+                auto* topLayout = new QHBoxLayout(topRow);
+                auto* bottomRow = new QWidget(content);
+                auto* bottomLayout = new QHBoxLayout(bottomRow);
+                contentLayout->addWidget(topRow);
+                contentLayout->addWidget(bottomRow);
+                host->layout()->addWidget(content);
+                dialLayout = topLayout;
+                auto* column = new QWidget(topRow);
+                auto* layout = new QVBoxLayout(column);
+                layout->setContentsMargins(0,0,0,0);
+                auto* legacy = new MeterWidget(column);
+                legacy->setFixedSize(260,220);
+                ItemGroup* group = ItemGroup::createPowerSwrPreset(QStringLiteral("Power"),legacy);
+                for (MeterItem* item : group->items()) { legacy->addItem(item); }
+                poller.addTarget(legacy);
+                meterWidgets.append(legacy);
+                layout->addWidget(legacy);
+                auto* bar = new BarInstrument(column);
+                bar->setFixedSize(260,100);
+                bar->setPrimary(MeterBinding::TxPower);
+                const auto barScale = [bar,meter] { bar->setPrimaryScale(powerReadingDescriptor(meter->visualLimitW(),meter->scaleTopW())); };
+                QObject::connect(meter,&MainPowerMeter::scaleChanged,bar,barScale); barScale();
+                QObject::connect(meter,&MainPowerMeter::readingChanged,bar,[bar](double power,double) { bar->onReading(MeterBinding::TxPower,power); });
+                layout->addWidget(bar);
+                topLayout->addWidget(column);
+                topLayout->setAlignment(column,Qt::AlignTop);
+                for (const CompositePresetItem::Face face : {CompositePresetItem::Face::PowerSwr,CompositePresetItem::Face::Cross,CompositePresetItem::Face::Anan}) {
+                    auto* widget = new MeterWidget(bottomRow);
+                    widget->setFixedSize(face==CompositePresetItem::Face::PowerSwr?260:360,300);
+                    auto* item = new CompositePresetItem(face,widget);
+                    item->setRect(0,0,1,1);
+                    widget->addItem(item); poller.addTarget(widget);
+                    meterWidgets.append(widget);
+                    bottomLayout->addWidget(widget);
+                    bottomLayout->setAlignment(widget,Qt::AlignTop);
+                }
+            }
+            dialLayout->addWidget(dial);
+            dialLayout->setAlignment(dial,Qt::AlignTop);
+            showThenPose(host.get(),[&] {
+                poller.setInTx(st.keyed);
+                radio.applyMirroredValue("transmitting",st.keyed);
+                radio.radioStatus().setPowerReadings(st.drive,0,1.12);
+                radio.amplifierModel()->applyStationValue("forwardPowerW",st.forward);
+                radio.amplifierModel()->applyStationValue("swr",1.12);
+                radio.amplifierModel()->applyStationValue("present",true);
+                radio.amplifierModel()->applyStationValue("operate",st.operate);
+                // Real radio samples keep its existing EMA moving; vary by
+                // a hundredth, below whole-watt display resolution.
+                if (!st.operate && st.keyed) {
+                    for (int i=0;i<40;++i) { radio.radioStatus().setPowerReadings(st.drive+(i%2)*.01,0,1.12); }
+                }
+                // Advance the real display dynamics deterministically. This
+                // preview has no live poller or radio transport.
+                for (MeterWidget* widget : meterWidgets) {
+                    for (int step = 0; step <= 120; ++step) {
+                        widget->advanceMeters(step * 50);
+                    }
+                }
+            });
+            ctx.notes.append(QStringLiteral("1500 W is a legal display marker; %1 W is retained unclamped.").arg(st.forward));
+            captureDialog(ctx,host.get(),QStringLiteral("%1--%2").arg(scene,QString::fromLatin1(st.name)));
+            host->close(); if (!ctx.failure.isEmpty()) { return; }
+        }
+    };
+    for (const QString& name : {QStringLiteral("main-power-row"),QStringLiteral("main-power-row-classic"),
+                               QStringLiteral("main-meter-amplifier"),QStringLiteral("main-meter-amplifier-classic")}) {
+        scenes.append({name,QStringLiteral("2v"),true,[mainPowerScene,name](SceneContext& ctx) {
+            mainPowerScene(ctx,name,name.startsWith(QStringLiteral("main-meter-amplifier")));
+        },!name.endsWith(QStringLiteral("-classic"))});
+    }
     scenes.append({QStringLiteral("dialog-lit-antenna"), QStringLiteral("2v"), true,
                    [litHost, showThenPose](SceneContext& ctx) {
         TgxlConnection tgxl;
@@ -5139,23 +5350,32 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         LanScanDialog::setDiscoveryStartSkippedForTest(false);
     }});
 
-    // The one non-native colour dialog: the pan's fill colour
-    // (SpectrumOverlayPanel.cpp:821-823, DontUseNativeDialog).
+    // The one non-native colour dialog: Display > Spectrum's Fill colour.
     scenes.append({QStringLiteral("dialog-overlay-colour"), QStringLiteral("2v"), true,
                    [](SceneContext& ctx) {
         prepareForDialog(ctx);
+        SetupDialog* setup = openSetupDialog(ctx.window);
+        if (setup == nullptr) {
+            ctx.failure = QStringLiteral("Setup did not open");
+            return;
+        }
+        setup->selectPage(QStringLiteral("Spectrum"));
+        QCoreApplication::processEvents();
         QPushButton* fill = nullptr;
-        for (QPushButton* b : ctx.window->findChildren<QPushButton*>()) {
-            if (b->toolTip() == QLatin1String("Choose spectrum fill color")) {
+        for (QPushButton* b : setup->findChildren<QPushButton*>()) {
+            if (b->property("nereusSetupId").toString()
+                == QLatin1String("display.spectrum.fillColor")) {
                 fill = b;
                 break;
             }
         }
         if (fill == nullptr) {
             ctx.failure = QStringLiteral("no fill colour button");
+            setup->close();
             return;
         }
         captureModal<QColorDialog>(ctx, QStringLiteral("dialog-overlay-colour"), [fill] { fill->click(); });
+        setup->close();
         ctx.notes.append(QStringLiteral("the file dialogs and the other colour dialogs are native on "
                                         "macOS and are not captured"));
     }});

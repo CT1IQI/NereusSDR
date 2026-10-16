@@ -10,6 +10,9 @@
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <cmath>
 
 using namespace NereusSDR;
 
@@ -89,6 +92,58 @@ private slots:
         QCOMPARE(firstLabel->text(), appletLabel->text());
         QCOMPARE(secondLabel->text(), appletLabel->text());
         radio.setNoiseFloorTracker(nullptr);
+    }
+
+    void localFloorLineShowsTheFloorAutoAgcUses_data()
+    {
+        QTest::addColumn<int>("binCount");
+        QTest::addColumn<QString>("shown");
+        // Every bin at -110.5: the floor per bin is -110.5 at any size. Referred
+        // to a 4096-point FFT, 32768 bins give -110.5 + 10 * log10(8) = -101.47,
+        // and 4096 bins give -110.5 itself. The line shows the whole number part.
+        QTest::newRow("32768 bins") << 32768 << QStringLiteral("NF -101 dB");
+        QTest::newRow("4096 bins") << 4096 << QStringLiteral("NF -110 dB");
+    }
+
+    // A local window's "NF x dB" line beside AGC-T shows the floor the Auto
+    // AGC-T threshold is built from (NoiseFloorTracker::agcNoiseFloor), not
+    // the floor per bin at the running FFT size.
+    void localFloorLineShowsTheFloorAutoAgcUses()
+    {
+        QFETCH(int, binCount);
+        QFETCH(QString, shown);
+        constexpr float kLevelDbm = -110.5f;
+        NoiseFloorTracker tracker;   // outlives the model that points at it
+        for (int i = 0; i < 70; ++i) { tracker.feed(QVector<float>(binCount, kLevelDbm), 33.0f); }
+        QVERIFY(tracker.isGood());
+        QCOMPARE(tracker.noiseFloor(), kLevelDbm);
+        const float referred = kLevelDbm
+            + 10.0f * std::log10(static_cast<float>(binCount) / 4096.0f);
+        QVERIFY(std::abs(tracker.agcNoiseFloor() - referred) < 0.01f);
+
+        RadioModel radio;
+        QCOMPARE(radio.role(), RadioModel::Role::Local);
+        radio.setBoardForTest(HPSDRHW::Saturn);
+        radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+        auto* slice = radio.sliceById(radio.addSlice(QStringLiteral("local-floor-pan")));
+        QVERIFY(slice);
+        QVERIFY(slice->streamIndex() >= 0);
+        radio.setStreamNoiseFloorTracker(slice->streamIndex(), &tracker);
+        QCOMPARE(radio.noiseFloorTrackerForSlice(slice), &tracker);
+        QCOMPARE(radio.activeSlice(), slice);
+        slice->setAutoAgcEnabled(true);
+
+        RxApplet applet(slice, &radio);
+        VfoWidget flag;
+        MainWindow::refreshAutoAgcVisuals(&radio, slice, &flag, &applet);
+        QLabel* flagFloor = floorLabel(flag);
+        QLabel* appletFloor = floorLabel(applet);
+        QVERIFY(flagFloor && appletFloor);
+        QVERIFY2(flagFloor->text().startsWith(shown + QLatin1Char(' ')),
+                 qPrintable(flagFloor->text()));
+        QCOMPARE(appletFloor->text(), flagFloor->text());
+        radio.clearStreamNoiseFloorTracker(slice->streamIndex(), &tracker);
     }
 
     // The applet shows the slice this window receives, which is not always

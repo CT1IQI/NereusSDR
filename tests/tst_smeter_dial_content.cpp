@@ -32,6 +32,8 @@
 #include "gui/instruments/SMeterDialContent.h"
 #include "gui/setup/AppearanceSetupPages.h"
 #include "models/RadioModel.h"
+#include "models/MainPowerMeter.h"
+#include "models/AmplifierModel.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -152,6 +154,7 @@ ContentEntry dialEntry(ContainerContentRegistry& registry, const QString& id, co
 // connection (RadioModel::onPgxlStatus): no device, no connection.
 void reportPgxl(RadioModel& radio, const QMap<QString, QString>& kvs)
 {
+    radio.amplifierModel()->applyStatusFrame(kvs);
     using StatusMap = QMap<QString, QString>;
     QVERIFY(QMetaObject::invokeMethod(&radio, "onPgxlStatus", Qt::DirectConnection,
                                       Q_ARG(StatusMap, kvs)));
@@ -424,6 +427,8 @@ private slots:
     {
         MeterPoller poller;
         RadioModel radio;
+        poller.setRadioStatus(&radio.radioStatus());
+        poller.setMainPowerMeter(radio.mainPowerMeter());
         ContainerContentRegistry registry;
         LongpathContent::Sources sources;
         sources.poller = &poller;
@@ -437,19 +442,24 @@ private slots:
         const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
         dial->setTransmitting(true);
         QVERIFY(!dial->txScaleIs2kWForTesting());
-        emit poller.readingUpdated(context, MeterBinding::TxPower, 85.0);
-        emit poller.readingUpdated(context, MeterBinding::TxSwr, 1.25);
+        radio.mainPowerMeter()->setHardwareModel(HPSDRModel::HERMESLITE);
+        QCOMPARE(dial->testPowerScaleMax(), 6.0f);
+        QCOMPARE(dial->testPowerRedStart(), 5.0f);
+        radio.radioStatus().setPowerReadings(85.0, 0.0, 1.25);
         QCOMPARE(dial->testTxValue(), 85.0f);
 
         // The amp reports OPERATE and 1500 W (61.76 dBm), return loss 20 dB.
-        reportPgxl(radio, {{QStringLiteral("state"), QStringLiteral("OPERATE")},
+        reportPgxl(radio, {{QStringLiteral("state"), QStringLiteral("TRANSMIT_A")},
                            {QStringLiteral("peakfwd"), QStringLiteral("61.7609")},
                            {QStringLiteral("swr"), QStringLiteral("-20")}});
         QVERIFY(radio.isAnyExternalAmpInOperate());
         QVERIFY(dial->txScaleIs2kWForTesting());
+        radio.mainPowerMeter()->setHardwareModel(HPSDRModel::ANAN200D);
+        QCOMPARE(dial->testPowerScaleMax(), 2000.0f);
+        QCOMPARE(dial->testPowerRedStart(), 1500.0f);
         QVERIFY2(qAbs(dial->testTxValue() - 1500.0f) < 1.0f, qPrintable(QString::number(dial->testTxValue())));
         // The radio's own forward power does not overwrite the amp's.
-        emit poller.readingUpdated(context, MeterBinding::TxPower, 85.0);
+        radio.radioStatus().setPowerReadings(86.0, 0.0, 1.25);
         QVERIFY2(qAbs(dial->testTxValue() - 1500.0f) < 1.0f, qPrintable(QString::number(dial->testTxValue())));
 
         // A copy added while the amp amplifies starts on its scale.
@@ -464,7 +474,10 @@ private slots:
         QVERIFY(!radio.isAnyExternalAmpInOperate());
         QVERIFY(!dial->txScaleIs2kWForTesting());
         QVERIFY(!laterDial->txScaleIs2kWForTesting());
-        emit poller.readingUpdated(context, MeterBinding::TxPower, 90.0);
+        QCOMPARE(dial->testPowerScaleMax(), 240.0f);
+        QCOMPARE(dial->testPowerRedStart(), 200.0f);
+        QCOMPARE(laterDial->testPowerScaleMax(), 240.0f);
+        radio.radioStatus().setPowerReadings(90.0, 0.0, 1.25);
         QCOMPARE(dial->testTxValue(), 90.0f);
     }
 

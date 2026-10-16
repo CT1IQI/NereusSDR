@@ -44,6 +44,8 @@
 //   2026-10-14: a replacement session started by the retirement key-up edge
 //               still completes the retired program request. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-15: a program key asked while another is on is refused.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -250,6 +252,32 @@ private slots:
         QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
         QCOMPARE(core.argument(core.sent.size()-1, "epoch").toLongLong(), 11LL);
         QVERIFY(client.micSourcePending());
+    }
+
+    // 2026-10-15: the TCI server and the remote window's rigctld share the
+    // one program key. A second program asking while one is on is refused,
+    // so neither one's release ends the other's transmission.
+    void aProgramKeyAskedWhileAnotherIsOnIsRefused()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.keyForProgram(true, {});
+        answerCopies(client, core.sent.last(), true, {}, epochValue(12));
+        QVERIFY(client.programAudioKey());
+        const int sent = core.sent.size();
+        std::optional<RemoteTransmitClient::Answer> second;
+        client.keyForProgram(true, [&](const RemoteTransmitClient::Answer& a) { second = a; });
+        QVERIFY(second.has_value());
+        QVERIFY(!second->accepted);
+        QCOMPARE(core.sent.size(), sent);
+        QVERIFY(client.programAudioKey());
+        client.unkeyForProgram(12);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+        answerCopies(client, core.sent.last(), true, {}, {});
+        // Once it is released, the next program may key.
+        client.keyForProgram(true, {});
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.key"));
     }
 
     // 2026-10-08: a program key asked with programAudio brings its own

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/session/media/RemoteIqIngress.h"
+#include "core/session/media/WaveformCodec.h"
 // =================================================================
 // src/core/session/media/DaemonMediaController.h  (NereusSDR)
 // =================================================================
@@ -111,6 +112,9 @@
 //               selected pair at selection and on change, and its rtt in
 //               the periodic display diagnostics line. Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: txReceiptHook(epoch) for the remote
+//               transmit cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NoiseFloorEstimator.h"
@@ -187,6 +191,11 @@ public:
     QList<DaemonMediaController*> members() const;
     void join(DaemonMediaController* controller);
     void leave(DaemonMediaController* controller);
+    /// A MOX edge, told by every controller that hears it: the engines'
+    /// FFT input is cleared once for the edge
+    /// (DaemonSpectrumSource::resetInputHistoryAll), however many
+    /// controllers share them.
+    void keyEdge(bool keyed);
 
     /// The lock over every member's display state (DaemonDisplayLock).
     const std::shared_ptr<DaemonDisplayLock>& displayLock() const { return m_displayLock; }
@@ -222,6 +231,9 @@ private:
     QMap<MediaSourceKey, SourceRuntime> m_runtimes;
     /// Written under the display lock; the display thread reads it there.
     QList<QPointer<DaemonMediaController>> m_members;
+    // The last edge the engines were cleared for; empty before the first.
+    // Written under the display lock.
+    std::optional<bool> m_lastKeyEdge;
     const std::shared_ptr<DaemonDisplayLock> m_displayLock{
         std::make_shared<DaemonDisplayLock>()};
     /// Whether any member sends from the display thread (station thread).
@@ -484,13 +496,15 @@ public:
     /// The frame rate Core configured on the engine that feeds a live
     /// spectrum endpoint (R-R3-01, R-R3-08). Empty for an unknown endpoint.
     std::optional<int> spectrumSourceFps(quint32 endpointId) const;
-    /// iPhone app follow-up (R-IOS-27): the averaging constants a live
+    /// iPhone app follow-up (R-IOS-27): the averaging constants/depths a live
     /// spectrum endpoint's trace and waterfall planes run with, after
     /// display extras' averageTimeMs and waterfallAverageTimeMs. Empty for
     /// an unknown endpoint.
     struct SpectrumAveraging {
         double traceAlpha{0.0};
         double waterfallAlpha{0.0};
+        int traceWindowFrames{SpectrumAvenger::kMinWindowFrames};
+        int waterfallWindowFrames{SpectrumAvenger::kMinWindowFrames};
     };
     std::optional<SpectrumAveraging> spectrumAveraging(quint32 endpointId) const;
     /// R-IOS-27, R-IOS-06: a live endpoint's display extras, for tests that
@@ -585,6 +599,41 @@ private:
         /// R-AUD-SEND: where `sender`'s packets go; made and dropped with it.
         std::shared_ptr<AudioSendRoute> route;
     };
+    using WaveformKey = std::pair<int, WaveformKind>;
+    struct WaveformStream {
+        bool wanted = false;
+        bool sending = false;
+        quint32 revision = 0;
+        quint64 sourceGeneration = 0;
+        quint64 deliveryGeneration = 0;
+        quint64 packetSerial = 0;
+        quint64 droppedFrames = 0;
+        int sampleRate = 0;
+        WaveformBatch pending;
+        int segmentIndex = 0;
+        int segmentOffset = 0;
+        QString reason;
+    };
+    bool handleWaveformStream(const QJsonObject& control);
+    bool waveformAuthorized(const WaveformKey& key) const;
+    void reconcileWaveforms();
+    void clearWaveforms(bool notify = true, const QString& reason = {}, qint64 retryAtNs = -1);
+    void sendWaveformContext(const WaveformKey& key, const WaveformStream& stream);
+    void acceptWaveformBatch(int sliceId, WaveformKind kind, quint64 source, WaveformBatchPtr batch);
+    bool trySendWaveform(MediaPeer* peer, quint64 epoch, qint64 nowNs);
+    quint64 waveformBytesPerSecond() const;
+    static quint64 waveformCharge(int rate);
+    bool m_waveformNegotiated = false;
+    bool m_waveformFailed = false;
+    qint64 m_waveformRetryAtNs = -1;
+    bool m_reconcilingWaveforms = false;
+    quint64 m_nextWaveformGeneration = 0;
+    std::map<WaveformKey, WaveformStream> m_waveformStreams;
+    QByteArray m_waveformPacket;
+    WaveformKey m_waveformPacketKey{-1, WaveformKind::RawMicrophone};
+    int m_waveformPacketFrames = 0;
+    bool m_waveformPacketDebited = false;
+    qint64 m_waveformBlockedAtNs = -1;
     struct IqStream {
         quint32 revision = 0;
         quint32 generation = 0;
@@ -935,6 +984,9 @@ private:
     bool trySendDisplayExtras(MediaPeer* peer, quint64 epoch, qint64 nowNs);
     DisplayExtrasInputs displayExtrasInputs(const EndpointEntry& entry, double binWidthHz,
                                             qint64 nowNs) const;
+    /// The key state the display extras see: m_displayKeyed, or
+    /// TransmitModel's flag when the Core has no MoxController.
+    bool displayKeyed() const;
     void reconcileAudio();
     void stopAudioCapture();
     /// `reason` travels only in a disabled context, and only to a peer that
@@ -997,6 +1049,10 @@ private:
     QMetaObject::Connection m_listenLevelConnection;
     /// coreBusyLimitsSources() as last applied to the sources.
     bool m_transformsFollowFrameRate = false;
+    // The Core is keyed, as its displays see it: set in the
+    // MoxController::moxStateChanged slot, so it turns on when the walk
+    // into transmit ends and off when the walk out ends.
+    bool m_displayKeyed = false;
     NoiseFloorEstimator m_noiseFloorEstimator;
     MediaPeer::TransportFactory m_peerFactory;
     MonotonicClock m_monotonicClock;
@@ -1029,6 +1085,9 @@ private:
     std::shared_ptr<MicRoute> m_micRoute{std::make_shared<MicRoute>()};
     void syncMicRoute();
     IMediaTransport::MicPacketSink micRouteSink() const;
+    // Remote transmit cut off the main thread: the hook a peer of media
+    // epoch `epoch` reports its "tx" receipts to (empty without a server).
+    IMediaTransport::TxReceiptHook txReceiptHook(quint64 epoch) const;
     // R-AUD-SEND: the mirror of MicRoute for receive audio. m_sendThread
     // drains every sender this controller runs; a sender hands each packet
     // to its own route's deliver(), on that thread. The route holds what

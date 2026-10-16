@@ -17,6 +17,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - catchUpTransmitCut does not stop a second time when all
+//                that is left is a release already under way. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The transmit cut line follows the connection and TX
+//                channel wherever they are set or cleared, and
+//                catchUpTransmitCut stops what is keyed and clears the
+//                connection's cut. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-15 - The HL2 temperature average spans mi0bot's 800 ms (100
 //                samples of the latest reading, 8 ms apart) at any
 //                telemetry rate, and starts fresh when the connection
@@ -34,11 +42,20 @@
 //   2026-10-14 - Clear the retired connection's discovery exemption before
 //                publishing intentional disconnect. J.J. Boyd (KG4VCF),
 //                AI-assisted via OpenAI Codex.
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-12 - Accessory meters: coreOnAirChanged reaches the amplifier and
+//                tuner links (setKeyed), which ask for status more often
+//                while keyed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-15 - A held per-band value gives way to a newer write of its key
 //              from outside (a remote window through the settings proxy).
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11 - Settings restore: addSliceOnPan can make a slice that
 //                comes back as it was saved, for the standalone app's
 //                receivers B to D at connect. NereusSDR-original. J.J. Boyd
@@ -61,6 +78,13 @@
 //                schedule a save for their slice (they had no save
 //                trigger). NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - One slice marked active per device after every ownership
+//                change (ruling 5.10): adoptUnowned at admission moved a
+//                phone's active slice without re-marking, so its wire
+//                carried active=true on two slices. A layout restore
+//                re-marks once after its owners, and a removal that ends
+//                early still re-marks. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -1183,6 +1207,15 @@
 //                takes the admission rule, and the window's own Connect and
 //                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The status firmware text and the connect log line carry
+//                the radio's second firmware number (RadioInfo::
+//                firmwareText). A Core sends its windows the first number
+//                only, so a remote window's stored radio holds none.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - firmwareBetaVersion and firmwareText: the second number of
+//                the radio version() names. A remote window's stored radio
+//                takes the Core's (firmwareBeta 1) where the Core sends it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - The saved FFT plans are looked for where the process was
 //                told (DspCacheLocation): a background Core started by the
 //                app reuses the app's plans. A process told nothing keeps
@@ -1191,6 +1224,27 @@
 //   2026-10-14 - The HL2 I/O board's I2C signals now come from the P1 EP2
 //                sender thread; still queued, so nothing here changes.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                AGC threshold, Fixed Gain and Max Gain, as Slice A does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                squelch (thresholds, then enables), and a squelch edit is
+//                saved to the slice it was made on, not the active slice.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Every other per-slice connect in wireSliceSignals now
+//                passes its slice to scheduleSettingsSave too, so DSP,
+//                audio, step, RIT/XIT and antenna edits on a slice that is
+//                not the active one save to that slice.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A receive channel takes its slice's DSP > Options buffer
+//                size, filter size and filter type before it runs a block
+//                (activateSliceChannel and the connect path), as Thetis's
+//                SyncDSP forces them in (console.cs:2681-2726 [v2.10.3.15]);
+//                it ran WDSP's opening buffer of 4096 until its slice's
+//                next mode change. rebuildDspOptionsForMode applies the
+//                local page's edit to every slice in the mode group, not
+//                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1560,6 +1614,8 @@ mw0lge@grange-lane.co.uk
 // RadioModel.h; the .cpp pulls the full type for the connect() calls in
 // wireRadeChannel().
 #include "core/RadeChannel.h"
+#include "core/RadeV2Feature.h"
+#include "RadeWaveformModel.h"
 
 // Phase 3R K-bench: Resampler used to upsample RADE's 24 kHz baseband
 // to the connection's TX I/Q rate (P1=48 kHz, P2=192 kHz).
@@ -1593,6 +1649,7 @@ mw0lge@grange-lane.co.uk
 #include "core/RfKitBandFollow.h"
 #include "core/PgxlStatusGauges.h"
 #include "models/AmplifierModel.h"
+#include "models/MainPowerMeter.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
@@ -1929,6 +1986,14 @@ RadioModel::RadioModel(Role role, QObject* parent)
         };
         connect(m_sliceOwnership, &SliceOwnership::markChanged, this, vaxFollowsOwners);
         connect(m_sliceOwnership, &SliceOwnership::activeChanged, this, vaxFollowsOwners);
+        // Ruling 5.10: each device sees exactly one active slice. Any change
+        // to a device's active slice re-marks every slice, including the
+        // ones no RadioModel call made (adoptUnowned at admission). setMark
+        // emits activeChanged after markChanged, so this one signal covers
+        // mark changes too. vaxFollowsOwners reads only the marks, never
+        // the active flags, so the order of the two does not matter.
+        connect(m_sliceOwnership, &SliceOwnership::activeChanged, this,
+                &RadioModel::remarkActiveSlicesForOwnership);
         // Slice control plan Task 8, Amendment 8a: an away device's slices
         // leave the preselector choice and count again when it is back
         // (its hold returns, or it is no longer away).
@@ -1943,10 +2008,30 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     // R-R3-36: the PC microphone session demand follows the mic source.
     connect(&m_transmitModel, &TransmitModel::micSourceChanged, this,
-            [this](MicSource) { updatePcCaptureDemand(); });
+            [this](MicSource) { updatePcCaptureDemand(); synchronizeWaveformEndpoints(); });
     // R-R3-36 Task 7: microphone loss while keyed releases MOX.
     connect(m_audioEngine, &AudioEngine::captureStatusChanged,
             this, &RadioModel::onCaptureStatusChanged);
+    // Existing main-thread capture identity signals retire same-category input
+    // replacement without opening a capture lease or changing DSP routing.
+    connect(m_audioEngine, &AudioEngine::captureStatusChanged, this,
+            [this](const CaptureSupervisor::Status& status) {
+                if (status.generation == m_waveformPcCaptureGeneration
+                    && status.configuredDevice == m_waveformPcConfiguredDevice
+                    && status.actualDevice == m_waveformPcActualDevice) {
+                    return;
+                }
+                m_waveformPcCaptureGeneration = status.generation;
+                m_waveformPcConfiguredDevice = status.configuredDevice;
+                m_waveformPcActualDevice = status.actualDevice;
+                ++m_waveformPcSourceRevision;
+                synchronizeWaveformEndpoints();
+            });
+    connect(m_audioEngine, &AudioEngine::txInputConfigChanged, this,
+            [this](const AudioDeviceConfig&) {
+                ++m_waveformPcSourceRevision;
+                synchronizeWaveformEndpoints();
+            });
     wirePcMicConfigProjection();
     // Native audio plan Task 20 (R-AUD-24): the PC mic's role status for
     // the transmit badge. Display only; keying stays on pcCaptureReady().
@@ -3298,6 +3383,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_tgxlConnection = new TgxlConnection(this);
     m_tunerModel     = new TunerModel(this);
     m_tunerModel->bindConnection(m_tgxlConnection);
+    // Accessory meters (2026-10-12): both links ask for `status` more often
+    // while the Core is on the air (transmitting, TUNE or the two-tone
+    // test), so the meters follow the signal from the first moment of the
+    // key (GeniusPollPacer.h). A remote window's links are never connected,
+    // so nothing polls there.
+    connect(this, &RadioModel::coreOnAirChanged,
+            m_pgxlConnection, &PgxlConnection::setKeyed);
+    connect(this, &RadioModel::coreOnAirChanged,
+            m_tgxlConnection, &TgxlConnection::setKeyed);
+    m_pgxlConnection->setKeyed(isCoreOnAir());
+    m_tgxlConnection->setKeyed(isCoreOnAir());
     // TGXL tune lane (2026-09-30): the tuner's link dropping ends a tune
     // cycle. Nothing else would: a hardware cycle waits for the tuner's
     // `transmit tune off`, and a cycle whose sweep started waits for its
@@ -3376,6 +3472,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // this computer's accessory connections.
     m_amplifierModel = new AmplifierModel(this);
     m_rfKitModel = new RfKitModel(this);
+    // The same mirrored inputs feed main meters in every role. Existing
+    // amplifier predicates/signals continue to govern transmit safety.
+    m_mainPowerMeter = new MainPowerMeter(m_amplifierModel, m_rfKitModel,
+                                         &m_radioStatus, this);
+    m_mainPowerMeter->setHardwareModel(m_hardwareProfile.model);
+    connect(this, &RadioModel::currentRadioChanged, m_mainPowerMeter,
+            [this] { m_mainPowerMeter->setHardwareModel(m_hardwareProfile.model); });
     // R-R3-48: the Core's station TCI server state (`stationTci`).
     m_stationTciModel = new StationTciModel(this);
     // Rotor control plan Task 4b: the Core's rotor (`rotor`).
@@ -4479,7 +4582,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 SliceModel* slice = m_activeSlice;
                 if (!slice) return;
                 const auto m = slice->dspMode();
-                if (m != DSPMode::RADE_U && m != DSPMode::RADE_L) {
+                if (!isRadeDspMode(m) || isRade2DspMode(m)) {
                     return;  // Flag SNR row is only visible in RADE.
                 }
                 const qint64 deltaHz =
@@ -4548,7 +4651,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 }
                 const DSPMode m = listed->dspMode();
                 const QString modeStr =
-                    (m == DSPMode::RADE_U || m == DSPMode::RADE_L)
+                    (isRadeDspMode(m) && !isRade2DspMode(m))
                         ? QStringLiteral("RADEV1")
                         : QString();
                 m_freeDvReporter->setTransmitting(false, modeStr);
@@ -4817,6 +4920,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    // The transmit cut line may outlive this model (RemoteTxCutGuard holds
+    // it); nothing it cuts after this may reach this model's objects.
+    m_transmitCutLine->setTargets(nullptr, nullptr);
     AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
@@ -8212,6 +8318,7 @@ void RadioModel::wireTransmitProcessingChain()
 void RadioModel::wireTransmitChainForTest(TxChannel* channel)
 {
     m_txChannel = channel;
+    syncTransmitCutTargets();
     wireMicAndMonitorToTransmit();
     wireTransmitProcessingChain();
 }
@@ -8684,7 +8791,7 @@ void RadioModel::wireTxWorkerRade(TxWorkerThread* worker)
                 }
                 const SliceModel* const txSlice = txBoundSlice();
                 const DSPMode mode = txSlice ? txSlice->dspMode() : DSPMode::USB;
-                const bool isRade = (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L);
+                const bool isRade = (isRadeDspMode(mode));
                 worker->setCurrentTxPath(isRade ? TxWorkerThread::TxPath::Rade
                                                 : TxWorkerThread::TxPath::Wdsp);
             });
@@ -8746,7 +8853,7 @@ bool RadioModel::radeEndOfOverTailPermitted() const
         return false;
     }
     const DSPMode mode = txSlice->dspMode();
-    return mode == DSPMode::RADE_U || mode == DSPMode::RADE_L;
+    return isRadeDspMode(mode);
 }
 
 bool RadioModel::startRadeEndOfOverTail()
@@ -9738,6 +9845,7 @@ void RadioModel::applyStationCapabilities(const NereusSDR::StationCapabilities& 
     const auto identityOf = [this]() {
         return std::make_tuple(m_lastRadioInfo.macAddress, m_lastRadioInfo.boardType,
                                m_lastRadioInfo.name, m_lastRadioInfo.firmwareVersion,
+                               m_lastRadioInfo.firmwareBetaVersion,
                                m_lastRadioInfo.protocol, m_lastRadioInfo.address,
                                m_hardwareProfile.model, m_hardwareProfile.effectiveBoard,
                                m_hardwareProfile.caps);
@@ -9755,6 +9863,11 @@ void RadioModel::applyStationCapabilities(const NereusSDR::StationCapabilities& 
     bool firmwareOk = false;
     const int firmware = caps.firmwareVersion.trimmed().toInt(&firmwareOk);
     m_lastRadioInfo.firmwareVersion = firmwareOk && firmware > 0 ? firmware : 0;
+    // The second number is the Core's too (firmwareBeta 1). A Core that
+    // sends none leaves it 0, so one left by a radio this window ran itself,
+    // or by the last Core, is not shown beside this Core's radio.
+    m_lastRadioInfo.firmwareBetaVersion =
+        m_lastRadioInfo.firmwareVersion > 0 ? caps.firmwareBetaVersion : 0;
     if (caps.radioProtocol == 2) {
         m_lastRadioInfo.protocol = ProtocolVersion::Protocol2;
     } else {
@@ -9813,6 +9926,18 @@ void RadioModel::applyStationCapabilities(const NereusSDR::StationCapabilities& 
         // R-R3-46 (parity Task 6): the PA pages show this radio's bank.
         reloadRemotePaState();
     }
+}
+
+bool RadioModel::radeV2Enabled() const
+{
+    return m_role == Role::Remote ? m_stationRadeV2Enabled : RadeV2Feature::enabled();
+}
+
+void RadioModel::setStationRadeV2Enabled(bool enabled)
+{
+    if (m_role != Role::Remote || m_stationRadeV2Enabled == enabled) { return; }
+    m_stationRadeV2Enabled = enabled;
+    emit radeV2AvailabilityChanged();
 }
 
 void RadioModel::setStationConnectionState(ConnectionState s)
@@ -10714,6 +10839,9 @@ void RadioModel::applyPanGridSetting(const QString& key)
             pan->applyStationGridSetting(key);
         }
     }
+    // Display pill plan Task 9: a window's pans have models of their own
+    // (PanModels), not in m_panadapters; the window passes this on to them.
+    emit panGridSettingChanged(key);
 }
 
 void RadioModel::reportStationCatTestReply(quint32 commandId, const QString& reply)
@@ -11601,6 +11729,23 @@ bool RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, boo
     const auto alive = [&] { return self && target && channel; };
     rxCh->setMode(slice->dspMode());
     if (!alive()) { return false; }
+    // The DSP > Options buffer size, filter size and filter type of this
+    // slice's mode, before the channel runs a block. WDSP opened it with a
+    // DSP buffer of 4096 (createRxChannel; cmaster.c:75 [v2.10.3.15]), 85 ms
+    // of signal a block at 48,000 against 1.3 ms for the default of 64, and
+    // the only other apply is the slice's next mode change. Thetis forces
+    // the size in once the channels exist:
+    //   From Thetis console.cs:2687-2691 [v2.10.3.15] — SyncDSP:
+    //     RadioDSPRX dsp_rx = radio.GetDSPRX(i, j);
+    //     dsp_rx.Update = true;
+    //     dsp_rx.Force = true;
+    //     dsp_rx.BufferSize = dsp_rx.BufferSize;
+    //     dsp_rx.Force = false;
+    // and sets each receiver from its own mode after that
+    // (console.cs:38972-38986 [v2.10.3.15]). A fresh RxChannel caches what
+    // WDSP opened with, so this reaches WDSP wherever a saved value differs.
+    rxCh->onModeChanged(slice->dspMode());
+    if (!alive()) { return false; }
     rxCh->setFilterFreqs(slice->filterLow(),
                          slice->filterHigh());
     if (!alive()) { return false; }
@@ -11847,6 +11992,29 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 
     applyNnrStateToChannel(slice, ch);
     if (!current()) { return; }
+
+    // The slice's saved squelch, again. WDSP opens every squelch with run 0
+    // (third_party/wdsp/src/RXA.c:163,228,534), and a slice restored with
+    // its signals blocked never fires the per-slice pushes in
+    // wireSliceSignals. pushSliceStateToChannel above already sends the
+    // squelch, each enable before its threshold as Slice A's push in
+    // connectToRadio does; this block sends it once more, thresholds first
+    // and then the enables, so the last values the channel gets before
+    // setActive come in that order. The same conversions as Slice A's push
+    // (SSQL slider units / 100, clamped to WDSP's 0..1).
+    ch->setSsqlThresh(std::clamp(slice->ssqlThresh() / 100.0, 0.0, 1.0));
+    if (!current()) { return; }
+    ch->setAmsqThresh(slice->amsqThresh());
+    if (!current()) { return; }
+    ch->setFmsqThresh(slice->fmsqThresh());
+    if (!current()) { return; }
+    ch->setSsqlEnabled(slice->ssqlEnabled());
+    if (!current()) { return; }
+    ch->setAmsqEnabled(slice->amsqEnabled());
+    if (!current()) { return; }
+    ch->setFmsqEnabled(slice->fmsqEnabled());
+    if (!current()) { return; }
+
     ch->setActive(true);
     if (!current()) { return; }
 }
@@ -14688,7 +14856,7 @@ quint32 RadioModel::radeModeSliceMask() const
             continue;
         }
         const DSPMode mode = s->dspMode();
-        if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
+        if (isRadeDspMode(mode)) {
             mask |= 1u << id;
         }
     }
@@ -14735,7 +14903,7 @@ void RadioModel::refreshRadeReasons()
         return;
     }
     const auto isRade = [](DSPMode mode) {
-        return mode == DSPMode::RADE_U || mode == DSPMode::RADE_L;
+        return isRadeDspMode(mode);
     };
     // A fault lasts while its slice stays in RADE: leaving RADE, or the
     // slice going, ends it.
@@ -14757,9 +14925,11 @@ void RadioModel::refreshRadeReasons()
 
 QString RadioModel::radeStartReason(const SliceModel* slice) const
 {
-    if (slice == nullptr || (slice->dspMode() != DSPMode::RADE_U
-                             && slice->dspMode() != DSPMode::RADE_L)) {
+    if (slice == nullptr || (!isRadeDspMode(slice->dspMode()))) {
         return {};
+    }
+    if (isRade2DspMode(slice->dspMode()) && !radeV2Enabled()) {
+        return tr("Experimental RADE V2 is disabled. Start the Core with NEREUS_ENABLE_RADE_V2=1 to enable it.");
     }
     const int id = slice->sliceIndex();
     const QChar letter = receiverLetter(id);
@@ -15214,6 +15384,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         connect(slice, &SliceModel::streamIndexChanged, this, [this, slice](int stream) {
             m_sliceOwnership->noteStream(slice->sliceIndex(), stream);
         });
+        // Observation identity retires immediately on each placement edge,
+        // including A->B->A before the next presentation tick.
+        connect(slice, &SliceModel::streamIndexChanged, this,
+                [this](int) { synchronizeWaveformEndpoints(); });
+        connect(slice, &SliceModel::streamEpochChanged, this,
+                [this](quint64) { synchronizeWaveformEndpoints(); });
         if (m_bandTrackingForTest) {
             wireBandTrackingForTest(slice);
         }
@@ -15798,12 +15974,21 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // iPhone app Task 73: the slice is its creator's (or nobody's). It
         // is its owner's active slice when the owner had none, and the
         // station-level one when there was none (the first slice).
+        // Ruling 5.10: the ownership changes below re-mark the slices once,
+        // at the end, not halfway (remarkActiveSlicesForOwnership).
+        bool sequenceOpen = true;
+        ++m_activeSliceSequences;
+        const auto closeSequence = qScopeGuard([self, &sequenceOpen] {
+            if (self && sequenceOpen) { --self->m_activeSliceSequences; }
+        });
         m_sliceOwnership->noteSliceAdded(index);
         if (!currentAdded()) { return -1; }
         if (!m_activeSlice) {
             m_sliceOwnership->setActive(m_sliceOwnership->mark(index).owner, index);
             if (!currentAdded()) { return -1; }
         }
+        sequenceOpen = false;
+        --m_activeSliceSequences;
         applyActiveSlices();
         if (!currentAdded()) { return -1; }
     } else if (!m_activeSlice) {
@@ -15956,9 +16141,24 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
         if (removalRole == Role::Local) {
             self->m_sliceOwnership->completeRemove(sliceId, originalIncarnation);
             if (!self) { return; }
+            // Ruling 5.10: an early return after the slice left the list
+            // skipped the re-mark below, and completeRemove emits nothing.
+            // The sequence is closed by now (closeRemarkOnExit runs first),
+            // and on the normal path this finds nothing left to change.
+            self->remarkActiveSlicesForOwnership();
+            if (!self) { return; }
         }
         if (self->m_receiveLayoutManaged && persist) { self->scheduleSettingsSave(); }
     });
+    // Ruling 5.10: the add/remove sequence count, closed before the
+    // re-mark below or, on an early return, before finishRemoval runs
+    // (declared after it, so destroyed first).
+    bool remarkSequenceOpen = false;
+    const auto closeRemarkSequence = [self, &remarkSequenceOpen] {
+        if (self && remarkSequenceOpen) { --self->m_activeSliceSequences; }
+        remarkSequenceOpen = false;
+    };
+    const auto closeRemarkOnExit = qScopeGuard(closeRemarkSequence);
     const auto currentVictim = [&]() {
         if (!self || !originalVictim || self->m_role != removalRole) { return false; }
         if (detached) {
@@ -16091,6 +16291,10 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
     // so what the Core sends about its removal still knows whose it was.
     if (role() == Role::Local) {
         removalBegun = true;
+        // Ruling 5.10: re-marked once the slice has left the list, below,
+        // not while its index still counts (remarkActiveSlicesForOwnership).
+        ++m_activeSliceSequences;
+        remarkSequenceOpen = true;
         m_sliceOwnership->beginRemove(sliceId);
     }
     if (!currentVictim()) { return; }
@@ -16170,6 +16374,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
         // and the station-level slice moves with it when this was it.
         slice->setActive(false);
         if (!currentVictim()) { return; }
+        closeRemarkSequence();
         applyActiveSlices();
         if (!currentVictim()) { return; }
     } else if (m_activeSlice == slice) {
@@ -16298,7 +16503,8 @@ void RadioModel::requestTxBoundReRoute(const QString& proposedAntenna,
 bool RadioModel::canAdmitRadeSlice(int sliceId,
                                   const SliceModel* slice) const
 {
-    if (slice == nullptr || sliceById(sliceId) != slice
+    if (slice == nullptr || (isRade2DspMode(slice->dspMode()) && !radeV2Enabled())
+        || sliceById(sliceId) != slice
         || slice->streamIndex() < 0
         || !m_streamAllocator.isStreamActive(slice->streamIndex())) {
         return false;
@@ -16311,6 +16517,106 @@ bool RadioModel::canAdmitRadeSlice(int sliceId,
     return true;
 }
 
+RadeWaveformModel* RadioModel::radeWaveformModel()
+{
+    if (!m_radeWaveforms) {
+        m_radeWaveforms = std::make_unique<RadeWaveformModel>();
+        if (role() == Role::Remote) {
+            m_radeWaveforms->setRemoteSupported(false,
+                                                QStringLiteral("Core does not advertise waveform telemetry"));
+        } else {
+            connect(m_radeWaveforms.get(), &RadeWaveformModel::localObservationRefreshRequested, this,
+                    &RadioModel::synchronizeWaveformEndpoints);
+            synchronizeWaveformEndpoints();
+        }
+    }
+    return m_radeWaveforms.get();
+}
+void RadioModel::synchronizeWaveformEndpoints()
+{
+    if (!m_radeWaveforms) {
+        return;
+    }
+    SliceModel* const bound = txBoundSlice();
+    const int txSlice = bound ? bound->sliceIndex() : -1;
+    const int observedSource = m_remoteRadioMicActive ? 1
+                               : m_remoteMicInUse     ? 3
+                               : m_txWorker           ? m_txWorker->microphoneWaveformSource()
+                                                      : -1;
+    const QByteArray writer = m_remoteMicInUse ? m_remoteMicWriter : QByteArray();
+    const quint64 lineGeneration = m_waveformMicLineGenerations.value(writer);
+    const quint64 feedChange = m_remoteMicFeed ? m_remoteMicFeed->currentChangeGeneration() : 0;
+    const int source = int(m_transmitModel.micSource()) * 16 + observedSource;
+    const quint64 observationEpoch = m_txWorker ? m_txWorker->microphoneWaveformEpoch() : 0;
+    const bool pcSource = observedSource == 0
+        || (observedSource < 0 && m_transmitModel.micSource() == MicSource::Pc);
+    const quint64 pcRevision = pcSource ? m_waveformPcSourceRevision : 0;
+    if (txSlice != m_waveformTxSlice || m_waveformTxWorker != m_txWorker.get() ||
+        source != m_waveformMicSource || writer != m_waveformTxWriter ||
+        lineGeneration != m_waveformTxLineGeneration || feedChange != m_waveformFeedChange
+        || observationEpoch != m_waveformMicObservationEpoch || pcRevision != m_waveformPcRevision) {
+        if (m_waveformTxSlice >= 0) {
+            m_radeWaveforms->retireEndpoint(m_waveformTxSlice, WaveformKind::RawMicrophone);
+            m_radeWaveforms->retireEndpoint(m_waveformTxSlice, WaveformKind::ConditionedMicrophone);
+        }
+        m_waveformTxSlice = txSlice;
+        m_waveformTxWorker = m_txWorker.get();
+        m_waveformMicSource = source;
+        m_waveformTxWriter = writer;
+        m_waveformTxLineGeneration = lineGeneration;
+        m_waveformFeedChange = feedChange;
+        m_waveformMicObservationEpoch = observationEpoch;
+        m_waveformPcRevision = pcRevision;
+        ++m_waveformTxGeneration;
+    }
+    const bool localReady = role() != Role::Remote && isConnected();
+    if (bound && m_txWorker) {
+        const bool rade = isRadeDspMode(bound->dspMode());
+        const bool supportedSource =
+            observedSource != 4 && (observedSource != 3 || (!writer.isEmpty() && lineGeneration != 0));
+        const QString micReason =
+            observedSource == 4   ? QStringLiteral("TCI input waveform is unavailable in this phase")
+            : observedSource == 3 ? QStringLiteral("Waiting for actual remote microphone PCM")
+                                  : QStringLiteral("Waiting for existing microphone stream");
+        m_radeWaveforms->setEndpoint(txSlice, WaveformKind::RawMicrophone, m_txWorker->rawWaveformPublisher(),
+                                     m_waveformTxGeneration, localReady && rade && supportedSource,
+                                     micReason);
+        const bool conditioned = m_txWorker->currentTxPath() == TxWorkerThread::TxPath::Rade;
+        m_radeWaveforms->setEndpoint(
+            txSlice, WaveformKind::ConditionedMicrophone, m_txWorker->conditionedWaveformPublisher(),
+            m_waveformTxGeneration, localReady && rade && conditioned && supportedSource,
+            !supportedSource ? micReason
+            : conditioned
+                ? QStringLiteral("Waiting for conditioned encoder input")
+                : QStringLiteral("Conditioned input has not started. Select Raw microphone for setup."));
+    }
+    for (auto it = m_radeRxRoutes.cbegin(); it != m_radeRxRoutes.cend(); ++it) {
+        if (!it->channel || !it->slice) {
+            continue;
+        }
+        WaveformRxIdentity& identity = m_waveformRxIdentities[it.key()];
+        const int streamIndex = it->slice->streamIndex();
+        const quint64 streamEpoch = it->slice->streamEpoch();
+        if (identity.routeSerial != it->serial || identity.streamIndex != streamIndex
+            || identity.streamEpoch != streamEpoch || identity.worker != m_dspWorker) {
+            identity.routeSerial = it->serial;
+            identity.streamIndex = streamIndex;
+            identity.streamEpoch = streamEpoch;
+            identity.worker = m_dspWorker;
+            if (++m_nextWaveformRxGeneration == 0) {
+                ++m_nextWaveformRxGeneration;
+            }
+            identity.generation = m_nextWaveformRxGeneration;
+        }
+        const bool gated = mox() && it->slice == bound;
+        const bool ready = localReady && isRadeDspMode(it->slice->dspMode()) && it->channel->isActive() &&
+                           it->slice->streamIndex() >= 0 && !gated;
+        m_radeWaveforms->setEndpoint(it.key(), WaveformKind::DecodedSpeech,
+                                     it->channel->speechWaveformPublisher(), identity.generation, ready,
+                                     gated ? QStringLiteral("Decoder gated while this slice transmits")
+                                           : QStringLiteral("Waiting for actual decoded speech"));
+    }
+}
 // RADE threads (2026-09-30), NereusSDR-original. Hands one slice's route to
 // the DSP worker, on the worker's thread: the channel's rings, or none.
 void RadioModel::queueRadeRxRoute(int sliceId, RadeChannel* channel)
@@ -16334,6 +16640,9 @@ void RadioModel::queueRadeRxRoute(int sliceId, RadeChannel* channel)
 
 void RadioModel::attachRadeRxWorker(RxDspWorker* worker)
 {
+    if(m_radeWaveforms && m_dspWorker!=worker){
+        for(auto it=m_radeRxRoutes.cbegin();it!=m_radeRxRoutes.cend();++it){m_radeWaveforms->retireEndpoint(it.key(),WaveformKind::DecodedSpeech);}
+    }
     RxDspWorker* const old = m_dspWorker;
     if (old != nullptr && old != worker) {
         // The old worker stops feeding every decoder. Queued, because the
@@ -16385,6 +16694,8 @@ void RadioModel::retireRadeRxRoute(int sliceId, quint64 serial)
     if (serial == 0 || it == m_radeRxRoutes.end() || it->serial != serial) {
         return;
     }
+    if(m_radeWaveforms){m_radeWaveforms->retireEndpoint(sliceId,WaveformKind::DecodedSpeech);}
+    m_waveformRxIdentities.remove(sliceId);
     m_radeRxRoutes.erase(it);
     queueRadeRxRoute(sliceId, nullptr);
     if (m_receiveLayoutManaged && m_restoredRadeReceiveOwner == sliceId) {
@@ -16399,6 +16710,7 @@ void RadioModel::retireRadeRxRoute(int sliceId, quint64 serial)
 
 void RadioModel::refreshRadeTxSelection(bool keyed)
 {
+    synchronizeWaveformEndpoints();
     SliceModel* const bound = txBoundSlice();
     RadeChannel* txChannel = nullptr;
     for (auto it = m_radeRxRoutes.cbegin(); it != m_radeRxRoutes.cend(); ++it) {
@@ -16406,7 +16718,8 @@ void RadioModel::refreshRadeTxSelection(bool keyed)
         if (channel == nullptr) {
             continue;
         }
-        const bool selected = bound != nullptr && it->slice == bound;
+        const bool selected = bound != nullptr && it->slice == bound
+            && (channel->version() != RadeChannel::Version::V2 || radeV2Enabled());
         channel->setTxSelected(selected);
         // The transmitting slice hears its own modem; it does not decode it.
         channel->setRxGated(selected && keyed);
@@ -16595,7 +16908,9 @@ void RadioModel::wireRxChannelLaneSignals(int channelId)
 void RadioModel::wireRadeChannel(int sliceId, RadeChannel* channel,
                                  SliceModel* slice)
 {
-    if (channel == nullptr || slice == nullptr) {
+    if (channel == nullptr || slice == nullptr
+        || ((channel->version() == RadeChannel::Version::V2 || isRade2DspMode(slice->dspMode()))
+            && !radeV2Enabled())) {
         // Defensive no-op. Phase J always passes valid pointers in
         // production; tests use this branch to exercise wireWithNull.
         return;
@@ -16861,6 +17176,10 @@ void RadioModel::onRadeTextDecoded(int sliceId, const QString& callsign,
     if (!m_rxDecodeModel) {
         return;
     }
+    const SliceModel* const currentSlice = sliceById(sliceId);
+    if (currentSlice && isRade2DspMode(currentSlice->dspMode())) {
+        return;  // V2 streaming callsigns are outside this experiment.
+    }
     RxDecode decode;
     decode.callsign = callsign;
     decode.mode     = QStringLiteral("RADE");
@@ -17106,8 +17425,7 @@ void RadioModel::updateFreedvReporterVisibility()
     // slice shows the station.
     const SliceModel* slice = freedvReportedSlice();
     const bool inRade = slice
-        && (slice->dspMode() == DSPMode::RADE_U
-         || slice->dspMode() == DSPMode::RADE_L);
+        && (isRadeDspMode(slice->dspMode()));
 
     // "Hide my station" wins over RADE (SpotSourceHost::freedvHides,
     // from freedv-gui).
@@ -17150,6 +17468,31 @@ void RadioModel::setActiveSlice(int index)
     }
 }
 
+void RadioModel::remarkActiveSlicesForOwnership()
+{
+    // Ruling 5.10. An add or remove sequence re-marks the slices at its end;
+    // re-marking halfway would move the station-level slice while the
+    // slice list is still changing.
+    if (role() != Role::Local || m_activeSliceSequences > 0) {
+        return;
+    }
+    // A change that comes in while the slices are being re-marked (from a
+    // listener on SliceModel::activeChanged or activeSliceChanged) runs the
+    // re-mark once more after this one, never inside it.
+    if (m_remarkingActiveSlices) {
+        m_remarkActiveSlicesAgain = true;
+        return;
+    }
+    const QPointer<RadioModel> self(this);
+    m_remarkingActiveSlices = true;
+    do {
+        m_remarkActiveSlicesAgain = false;
+        applyActiveSlices();
+        if (!self) { return; }
+    } while (m_remarkActiveSlicesAgain);
+    m_remarkingActiveSlices = false;
+}
+
 void RadioModel::applyActiveSlices()
 {
     if (role() != Role::Local) {
@@ -17186,7 +17529,7 @@ SliceModel* RadioModel::freedvReportedSlice() const
     // Fix wave (ruling 5.11): the first slice in RADE mode, in creation
     // order; with none, the station-level active slice.
     for (SliceModel* s : m_slices) {
-        if (s && (s->dspMode() == DSPMode::RADE_U || s->dspMode() == DSPMode::RADE_L)) {
+        if (s && (isRadeDspMode(s->dspMode()))) {
             return s;
         }
     }
@@ -17362,6 +17705,7 @@ void RadioModel::setRemoteRadioMicActive(bool active)
     m_remoteRadioMicActive = active;
     if (m_txWorker) { m_txWorker->setRemoteRadioMicActive(active); }
     updateRemoteMicSource();
+    synchronizeWaveformEndpoints();
 }
 
 void RadioModel::openRemoteMicLine(const QByteArray& deviceId)
@@ -17369,8 +17713,15 @@ void RadioModel::openRemoteMicLine(const QByteArray& deviceId)
     if (m_role != Role::Local || deviceId.isEmpty()) {
         return;
     }
+    if (!m_remoteMicLines.contains(deviceId)) {
+        if (++m_nextWaveformMicLineGeneration == 0) {
+            ++m_nextWaveformMicLineGeneration;
+        }
+        m_waveformMicLineGenerations.insert(deviceId, m_nextWaveformMicLineGeneration);
+    }
     ++m_remoteMicLines[deviceId];
     updateRemoteMicSource();
+    synchronizeWaveformEndpoints();
     // iPhone app plan Task 37.
     emit remoteMicLinesChanged();
 }
@@ -17383,6 +17734,7 @@ void RadioModel::closeRemoteMicLine(const QByteArray& deviceId)
     }
     if (--it.value() <= 0) {
         m_remoteMicLines.erase(it);
+        m_waveformMicLineGenerations.remove(deviceId);
         // Its priming and VOX go with its last line.
         if (m_remoteMicPrimingDevice == deviceId) {
             m_remoteMicPrimingDevice.clear();
@@ -17390,6 +17742,7 @@ void RadioModel::closeRemoteMicLine(const QByteArray& deviceId)
         m_remoteMicVoxArmed.remove(deviceId);
     }
     updateRemoteMicSource();
+    synchronizeWaveformEndpoints();
     emit remoteMicLinesChanged();
 }
 
@@ -17502,6 +17855,7 @@ void RadioModel::updateRemoteMicSource()
             }
         }
         if (writerChanged) {
+            synchronizeWaveformEndpoints();
             emit remoteMicWriterChanged(writer);
         }
         return;
@@ -17526,6 +17880,7 @@ void RadioModel::updateRemoteMicSource()
     } else {
         qCInfo(lcDsp) << "Transmit microphone: the station's own";
     }
+    synchronizeWaveformEndpoints();
     if (writerChanged) {
         emit remoteMicWriterChanged(writer);
     }
@@ -18854,6 +19209,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         return;
     }
     m_connection = conn.release();
+    syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
     if (m_testP2OutboundBase != 0) {
         if (auto* const p2 = qobject_cast<P2RadioConnection*>(m_connection)) {
@@ -18938,6 +19294,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 /*inputSampleRate=*/48000,
                 /*dspSampleRate=*/WdspEngine::kTxDspSampleRate,
                 /*outputSampleRate=*/txOutRate);
+            syncTransmitCutTargets();
             if (!m_txChannel) {
                 return;
             }
@@ -19748,7 +20105,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 SliceModel* const txRadeSlice = txBoundSlice();
                 if (txRadeSlice && m_wdspEngine && !m_restoredRadeReceiveOwner) {
                     const DSPMode mode = txRadeSlice->dspMode();
-                    if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
+                    if (isRadeDspMode(mode) && (!isRade2DspMode(mode) || radeV2Enabled())) {
                         const int sliceId = txRadeSlice->sliceIndex();
                         RadeChannel* radeCh =
                             m_wdspEngine->radeChannel(sliceId);
@@ -19764,8 +20121,10 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                             RadeStartFault radeFault = RadeStartFault::CreateFailed;
                             radeCh = m_wdspEngine->createRadeChannel(sliceId);
                             if (radeCh != nullptr) {
+                                radeCh->setVersion(isRade2DspMode(mode)
+                                    ? RadeChannel::Version::V2 : RadeChannel::Version::V1);
                                 radeCh->setSideband(
-                                    mode == DSPMode::RADE_U);
+                                    isRadeUpperDspMode(mode));
                                 wireRadeChannel(sliceId, radeCh,
                                                 txRadeSlice);
                                 // start() reads Rade/ModelPath
@@ -19822,8 +20181,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                                 if (const SliceModel* const txSlice =
                                         txBoundSlice()) {
                                     const DSPMode m = txSlice->dspMode();
-                                    if (m == DSPMode::RADE_U
-                                        || m == DSPMode::RADE_L) {
+                                    if (isRadeDspMode(m) && !isRade2DspMode(m)) {
                                         // freedv-gui FREEDV_MODE_RADE
                                         // wire string [@77e793a]
                                         mode = QStringLiteral("RADEV1");
@@ -20254,7 +20612,8 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     m_connectionActiveRxCount = activeRxCount;
 
     qCDebug(lcConnection) << "Connecting to" << info.displayName()
-                          << "P" << static_cast<int>(info.protocol);
+                          << "P" << static_cast<int>(info.protocol)
+                          << "fw" << info.firmwareText();
 }
 
 void RadioModel::disconnectFromRadio()
@@ -22924,7 +23283,7 @@ void RadioModel::snapTransmitFilterForMode(DSPMode mode)
 {
     // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE modem
     // audio passband only when the transmitter's mode changes.
-    if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
+    if (isRadeDspMode(mode)) {
         m_transmitModel.setFilterLow(650);
         m_transmitModel.setFilterHigh(2350);
     } else if (m_transmitModel.filterLow() == 650
@@ -23213,7 +23572,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // now, under the handler's own transmitter condition. A slice in any
     // other mode leaves the loaded transmit filter untouched.
     if (slice == txBoundSlice()
-        && (slice->dspMode() == DSPMode::RADE_U || slice->dspMode() == DSPMode::RADE_L)) {
+        && (isRadeDspMode(slice->dspMode()))) {
         snapTransmitFilterForMode(slice->dspMode());
     }
 
@@ -23713,8 +24072,9 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
 
     // Squelch — FM → WDSP
     // From Thetis Project Files/Source/Console/radio.cs:1274-1329
-    // WDSP: third_party/wdsp/src/fmsq.c:236,244
-    // SliceModel stores fmsqThresh in dB; RxChannel::setFmsqThresh converts to linear
+    // WDSP: third_party/wdsp/src/fmsq.c:239,247
+    // SliceModel stores fmsqThresh as the -160..0 slider value;
+    // RxChannel::setFmsqThresh maps it to WDSP's linear threshold
     connect(slice, &SliceModel::fmsqEnabledChanged, this, [this, slice](bool on) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
@@ -25802,6 +26162,9 @@ QString RadioModel::sharedLnaReason(const QList<const SliceModel*>& lna,
     return parts.join(QLatin1Char(' '));
 }
 
+// From Thetis console.cs:33357 [v2.10.3.15]: the constant term of
+// agc_cal_offset, `agc_cal_offset = 2.0f + (Display.RX1DisplayCalOffset +`.
+static constexpr float kAutoAgcCalOffsetDb = 2.0f;
 namespace {
 // DaemonAgcSource.cpp kFftDbmFloor: what the headless Core publishes with
 // a reading that is not valid.
@@ -25875,7 +26238,21 @@ void RadioModel::updateAutoAgc()
         }
 
         // From Thetis v2.10.3.13 console.cs:46107-46115
-        const double noiseFloor = static_cast<double>(nfTracker->noiseFloor());
+        //
+        // NereusSDR, based on Thetis: the floor referred to a 4096-point
+        // FFT (agcNoiseFloor), not the floor per bin at the running size.
+        // Thetis hands WDSP its real display FFT size
+        // (console.cs:46055-46056 [v2.10.3.15],
+        // `size = (double)specRX.GetSpecRX(0).FFTSize; // MW0LGE_21k7`; the
+        // old literal shows as `size/*4096.0*/` at display.cs:9879-9880
+        // [v2.10.3.15]), so its per-bin floor and its size agree. NereusSDR
+        // hands WDSP a fixed 4096 (RxChannel::setAgcThreshold) and its
+        // running FFT size follows the zoom, so each frame's floor is
+        // referred to 4096 instead: 10 * log10(N / 4096), 3.01 dB per
+        // doubling (NoiseFloorTracker::agcReferenceOffsetDb). The tracker is
+        // the slice's own stream's, so a slice on stream 1 or higher reads
+        // its own frames and nothing here reads stream 0's engine.
+        const double noiseFloor = static_cast<double>(nfTracker->agcNoiseFloor());
 
         // From Thetis v2.10.3.13 console.cs:33292-33319 — agcCalOffset(rx)
         // Full Thetis formula:
@@ -25893,11 +26270,21 @@ void RadioModel::updateAutoAgc()
         // with the spectrum knee-line overlay work).  They sum to ~0 on
         // most current radios so the AGC drift was negligible until the
         // FFT slider made FFTSizeOffset user-tunable.
+        //
+        // NereusSDR, based on Thetis (maintainer's ruling, 2026-10-11):
+        // FFTSizeOffset is not subtracted here. Thetis keeps the term
+        // (console.cs:33346-33376 [v2.10.3.15],
+        // `agc_cal_offset = 2.0f + (... - Display.RX1FFTSizeOffset)`;
+        // setup.cs:16195 [v2.10.3.15],
+        // `Display.RX1FFTSizeOffset = tbDisplayFFTSize.Value * 2;`) beside
+        // the real size it hands WDSP. Here the floor above is already
+        // referred to the 4096 WDSP is given, which is the whole size
+        // correction, so the cal offset is the 2.0 alone: the same formula
+        // in a local window at any running size and in the Core, whose own
+        // FFT is 4096 (DaemonAgcSource).
         float calOffset = 0.0f;
         if (slice->agcMode() != AGCMode::Off) {
-            const double fftOffsetDb = m_fftEngine
-                ? m_fftEngine->fftSizeOffsetDb() : 0.0;
-            calOffset = 2.0f - static_cast<float>(fftOffsetDb);
+            calOffset = kAutoAgcCalOffsetDb;
         }
 
         // From Thetis v2.10.3.13 console.cs:45965-45968 — apply cal offset
@@ -26017,9 +26404,15 @@ bool RadioModel::activateRestoredRadeReceiveOwner(QString* error)
         *error = radeAudioAwaitsReceiver(id);
         return false;
     }
-    if (slice->dspMode() != DSPMode::RADE_U && slice->dspMode() != DSPMode::RADE_L) {
+    if (!isRadeDspMode(slice->dspMode())) {
         *error = tr("RADE audio from receiver %1 stays off because that receiver is no "
                     "longer in RADE mode.").arg(receiverLetter(id));
+        return false;
+    }
+    if (isRade2DspMode(slice->dspMode()) && !radeV2Enabled()) {
+        *error = radeStartReason(slice);
+        beginRadeStart(id);
+        endRadeStart(id, RadeStartFault::None);
         return false;
     }
     // RADE reason: how this start ends is kept on the slice's radeReason
@@ -26036,11 +26429,20 @@ bool RadioModel::activateRestoredRadeReceiveOwner(QString* error)
     if (!channel) {
         channel = m_wdspEngine->createRadeChannel(id);
         if (channel) {
-            channel->setSideband(slice->dspMode() == DSPMode::RADE_U);
+            channel->setVersion(isRade2DspMode(slice->dspMode())
+                ? RadeChannel::Version::V2 : RadeChannel::Version::V1);
+            channel->setSideband(isRadeUpperDspMode(slice->dspMode()));
             wireRadeChannel(id, channel, slice);
         }
     } else {
-        channel->setSideband(slice->dspMode() == DSPMode::RADE_U);
+        // A kept decoder that is not running takes the slice's codec too:
+        // RadeChannel fixes the version at start (setVersion refuses a
+        // running one), and the mode may have changed while it was kept.
+        if (!channel->isActive()) {
+            channel->setVersion(isRade2DspMode(slice->dspMode())
+                ? RadeChannel::Version::V2 : RadeChannel::Version::V1);
+        }
+        channel->setSideband(isRadeUpperDspMode(slice->dspMode()));
         // Decoder ownership survives radio recovery; the TxWorker does not.
         // Existing channel-to-model callbacks stay installed exactly once.
         // RADE threads: wireRadeChannel is idempotent for a wired channel.
@@ -26164,8 +26566,7 @@ bool RadioModel::captureReceiveLayout(QString* error)
         const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
         slices.append({slice->sliceIndex(), slice->panKey(), slice->frequency(), slice->dspMode(),
                        mark.owner, mark.heldFor});
-        hasRadeMode = hasRadeMode || slice->dspMode() == DSPMode::RADE_U
-            || slice->dspMode() == DSPMode::RADE_L;
+        hasRadeMode = hasRadeMode || isRadeDspMode(slice->dspMode());
     }
     if (hasRadeMode && !m_restoredRadeReceiveOwner) {
         // The store may infer a single owner when importing old records.
@@ -26256,7 +26657,7 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     if (!m_restoredRadeReceiveOwner) {
         // validate permits this inference only for exactly one RADE mode.
         for (const ReceiveSliceState& state : layout.slices) {
-            if (state.dspMode == DSPMode::RADE_U || state.dspMode == DSPMode::RADE_L) {
+            if (isRadeDspMode(state.dspMode)) {
                 m_restoredRadeReceiveOwner = state.id;
             }
         }
@@ -26317,6 +26718,14 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     // it when it signs in (ruling 5.2 step 1); an entry with no owner (a
     // manifest from before owners) restores with none, for the first
     // device admitted alone to adopt.
+    // Ruling 5.10: the owners below come back one slice at a time, so the
+    // slices are re-marked once, after the last of them and the order, not
+    // after each (remarkActiveSlicesForOwnership).
+    bool layoutSequenceOpen = true;
+    ++m_activeSliceSequences;
+    const auto closeLayoutSequence = qScopeGuard([self, &layoutSequenceOpen] {
+        if (self && layoutSequenceOpen) { --self->m_activeSliceSequences; }
+    });
     QList<int> order;
     for (const ReceiveSliceState& state : layout.slices) {
         order.append(state.id);
@@ -26345,6 +26754,8 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     }
     m_sliceOwnership->setOrder(order);
     if (!self) { return false; }
+    layoutSequenceOpen = false;
+    --m_activeSliceSequences;
     // Descriptor order is authoritative, so an unchanged active identity can
     // still have a different list position. Publish the final pair together.
     if (!m_activeSlice || !m_slices.contains(m_activeSlice)) {
@@ -26352,6 +26763,9 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     } else {
         emitActiveSliceChanged(m_slices.indexOf(m_activeSlice));
     }
+    if (!self) { return false; }
+    // Ruling 5.10: the one re-mark for the owners and order restored above.
+    remarkActiveSlicesForOwnership();
     if (!self) { return false; }
     {
         const bool previousCommit = m_diversityCommitting;
@@ -27043,6 +27457,10 @@ void RadioModel::teardownConnection()
             // teardown safe rather than introducing a hard crash.
             m_txChannel->moveToThread(this->thread());
         }
+        if(m_radeWaveforms && m_waveformTxSlice>=0){
+            m_radeWaveforms->retireEndpoint(m_waveformTxSlice,WaveformKind::RawMicrophone);
+            m_radeWaveforms->retireEndpoint(m_waveformTxSlice,WaveformKind::ConditionedMicrophone);
+        }
         m_txWorker.reset();
     }
     // R-R3-36: the TX worker has stopped reading the capture reader, so
@@ -27223,6 +27641,7 @@ void RadioModel::teardownConnection()
     bindCfcProfileChannel(nullptr);
     bindTxEqProfileChannel(nullptr);
     m_txChannel = nullptr;
+    syncTransmitCutTargets();
     // Task 33: nothing reports a TX drain any more.
     if (m_moxController) {
         m_moxController->setAwaitsTxDrain(false);
@@ -27302,6 +27721,9 @@ void RadioModel::teardownConnection()
     // run on the worker — short version: the RadioConnection's QTimers
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
+    // No transmit cut reaches the connection once it is handed to its
+    // teardown (the line's mutex waits out a cut already under way).
+    m_transmitCutLine->setTargets(nullptr, m_txChannel);
     teardownWorkerThreadedConnection(m_connection, m_connThread);
 
     // Parity Task 12 (group B fix wave re-review, Minor 2): the relays of a
@@ -27377,19 +27799,30 @@ void RadioModel::applyClaritySmoothDefaults()
 
     // 4. Trace colour — pure white, thin, sits cleanly in front of the
     //    waterfall without competing. Visual target: 2026-04-14 reference.
-    sw->setFillColor(QColor(0xff, 0xff, 0xff, 230));
+    const QColor smoothWhite(0xff, 0xff, 0xff, 230);
+    sw->setFillColor(smoothWhite);
+    //    The trace line takes the same white: a trace color chosen earlier
+    //    would otherwise stay, and the profile's trace would not be white.
+    sw->setTraceColor(smoothWhite);
 
     // 5. Pan fill OFF — trace renders as a thin line, not a filled curve.
     //    NereusSDR's default is fill-on; turn it off to match the reference.
     sw->setPanFillEnabled(false);
 
     // 6. Waterfall AGC — tracks band conditions automatically. With AGC on,
-    sw->setWfAgcEnabled(true);
+    // Approved Display rebuild: only Manual becomes Auto. The sink keeps
+    // Clarity, Floor and Scale and their remembered inactive flags.
+    sw->enableWaterfallAgcIfManual();
 
     // 7. Waterfall update period — 30 ms for smooth scroll motion.
     sw->setWfUpdatePeriodMs(30);
 
     // Mark the profile as applied so the gate short-circuits on next launch.
+    markDisplayProfileApplied();
+}
+
+void RadioModel::markDisplayProfileApplied()
+{
     AppSettings::instance().setValue(
         QStringLiteral("DisplayProfileApplied"),
         QStringLiteral("True"));
@@ -28292,6 +28725,37 @@ void RadioModel::stopAllTx(const QString& message)
 
     // if (!string.IsNullOrEmpty(msg)) infoBar.Warning(msg, false, 10000);
     emit transmitStopped(message);
+}
+
+// ---------------------------------------------------------------------------
+// The transmit cut's catch-up (2026-10-15). NereusSDR-original.
+// A thread other than main cut the transmit through m_transmitCutLine (RF
+// gate closed, the connection's latch set and its MOX and relay off) while
+// this thread was stalled. Now that it runs again, the model's keying state
+// follows: stopAllTx stops whatever is still keyed with the watchdog's
+// stop text (and does nothing when nothing is), then the connection's cut
+// is cleared, queued behind the MOX off stopAllTx posted, so the next key
+// keys normally.
+// ---------------------------------------------------------------------------
+void RadioModel::catchUpTransmitCut(const QString& stopText)
+{
+    // A release already under way (the stop that came first, the
+    // watchdog's say, started it) finishes by itself, and the cut has
+    // already taken the radio off the air: stopping it again would only
+    // report the stop twice. Anything else still keyed is stopped.
+    const bool stillKeyed = mox() || (m_moxController && m_moxController->isManualMox())
+        || m_isTuning
+        || (m_twoToneController
+            && (m_twoToneController->isActive() || m_twoToneController->isActivationInFlight()))
+        || endOfOverTailActive();
+    if (stillKeyed || !transmitReleaseInProgress()) {
+        stopAllTx(stopText);
+    }
+    if (m_connection) {
+        QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
+                                  Qt::QueuedConnection);
+    }
+    qCInfo(lcConnection).noquote() << "Transmit cut caught up on the main thread:" << stopText;
 }
 
 // ---------------------------------------------------------------------------
@@ -30702,7 +31166,23 @@ QString RadioModel::connectionFirmwareText() const
     if (!isConnected() || m_lastRadioInfo.firmwareVersion <= 0) {
         return QStringLiteral("–");
     }
-    return QStringLiteral("v") + QString::number(m_lastRadioInfo.firmwareVersion);
+    return QStringLiteral("v") + m_lastRadioInfo.firmwareText();
+}
+
+int RadioModel::firmwareBetaVersion() const
+{
+    // m_lastRadioInfo is written when a connect starts and m_version when
+    // one succeeds, so after a failed try at a second radio the record is
+    // that radio's. Its second number belongs to version() only while its
+    // first number is version().
+    const bool recordIsThisRadio = !m_version.isEmpty()
+        && m_version == QString::number(m_lastRadioInfo.firmwareVersion);
+    return recordIsThisRadio ? m_lastRadioInfo.firmwareBetaVersion : 0;
+}
+
+QString RadioModel::firmwareText() const
+{
+    return firmwareBetaVersion() > 0 ? m_lastRadioInfo.firmwareText() : m_version;
 }
 
 QString RadioModel::connectionIpText() const
@@ -31406,8 +31886,9 @@ qint64 RadioModel::setActiveRxCountLive(int newCount)
 // ---------------------------------------------------------------------------
 // Task 4.2 — rebuildDspOptionsForMode
 //
-// Called from DspOptionsPage when a per-mode combo changes and the combo's
-// mode matches the current active slice mode (design Section 4B).
+// Called from DspOptionsPage when a per-mode combo changes, with the combo's
+// mode (design Section 4B). Applies to each slice whose mode is in that
+// mode's group, and to the TX channel when the TX-bound slice's is.
 // Delegates to RxChannel::onModeChanged() and TxChannel::onModeChanged(),
 // then emits dspChangeMeasured(ms) if a rebuild occurred.
 //
@@ -31444,20 +31925,41 @@ void RadioModel::rebuildDspOptionsForMode(DSPMode forMode)
         return;
     }
 
+    // Every receiver whose slice is in forMode's group, each from its own
+    // slice's mode, as a remote window's write applies it
+    // (flushRemoteDspOptionsApply). The first receiver alone took the page's
+    // edits before, and only while the first slice was in the combo's group;
+    // the others kept the old sizes until their next mode change.
+    const QString group = dspOptionsModeGroup(forMode);
+
     // -1 = no change; 0+ = applied (in-place WDSP setters routinely finish
     // sub-millisecond, so 0 ms is a legitimate elapsed time).
-    if (RxChannel* rxCh = m_wdspEngine->rxChannel(0)) {
-        const qint64 elapsed = rxCh->onModeChanged(forMode);
-        if (elapsed >= 0) {
-            emit dspChangeMeasured(elapsed);
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const DSPMode mode = slice->dspMode();
+        if (dspOptionsModeGroup(mode) != group) {
+            continue;
+        }
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            const qint64 elapsed = rxCh->onModeChanged(mode);
+            if (elapsed >= 0) {
+                emit dspChangeMeasured(elapsed);
+            }
         }
     }
 
     // TX channel — guard: may be null (not created until radio connects).
+    // From the TX-bound slice's mode, as the mode-change handler applies it
+    // (wireSliceSignals).
     if (m_txChannel) {
-        const qint64 txElapsed = m_txChannel->onModeChanged(forMode);
-        if (txElapsed >= 0) {
-            emit dspChangeMeasured(txElapsed);
+        const SliceModel* const txSlice = txBoundSlice();
+        if (txSlice != nullptr && dspOptionsModeGroup(txSlice->dspMode()) == group) {
+            const qint64 txElapsed = m_txChannel->onModeChanged(txSlice->dspMode());
+            if (txElapsed >= 0) {
+                emit dspChangeMeasured(txElapsed);
+            }
         }
     }
 }

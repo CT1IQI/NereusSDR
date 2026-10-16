@@ -486,8 +486,8 @@
     },
     {
       "output": "guides/install-core-sbc.html",
-      "output_sha256": "094831bbe601d4b012ecd1bcaaedf008033f1f59e04a2846ad1433e39dd32da7",
-      "sha256": "428e866917697fc32e8ed9654f5b1490760adebaa50e4549eeaad6960c4fc338",
+      "output_sha256": "5e7d2f8c104f9095631dc75503444ebf81b73cccdb002fa42e613a07d843d86f",
+      "sha256": "bf4d1c8186079d61685d99b6684e2f9974be53bd445a45ef5f8095d08520007c",
       "source": "docs/guides/install-core-sbc.md"
     },
     {

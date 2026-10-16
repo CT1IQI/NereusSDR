@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The transmit cut: setMox(true) is refused while it is
+//                 set, and the high-priority PTT bit (codec and legacy) and
+//                 the TX I/Q frames read it as unkeyed. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Construct all four command headers with the specified
 //                 zero sequence, including legacy/no-codec paths. Preserve
 //                 dispatch and stream sequences. J.J. Boyd (KG4VCF),
@@ -166,10 +170,29 @@
 //                inputs, sent at once while running, and byte 1400 bit 1 from
 //                speakerAmplifierOff in buildCodecContext. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - applyDdcAssignment's log line names the rate of DDC4 to
+//                DDC6 too, the receivers that host a third to fifth stream.
+//                Log text only. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-10 - applySocketBufferSizes logs the receive buffer the
+//                system gave. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-11 - That line gives the buffer in the terms it was asked (Linux
+//                reports it doubled) and says when the system cut the request
+//                short and what limit did it. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-14 - TxIqNativeDest and fillTxIqNativeDest moved unchanged to
 //                TxIqNativeDest.h, shared with the Protocol 1 EP2 sender.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - A request cut short names the limit to raise, not the
+//                Core's packages, since the desktop app logs it too. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - On the Mac the transmit I/Q send thread is raised to
+//                USER_INTERACTIVE QoS without the output device's audio
+//                workgroup, whose Core Audio lookup could hold up the first
+//                frames and stopTxIqSender's join. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //
@@ -672,7 +695,31 @@ void P2RadioConnection::applySocketBufferSizes()
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0x400000));  // 4 MB requested; kernel may cap
+                              QVariant(kRadioSocketReceiveBufferBytes));  // 4 MB requested; kernel may cap
+    // What the system gave, in the terms it was asked. Linux caps the
+    // request at net.core.rmem_max and reports the size doubled: at the
+    // stock 212,992 a socket reports 425,984 bytes, 9 ms of three wide
+    // receivers on the Rock 5C (2026-10-10), where one 14 ms stall of the
+    // connection thread then lost packets. A request cut short is said in
+    // so many words, so it can be read in the log without knowing that.
+    const int granted = grantedReceiveBufferBytes(
+        m_socket->socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption).toInt());
+    if (granted >= kRadioSocketReceiveBufferBytes) {
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted
+                             << "bytes, all that was asked for";
+    } else {
+#ifdef Q_OS_LINUX
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for. The system's limit, net.core.rmem_max, holds it there;"
+                                " raising it to" << kRadioSocketReceiveBufferBytes
+                             << "lets the socket have it all.";
+#else
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for; the system's own limit holds it there.";
+#endif
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,6 +1598,13 @@ void P2RadioConnection::setMox(bool enabled)
     if (enabled && m_linkLossLatched) {
         return;
     }
+    // The transmit cut (2026-10-15): a key is refused until the main
+    // thread's catch-up clears the cut (RadioConnection::clearTransmitCut).
+    // setMox(false) never clears it.
+    if (enabled && transmitCut()) {
+        qCWarning(lcConnection) << "P2: key refused while the transmit is cut";
+        return;
+    }
 
     // Guard idempotent transitions: the 100 ms high-priority periodic cadence
     // already re-emits the current m_mox state on every tick, so there is no
@@ -2300,6 +2354,8 @@ void P2RadioConnection::discardWidebandFrames()
 void P2RadioConnection::sendTxIq(const float* iq, int n)
 {
     if (n <= 0 || iq == nullptr) { return; }
+    // The transmit cut (2026-10-15): no TX I/Q is queued while it is set.
+    if (transmitCut()) { return; }
 
     // First call after MOX engage: push a zero-sample cushion into the
     // ring BEFORE the real first-block I/Q.  It gives the send thread a
@@ -2489,6 +2545,9 @@ int P2RadioConnection::composeTxIqFrame(char* buf)
     // Cite: deskhpsdr/src/new_protocol.c:1950-1956, 2811-2816 [@120188f]
     //   memcpy(&iqbuffer[4], &TXIQRINGBUF[txiq_outptr], 1440);
     int underrunSamples = 0;
+    // The transmit cut (2026-10-15): what is queued is still taken from the
+    // ring, so none of it leads a later key, but the frame carries zeros.
+    const bool cut = transmitCut();
     for (int s = 0; s < 240; ++s) {
         int i24 = 0;
         int q24 = 0;
@@ -2504,8 +2563,10 @@ int P2RadioConnection::composeTxIqFrame(char* buf)
             m_txIqRingRead.store(rp, std::memory_order_relaxed);
             // relaxed: the producer observes this via its acquire load.
             m_txIqRingCount.fetch_sub(2, std::memory_order_relaxed);
-            i24 = toInt24(fI);
-            q24 = toInt24(fQ);
+            if (!cut) {
+                i24 = toInt24(fI);
+                q24 = toInt24(fQ);
+            }
         } else {
             ++underrunSamples;
         }
@@ -2566,7 +2627,8 @@ void P2RadioConnection::noteTxIqPadding(qint64 nowNs, int underrunSamples)
 
 int P2RadioConnection::serviceTxIqSend(qint64 nowNs, TxIqFrameSink sink, void* ctx)
 {
-    const bool keyed = m_mox.load();
+    // The transmit cut (2026-10-15) reads as unkeyed.
+    const bool keyed = wireMox();
     qint64 gapNs = 0;
     const double dry = m_txIqPacer.advance(nowNs, &gapNs);
     // TX diagnostics lane: a new key (resetTxSendStats) starts the send
@@ -2848,15 +2910,33 @@ void P2RadioConnection::stopTxIqSender()
 void P2RadioConnection::txIqSenderMain()
 {
     // Priority as the TX pump has it (TxWorkerThread::run): in nereusd on
-    // Linux thread placement gives this thread a core and raised priority
-    // while transmitting (R-R3-41); elsewhere it runs at audio priority, as
+    // Linux thread placement owns this thread (R-R3-41, role TxIqSender).
+    // While transmitting it gets a signal core and raised priority only if
+    // one is left after the first receiver, the DSP thread and the two
+    // transmit workers. On the Pi 4 (two signal cores) and the Rock (four
+    // fast cores) none is, so it runs on the housekeeping cores at nice 0,
+    // as it does while receiving. Elsewhere it runs at audio priority, as
     // Thetis's ob_main runs at "Pro Audio" (obbuffs.c:155-158 [v2.10.3.15]).
+    //
+    // On the Mac that is USER_INTERACTIVE QoS without joining the default
+    // output device's audio workgroup, as P1's EP2 sender does. This thread
+    // does no work for that device's I/O cycle, and finding the workgroup
+    // is a Core Audio query (the first in a process starts the audio server
+    // connection) that took 0.25 to 1.9 s under load: no transmit I/Q went
+    // out until it returned, and stopTxIqSender's join on disconnect waited
+    // for it. Under load tst_p2_tx_iq_send_realtime saw the first frame
+    // about 580 ms late (2026-10-15). prio stays nullptr, which
+    // leaveAudioThreadPriority takes as a no-op.
     const bool placed = ThreadPlacement::managesThreadPriority();
     AudioPriorityToken* prio = nullptr;
     if (placed) {
         ThreadPlacement::instance().registerCurrentThread(ThreadRole::TxIqSender);
     } else {
+#ifdef Q_OS_MAC
+        elevateLatencyCriticalThreadPriority(/*logSuccess=*/false);
+#else
         prio = elevateAudioThreadPriority();
+#endif
     }
 
     TxIqNativeDest dest;
@@ -3414,6 +3494,12 @@ void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
                              << "rate[1]=" << a.rate[1]
                              << "rate[2]=" << a.rate[2]
                              << "rate[3]=" << a.rate[3]
+                             // DDC4 to DDC6 host the third to fifth
+                             // streams; their rates go on the wire above
+                             // and belong in this line as well.
+                             << "rate[4]=" << a.rate[4]
+                             << "rate[5]=" << a.rate[5]
+                             << "rate[6]=" << a.rate[6]
                              << "nDdc=" << a.nDdc
                              << "psFwdDdc=" << m_psFbDdc
                              << "psRevDdc=" << m_psTxMonDdc;
@@ -4147,7 +4233,8 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // m_tx[0].pttOut is the rear-panel PTT-out relay (deferred to 3M-3) — NOT
     // the MOX source.  m_mox (3M-1a E.7) is the correct source for byte 4 bit 1.
     ctx.p2Running  = m_running;
-    ctx.p2PttOut   = m_mox ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    ctx.p2PttOut   = wireMox() ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
     ctx.p2Cwx      = m_tx[0].cwx;
     ctx.p2Dot      = m_tx[0].dot;
     ctx.p2Dash     = m_tx[0].dash;
@@ -4165,7 +4252,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     //         deskhpsdr/src/alex.h:91-96 + new_protocol.c:996-1004 [@120188f].
     // Note: P1 already wires these (P1RadioConnection.cpp:1268-1275); P2
     // had a gap that this commit closes.
-    ctx.mox        = m_mox;
+    ctx.mox        = wireMox();
     ctx.trxRelay   = m_trxRelay;
 
     // ADC / DAC counts
@@ -4555,7 +4642,8 @@ void P2RadioConnection::composeCmdHighPriorityLegacy(char buf[kBufLen]) const
     // bit 1, which is wrong — pttOut is a TX-confirmation output, not the MOX
     // initiator.  m_mox is the correct source.  m_tx[0].pttOut is retained for
     // future 3M-3 rear-panel-PTT-out wiring but must NOT drive the MOX wire bit.
-    buf[4] = static_cast<char>((m_mox ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    buf[4] = static_cast<char>((wireMox() ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
 
     // From Thetis network.c:931-933
     buf[5] = (m_tx[0].dash << 2 | m_tx[0].dot << 1 | m_tx[0].cwx) & 0x7;

@@ -19,6 +19,8 @@
 #include "meter_property_editors/SignalTextItemEditor.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
+#include "gui/meters/WaveformMeterItem.h"
+#include "gui/widgets/GuardedComboBox.h"
 #include <QFormLayout>
 #include <algorithm>
 #include <QVBoxLayout>
@@ -80,6 +82,9 @@ bool ContentPropertyEditor::property(const QString& key,const QJsonValue& value,
     bool accepted=false;
     if(auto* face=qobject_cast<CompositePresetItem*>(m_item.get())) { accepted=face->applyConfiguration(change); }
     if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) { accepted=bar->applyConfiguration(change); }
+    if (auto* waveform = qobject_cast<WaveformMeterItem*>(m_item.get())) {
+        accepted = waveform->applyConfiguration(change);
+    }
     if(!accepted) { if(m_error) {m_error->setText(tr("Value rejected: check the range, history duration or color."));} return false; }
     if(m_error) {m_error->clear();}
     captureRenderer();
@@ -105,11 +110,20 @@ QJsonValue ContentPropertyEditor::effectiveProperty(const QString& key,int chann
     QJsonObject config;
     if(auto* face=qobject_cast<CompositePresetItem*>(m_item.get())) {config=face->configuration();}
     if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {config=bar->configuration();}
+    if (auto* waveform = qobject_cast<WaveformMeterItem*>(m_item.get())) {
+        config = waveform->configuration();
+    }
     return channel<0?config[key]:config["channels"].toArray()[channel].toObject()[key];
 }
 namespace {
 QString fieldLabel(QString key)
 {
+    if (key == "viewWindowMs") {
+        return QObject::tr("Time span");
+    }
+    if (key == "sourceStage") {
+        return QObject::tr("Microphone stage");
+    }
     if(key=="bindingId") {return QObject::tr("Primary reading");}
     if(key=="secondaryBindingId") {return QObject::tr("Average reading");}
     if(key=="decay") {return QObject::tr("Release (0–1)");}
@@ -173,7 +187,13 @@ QWidget* ContentPropertyEditor::declaredControl(const ContentProperty& p, QWidge
 QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& value,int channel)
 {
     QWidget* widget=nullptr;
-    if(key.endsWith("BindingId") || key=="bindingId") {
+    if(key=="viewWindowMs" || key=="sourceStage") {
+        auto* combo=new GuardedComboBox(this);
+        if(key=="viewWindowMs") {combo->addItem(tr("5 seconds"),5000);combo->addItem(tr("1 second"),1000);combo->addItem(tr("100 milliseconds"),100);}
+        else {combo->addItem(tr("Conditioned encoder input"),"Conditioned");combo->addItem(tr("Raw microphone"),"RawMic");}
+        combo->setCurrentIndex(combo->findData(value.toVariant()));
+        connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{if(!property(key,QJsonValue::fromVariant(combo->currentData()))) {const QSignalBlocker blocker(combo);combo->setCurrentIndex(combo->findData(effectiveProperty(key,-1).toVariant()));}});widget=combo;
+    } else if(key.endsWith("BindingId") || key=="bindingId") {
         auto* combo=new QComboBox(this);combo->addItem(tr("Unassigned"),-1);
         // Existing GUI binding names are the source of truth, including gaps.
         for(int id=0;id<=MeterBinding::RotatorEle;++id) {const auto title=readingName(id);if(!title.isEmpty()) {combo->addItem(title,id);}}
@@ -191,7 +211,7 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
             auto* spin=new QSpinBox(this);int low=0;
             if(key=="updateIntervalMs") {low=1;}if(key=="historyCapacity") {low=2;}if(key=="fontSize") {low=8;}
             if(key=="historyMs") {low=qobject_cast<CompositePresetItem*>(m_item.get())?100:effectiveProperty("updateIntervalMs",channel).toInt(1);}if(key=="rowHeight") {low=72;}
-            if(key=="faceHeight") {low=qobject_cast<CompositePresetItem*>(m_item.get())->minimumConfiguredFaceHeight();}
+            if(key=="faceHeight") {low=qobject_cast<WaveformMeterItem*>(m_item.get())?180:qobject_cast<CompositePresetItem*>(m_item.get())->minimumConfiguredFaceHeight();}
             spin->setRange(low,1000000);spin->setValue(value.toInt());if(key.endsWith("Ms")) {spin->setSuffix(tr(" ms"));}if(key.endsWith("Height") || key=="fontSize") {spin->setSuffix(tr(" px"));}
             connect(spin,qOverload<int>(&QSpinBox::valueChanged),this,[this,key,channel,spin](int v){if(!property(key,v,channel)) {const QSignalBlocker block(spin);spin->setValue(effectiveProperty(key,channel).toInt());spin->setToolTip(tr("Value rejected; the previous effective value is restored."));}});widget=spin;
         } else {
@@ -234,6 +254,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         QSize minimum=m_editMinimum.toSize().expandedTo(QSize(24,24));
         if(auto* face=qobject_cast<CompositePresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
         if(auto* face=qobject_cast<BarPresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
+        if(auto* face=qobject_cast<WaveformMeterItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
         for(int axis=0;axis<4;++axis) {
             auto* field=new QDoubleSpinBox(group);field->setObjectName(keys[axis]);field->setDecimals(13);field->setRange(-QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);field->setValue(values[axis]);field->setKeyboardTracking(false);fields->addRow(labels[axis],field);
             connect(field,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,axis,minimum](double value){
@@ -267,6 +288,22 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
                 if(p.kind!=ContentProperty::Kind::Reading) {fields->addRow(p.label,declaredControl(p,group));}
             }
         }
+    } else if (auto* waveform = qobject_cast<WaveformMeterItem*>(m_item.get())) {
+        auto* group = new QGroupBox(tr("Appearance and waveform"), this);
+        auto* fields = new QFormLayout(group);
+        root->addWidget(group);
+        const auto props = waveform->configuration();
+        QStringList keys{"title", "showTitle", "viewWindowMs", "faceHeight", "traceColor"};
+        if (waveform->waveformKind() != WaveformKind::DecodedSpeech) {
+            keys.append("sourceStage");
+        }
+        for (const auto& key : keys) {
+            fields->addRow(fieldLabel(key), control(key, props[key]));
+        }
+        auto* note = new QLabel(tr("Fixed amplitude −1 to +1. The waveform observes existing audio; "
+                                  "microphone setup is available through Raw microphone."), this);
+        note->setWordWrap(true);
+        root->addWidget(note);
     } else if(auto* composite=qobject_cast<CompositePresetItem*>(m_item.get())) {
         const auto props=composite->configuration();
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
@@ -339,7 +376,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     });
     for(const QString& key:{QStringLiteral("sessionId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable")}) {
         // Declared widget types read no MMIO source.
-        if((applet || declared) && key!="sessionId") {continue;}
+        if((applet || declared || qobject_cast<WaveformMeterItem*>(m_item.get())) && key!="sessionId") {continue;}
         auto* edit=new QLineEdit(entry.context[key].toString(),advanced); edit->setObjectName(key);
         edit->setPlaceholderText(key=="sessionId"?tr("Container default — %1").arg(m_defaults[key].toString(tr("current session"))):tr("Unassigned"));
         bindings->addRow(key=="sessionId"?tr("Radio session"):key=="mmioGuid"?tr("MMIO source UUID"):tr("MMIO variable"),edit);

@@ -779,6 +779,7 @@ Total tracked files: **7100**
 - `cmake/patches/libdatachannel-0004-retain-ice-lifetime-anchor.patch`
 - `cmake/patches/libdatachannel-0005-defer-dtls-startup.patch`
 - `cmake/patches/libdatachannel-0006-recheck-pool-queue-while-idle.patch`
+- `cmake/patches/libdatachannel-0007-lock-shared-mutexes-once-when-made.patch`
 - `cmake/patches/libdatachannel-keep-remote-description-first.cpp`
 - `cmake/patches/libdatachannel-set-dtls-mtu-before-incoming.cpp`
 - `cmake/patches/libjuice-0001-give-turn-allocations-back.patch`

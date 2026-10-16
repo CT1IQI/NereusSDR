@@ -3,6 +3,9 @@
 // 2026-10-06: settings keep list checks decoded keys and keeps this
 // computer's audio device choices (not device names), by J.J. Boyd (KG4VCF)
 // with Claude Code (Anthropic) assistance.
+// 2026-10-12: the radio's firmware line carries its second number where the
+// radio reported one, by J.J. Boyd (KG4VCF) with Claude Code (Anthropic)
+// assistance.
 #include "SupportBundle.h"
 #include "LogCategories.h"
 #include "AppSettings.h"
@@ -68,7 +71,7 @@ SupportBundle::RadioDiagInfo SupportBundle::collectRadioInfo(const RadioModel* m
     const RadioInfo& ri = conn != nullptr ? conn->radioInfo() : model->currentRadioInfo();
     info.connected = true;
     info.model = ri.displayName();
-    info.firmware = QString::number(ri.firmwareVersion);
+    info.firmware = ri.firmwareText();
     info.protocol = static_cast<int>(ri.protocol);
 
     // Redact MAC — keep only last segment

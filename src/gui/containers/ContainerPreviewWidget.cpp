@@ -25,6 +25,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
+#include "gui/meters/WaveformMeterItem.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QSet>
@@ -47,6 +48,16 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
         for(auto& entry:m_document.contents) {if(entry.id==id) {if(present) {entry.extensions["freeCanvasRect"]=value;}else {entry.extensions.remove("freeCanvasRect");}emit freeCanvasGeometryRestored(entry);break;}}
     });
     connect(&poller,&MeterPoller::frameAdvanced,this,&ContainerPreviewWidget::advance);
+    connect(&poller, &MeterPoller::waveformFrameAdvanced, this, [this](qint64) {
+        if (!m_poller) {
+            return;
+        }
+        for (const auto& surface : m_surfaces) {
+            if (surface.widget) {
+                m_poller->copyCachedWaveforms(surface.widget, surface.context);
+            }
+        }
+    });
     connect(&poller,&MeterPoller::bindingAvailabilityChanged,this,[this]{
         if(!m_poller) { return; }
         for(const auto& surface:m_surfaces) {
@@ -128,6 +139,11 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
                 const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
                 item->setProperty("containerStackGrid",!stackSize.isEmpty());
                 if (!stackSize.isEmpty()) { height=stackSize.height(); minimum=containerStackButtonMinimum(item); meter->setMinimumWidth(minimum.width()); }
+                if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
+                    height = face->preferredFaceHeight();
+                    minimum = face->minimumFaceSize();
+                    meter->setMinimumWidth(minimum.width());
+                }
                 if (auto* face=qobject_cast<CompositePresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 else if (auto* face=qobject_cast<BarPresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 item->setZOrder(entry.paintOrder);item->clearStackMetadata(); item->setRect(0,0,1,1); item->setProperty("containerSourceContext",context);

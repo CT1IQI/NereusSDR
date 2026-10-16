@@ -541,7 +541,10 @@ private slots:
 
     void replacesWholeSessionAndRetiresQueuedPickerAndProxy()
     {
-        AppSettings::instance().setValue(QStringLiteral("DisplayFftSize"), QStringLiteral("2048"));
+        // A size the slider offers that is not the default: a local window
+        // puts a stored size that is not one of the seven back to 4096
+        // (display pill plan Task 20, issue 296), which 2048 was.
+        AppSettings::instance().setValue(QStringLiteral("DisplayFftSize"), QStringLiteral("8192"));
         GuiSessionCoordinator sessions;
         QSignalSpy pickerRequests(&sessions, &GuiSessionCoordinator::connectionsRequested);
         QVERIFY(sessions.replace({}, false));
@@ -600,7 +603,7 @@ private slots:
         QVERIFY(!AppSettings::instance().remoteBackend());
         QVERIFY(sessions.window()->radioModel()->ownsLocalDsp());
         QCOMPARE(AppSettings::instance().value(QStringLiteral("DisplayFftSize")).toString(),
-                 QStringLiteral("2048"));
+                 QStringLiteral("8192"));
         sessions.shutdown();
         QVERIFY(!sessions.window());
     }
