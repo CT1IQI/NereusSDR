@@ -123,7 +123,7 @@ The local radio dialog groups its readings as follows:
 | **Latency (RTT)** and **Max RTT**. | Current and observed maximum round-trip delay. A maximum alone does not describe when a break happened. |
 | **Jitter**, **Packet loss**, **UDP seen**. | Packet timing/loss observations when measured. |
 | TX/RX rates and Sample rate. | Traffic and the connected receive configuration. Traffic can be present even with silent or misrouted audio. |
-| **Audio**: Backend, Packet gap and Underruns. | Observed audio shortages. **Packet gap** is the longest datagram interval in the recent sampling window. The Buffer row has no production reading in the covered local dialog. |
+| **Audio**: Backend, Packet gap and Underruns. | **Backend** names the sound system chosen in the Audio settings (Core Audio, Windows audio, ASIO, PipeWire, PulseAudio, ALSA direct or older drivers). The other readings show observed audio shortages. **Packet gap** is the longest datagram interval in the recent sampling window. The Buffer row has no production reading in the covered local dialog. |
 | **Radio Telemetry**: PA voltage and ADC overload. | Reported radio conditions where the hardware supplies them. Not reported is different from zero. |
 
 **Not measured**, a dash, or a graph gap is missing evidence, not a healthy

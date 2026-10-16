@@ -41,6 +41,14 @@ normally so the new version can migrate them once.
   copied the first time you start, so nothing is lost.
 - **Attenuator and preamp are remembered.** They are saved and sent to the
   radio each time you connect. Connecting never keys the radio.
+- **Each receiver keeps more of its own settings.** L/R pan, binaural,
+  squelch, APF, the FM settings, the DIGL and DIGU offsets and the RTTY mark
+  and shift are now saved for each receiver, so they start saving from the
+  first launch. AGC-T AUTO and its offset move from each band to each
+  receiver: the first time, a receiver takes the value it had saved for the
+  band it opens on. Receivers B, C and D now run on the settings they show,
+  so one whose saved settings differ from the defaults may sound different
+  from before.
 
 ## Core installs on a Raspberry Pi, Rock or other SBC
 
@@ -93,7 +101,14 @@ including anything that surprised you.
    edge, pop one out, pin it and return it. Save a workspace profile and
    switch to it with **Containers > Manage Workspace Profiles…**. Choose
    **Reset Default Layout** and confirm the S-Meter comes back.
-5. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
+5. **Receivers after a relaunch.** Give two receivers different squelch, L/R
+   pan, APF and AGC-T AUTO settings, close NereusSDR normally, open it again
+   and confirm each receiver comes back as you left it and sounds the way it
+   did.
+6. **Hermes Lite 2 through a Pi Core.** Key the radio from a window or the
+   phone through a Core on a Raspberry Pi and hold it for half a minute.
+   Confirm the radio stays keyed for the whole time.
+7. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
    a calibration at your new two-tone level and compare it with what you
    expect.
 

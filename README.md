@@ -45,12 +45,19 @@ for bug reports and feature requests that need tracking.
 - **The workspace look is the default.** Show or hide container headers,
   arrange and dock on all four edges, pop containers out, and switch between
   workspace profiles.
-- **Fixes.** Display and waterfall, two-tone and PureSignal, remote audio, and
-  Core installs. See the [release notes](CHANGELOG.md).
+- **Receivers come back as you left them.** After a relaunch every receiver
+  returns with its own pan, squelch, APF, FM and AGC-T settings, and receivers
+  B, C and D run on the values they show.
+- **Fixes.** Display and waterfall, two-tone and PureSignal, Hermes Lite 2 PTT
+  through a Pi Core, remote audio, and Core installs. See the
+  [release notes](CHANGELOG.md).
 
-Read the [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
-before updating a station. Rotor control, CAT Control on the phone and the Core
-speaker need a 2026.10.1 Core; older Cores and apps still connect.
+**Current version: 2026.10.1.** Packages are listed on the
+[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
+[2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
+before updating a station, and update the Core and desktop together. Rotor
+control, CAT Control on the phone and the Core speaker need a 2026.10.1 Core;
+older Cores and apps still connect.
 
 ## What's new in 2026.10.0
 
@@ -64,10 +71,9 @@ It is our first **calendar-versioned release**. `2026.10.0` is the first
 release in October 2026; another release that month becomes `2026.10.1`.
 The first release in a new month starts at `.0`. Releases ship when ready.
 
-**Current version: 2026.10.0.** Packages are listed on the
-[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
-[upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) before updating
-an existing station, and update the Core and desktop together.
+Coming from 0.5.2, read the
+[2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html)
+first.
 
 ## One station, several ways to operate
 
@@ -314,7 +320,7 @@ The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusS
 [#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
 [#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
 
-CAT/rigctld and rotor control arrive in 2026.10.1. CW transmit/keyer/QSK, FM pre-emphasis,
+CAT/rigctld and rotor control arrived in 2026.10.1. CW transmit/keyer/QSK, FM pre-emphasis,
 legacy skin import and WAV/IQ recording remain future work. Radio-specific and
 on-air checks are recorded in the [feature verification documents](docs/architecture/).
 

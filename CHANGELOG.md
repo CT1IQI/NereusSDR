@@ -2,21 +2,6 @@
 
 ## [Unreleased]
 
-### Display zoom and notices
-
-- Saved receive display spans down to 1 kHz now survive initial slice setup.
-- Notices follow the main window when it moves or resizes. Closing a notice
-  also closes the gap in the remaining stack.
-
-### Wideband view
-
-- Local pans keep the DDC zoom limit when the radio's protocol or selected
-  ADC does not offer a wideband stream, while retaining the operator's
-  Extended view preference.
-- An extended pan transfers its wideband request when its active receiver
-  changes and releases the request when the pan or receiver is removed.
-
-
 ### CAT control
 
 Logging, contest and digital-mode programs can now control NereusSDR with
@@ -136,6 +121,13 @@ The workspace look is now the default.
   is kept for a radio that offers it.
 - An extended pan's wideband view follows its active receiver, and is released
   when the pan or the receiver goes away.
+- A saved display span below 10 kHz (down to 1 kHz) is kept when the slice
+  opens.
+- Notices follow the main window when it moves or resizes, and closing one
+  closes the gap in the stack.
+- The waterfall stays lit while you drag a dock edge, instead of going dark
+  until you let go.
+- The Core does less work for each wide display row it sends.
 
 
 ### Transmit, two-tone and PureSignal
@@ -156,6 +148,13 @@ The workspace look is now the default.
 - The saved transmit slice is kept when slices are restored on connect,
   instead of falling back to slice A.
 - A TCI program that connects late gets the transmit slice's frequency at once.
+- The TX applet has a **DUP** button next to PS-A. It is the same Display
+  Duplex setting as the View menu item and the container DUP button.
+- Protocol 1 radios get their transmit packets from a thread of their own, as
+  Protocol 2 radios do. Before, a busy receive loop on a Pi could hold those
+  packets back for long stretches while keyed; a Hermes Lite 2 drops PTT
+  when its packets stop, so a held key went on and off.
+- Physical PTT from a Protocol 1 radio is read in the order the radio sent it.
 
 ### Receivers and radios
 
@@ -172,6 +171,20 @@ The workspace look is now the default.
 - The attenuator and preamp are saved and sent to the radio when you connect,
   and a desktop Core saves attenuator changes while it runs.
 - The receive sample rate stays correct after a settings restore is refused.
+- Receivers come back the way you left them after a relaunch. L/R pan,
+  binaural, squelch, APF, the FM settings, the DIGL and DIGU offsets and the
+  RTTY mark and shift are now saved for each receiver, and AGC-T AUTO is kept
+  per receiver. Receivers B, C and D run on the values they show, and come
+  back at connect without a Core too.
+- A change is saved to the receiver it was made on, not the active one.
+- Filter and AGC edits stick when you tune across a band right after them.
+- RX-only antennas (BYPS, EXT1, XVTR, EXT2) stay selected instead of jumping
+  back to ANT1.
+- The RX1 preamp checkbox appears once the radio is identified.
+- The Alex 1 and Alex 2 filter tabs have **Reset filter defaults**, which puts
+  that tab's filter edges back. Bypass and routing settings are kept.
+- On an Anvelina Pro 3, Ext2 is labeled **RX BYPASS on TX**.
+- The NNR quick controls stay on screen, and scroll when they don't fit.
 
 ### iPhone and iPad app
 
@@ -201,6 +214,15 @@ Cores and apps still connect.
 - FreeDV and PSK Reporter send one version tag.
 - A window no longer freezes for hours while it redials through the
   rendezvous route.
+- USB audio inputs named "Line" are no longer offered as virtual cables.
+- Settings are saved when the computer logs off or shuts down, not only on a
+  normal close.
+- Network Diagnostics names the sound system the way the Audio pages do
+  (Core Audio, Windows audio, ASIO, PipeWire, PulseAudio, ALSA direct or older
+  drivers) instead of always reading WASAPI or CoreAudio.
+- The 2-Tone tooltip names its page, Settings > Test > Two-Tone IMD, and the
+  flag's SQL tooltip says it sets the 0 to 100 squelch, with the AM and FM
+  thresholds on their DSP pages.
 
 ### Separate computer and radio speaker volumes
 
@@ -219,7 +241,7 @@ RADIO for the speaker on the radio.
   Speaker amplifier choice in Setup > Audio > Outputs: Normal, Off while
   transmitting (it stays on for CW and Tune so you hear the sidetone) or
   Always off. Muting RADIO also switches the amplifier off. On other radios the
-  choice is greyed out with the reason. The ANAN-G2E is left off until it is
+  choice is grayed out with the reason. The ANAN-G2E is left off until it is
   tested.
 - Drawn icons replace the emoji on the desktop's volume and mute buttons.
 
@@ -231,7 +253,7 @@ Advanced, and each control appears on one page only.
 - Outputs holds this computer's speakers, the headphones and the radio speaker,
   with a Sound system line that says which audio system NereusSDR uses.
 - Microphone holds the PC microphone and the radio's mic jack; the one not in
-  use is greyed out, never hidden. Mic gain applies to whichever is picked.
+  use is grayed out, never hidden. Mic gain applies to whichever is picked.
 - Digital modes holds VAX and TCI.
 - Every page opens at the top. Your saved audio settings carry over, and the
   Driver choice picks up your saved Driver API and WASAPI choices.
@@ -297,6 +319,18 @@ Advanced, and each control appears on one page only.
 - The Windows installer and portable zip now include every Qt module the app
   loads, so it starts without a missing-DLL error such as
   "Qt6WebSockets.dll was not found".
+- When a TCI app that asked for fast sensor updates disconnects, the other
+  apps go back to their own rate.
+- A desktop TCI program never gets a phone slice's frequency, at connect or
+  while the phone holds transmit.
+- A window signed in to a Core no longer makes the Core bypass an input's
+  Alex filters for a moment when a slice moves to another band. A removed
+  receiver is not asked for again, and sentences about receivers in use name
+  "the Core" where the Core's own position used to be left blank.
+- On a Mac with VoiceOver or another accessibility tool on, the CAT setup
+  pages, device lists, rotor page, VAX cable picker, Spot List and FreeDV
+  station table no longer crash the window when their rows change.
+- NereusSDR builds against OpenSSL 4.
 
 ## [2026.10.0] - 2026-10-05
 
