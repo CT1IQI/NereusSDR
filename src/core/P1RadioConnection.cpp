@@ -224,6 +224,16 @@
 //                given up are kept under the frame lock and printed after
 //                it (takeComposeLog, printComposeLog). J.J. Boyd (KG4VCF),
 //                with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - The transmit cut: setMox(true) is refused while it is
+//                set, and the C0 MOX bit (codec, legacy and HL2 I2C
+//                frames) and the TX I/Q zones read it as unkeyed. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Merge of the EP2 sender thread with the transmit cut: the
+//                cut's reads moved with the frame build onto the sender
+//                thread (buildCodecContext, the legacy and HL2 I2C C0, bank
+//                0, fillTxZone), and the cut's unkey runs under the frame
+//                lock as a queued call. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -2594,6 +2604,13 @@ void P1RadioConnection::setMox(bool enabled)
         }
         return;
     }
+    // The transmit cut (2026-10-15): a key is refused until the main
+    // thread's catch-up clears the cut (RadioConnection::clearTransmitCut).
+    // setMox(false) never clears it.
+    if (enabled && transmitCut()) {
+        qCWarning(lcConnection) << "P1: key refused while the transmit is cut";
+        return;
+    }
     if (!enabled) {
         m_linkLossLatched = false;
         m_linkLossRefusalLogged = false;
@@ -3100,6 +3117,8 @@ double P1RadioConnection::txIqQueuedMs() const
 void P1RadioConnection::sendTxIq(const float* iq, int n)
 {
     if (n <= 0 || iq == nullptr) { return; }
+    // The transmit cut (2026-10-15): no TX I/Q is queued while it is set.
+    if (transmitCut()) { return; }
 
     // From deskhpsdr/src/transmitter.c:1541 [@120188f]
     //   gain = 32767.0;  // 16 bit (ORIGINAL_PROTOCOL)
@@ -3254,6 +3273,13 @@ bool P1RadioConnection::fillTxZone(quint8* zone63) noexcept
 {
     static constexpr int kSamplesPerZone = 63;
     static constexpr int kBufBytes       = kTxIqBufSamples * kTxIqBytesPerSample;
+
+    // The transmit cut (2026-10-15): the zone stays zero (composeCommandFrame
+    // zeroes the frame, on the EP2 sender thread). What is queued stays for
+    // the cut's unkey to drop (discardTxIqOnUnkey).
+    if (transmitCut()) {
+        return false;
+    }
 
     // acquire: makes the audio thread's byte writes (published via release
     // fetch_add on m_txIqCount) visible before we read m_txIqBuf.
@@ -4299,7 +4325,8 @@ void P1RadioConnection::printComposeLog(const ComposeLog& log)
 CodecContext P1RadioConnection::buildCodecContext() const
 {
     CodecContext ctx;
-    ctx.mox            = m_mox;
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    ctx.mox            = wireMox();
     ctx.sampleRateCode = (m_sampleRate >= 384000) ? 3
                        : (m_sampleRate >= 192000) ? 2
                        : (m_sampleRate >=  96000) ? 1 : 0;
@@ -6389,7 +6416,8 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
 void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
 {
     memset(out, 0, 5);
-    const quint8 C0base = m_mox ? 0x01 : 0x00;
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    const quint8 C0base = wireMox() ? 0x01 : 0x00;
 
     switch (bankIdx) {
     case 0: // General settings (networkproto1.c:450-471)
@@ -6625,7 +6653,8 @@ bool P1RadioConnection::composeI2cFrame(quint8 out[5]) const
         // the codec or connection state itself.
         auto* hl2Codec = const_cast<P1CodecHl2*>(
             dynamic_cast<const P1CodecHl2*>(m_codec.get()));
-        if (hl2Codec && hl2Codec->tryComposeI2cFrame(out, m_mox)) {
+        // The transmit cut (2026-10-15): the I2C frame's C0 MOX bit too.
+        if (hl2Codec && hl2Codec->tryComposeI2cFrame(out, wireMox())) {
             return true;
         }
     }
@@ -6672,7 +6701,8 @@ void P1RadioConnection::publishBank0BandOutputs(const quint8 bank0[5]) const
 void P1RadioConnection::composeCcBank0Full(quint8 out[5]) const
 {
     // C0: MOX bit (networkproto1.c:446)
-    out[0] = m_mox ? 0x01 : 0x00;
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    out[0] = wireMox() ? 0x01 : 0x00;
 
     // C1: sample rate (networkproto1.c:451)
     quint8 srBits = 0;

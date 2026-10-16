@@ -35,6 +35,9 @@
 //               sink for the Core's sender thread, with this peer's
 //               checks. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: setTxReceiptHook, given to each start's
+//               transport, for the remote transmit cut guard. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -218,6 +221,13 @@ public:
     /// current transport takes it; otherwise (or before a start) the line
     /// stays on micRtpReceived(). The sink must be safe on any thread.
     bool setMicPacketSink(IMediaTransport::MicPacketSink sink);
+    /// Remote transmit cut off the main thread (2026-10-15): every message
+    /// the "tx" data channel takes is reported to `hook` on the transport's
+    /// own thread at its receipt (IMediaTransport::setTxReceiptHook), for
+    /// the current transport and every later start's, until an empty hook
+    /// is set. True when the current transport takes it. The hook must be
+    /// safe on any thread and must not block.
+    bool setTxReceiptHook(IMediaTransport::TxReceiptHook hook);
     std::optional<MediaPeerTelemetry> telemetry() const;
 
 signals:
