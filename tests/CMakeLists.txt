@@ -1223,6 +1223,10 @@ nereus_add_test(tst_p2_command_zero)
 target_compile_definitions(tst_p2_command_zero PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 8: Alex-1 Filters sub-sub-tab smoke test ─────────────
+
+# Filter-page reset is restricted to the selected page's frequency edges.
+nereus_add_test(tst_alex_filter_reset)
+
 nereus_add_test(tst_alex1_filters_tab)
 
 # ── Phase 3P-B Task 9: Alex-2 Filters sub-sub-tab smoke test ─────────────
@@ -1236,7 +1240,7 @@ target_compile_definitions(tst_p2_regression_freeze PRIVATE
 nereus_add_test(tst_p1_fake_radio fakes/P1FakeRadio.cpp)
 
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
-nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
+nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp REALTIME)
 target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
 
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
@@ -2875,6 +2879,14 @@ nereus_add_test(tst_radio_model_status_wiring)
 #   case 0x00: adc[0] = ControlBytesIn[1] & 0x01     (C1 bit 0)
 #   case 0x20: adc[0..2] = ControlBytesIn[1..3] & 0x01
 nereus_add_test(tst_p1_adc_overflow_extraction)
+
+# P1 status at a Protocol 2 radio's rate (2026-10-14): PTT changes at once
+# and repeats at the status tick, telemetry, supply and ADC overloads at the
+# tick (1 ms keyed or with an overload pending, 200 ms idle, Anvelina
+# CC_encoder.v:173-175 [@8e86a61]), frameReceived once per read. Simulated
+# time through setStatusClockForTest; one loopback case uses P1FakeRadio.
+nereus_add_test(tst_p1_status_rate fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_status_rate PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission

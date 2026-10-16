@@ -5100,6 +5100,11 @@ public:
         m_forceTxForTest = false;
     }
 
+    // Drives the steady clock handlePaTelemetry reads (nanoseconds), so a
+    // test can time the HL2 temperature's 8 ms polls without sleeping. Once
+    // set, every later telemetry call on this model uses the value given.
+    void setPaTelemetryNowNsForTest(qint64 nowNs) { m_paTelemetryNowNsForTest = nowNs; }
+
     // P1 full-parity §3.5 test seam — pure-function counterpart of the
     // percent-to-wire-byte SWR-foldback formula inlined at every
     // setTxDrive call site (voice powerChanged lambda, TUNE-engage,
@@ -7628,6 +7633,13 @@ private:
     std::array<quint16, 100> m_hl2TempRing{};
     int m_hl2TempCount{0};   // 0..100 — slots filled
     int m_hl2TempHead{0};    // next slot to write
+    // The ring is filled on mi0bot's 8 ms poll, not one entry per
+    // telemetry call, so it spans 800 ms at any status rate (see
+    // handlePaTelemetry). Cleared when the connection leaves Connected.
+    qint64  m_hl2TempLastPollNs{0};  // time of the latest 8 ms poll
+    quint16 m_hl2TempHeld{0};        // latest reading, held between calls
+    // Test-only clock for handlePaTelemetry (setPaTelemetryNowNsForTest).
+    std::optional<qint64> m_paTelemetryNowNsForTest;
 
     // Settings hygiene — validated against caps at connect time.
     // Phase 3P-H Task 2.

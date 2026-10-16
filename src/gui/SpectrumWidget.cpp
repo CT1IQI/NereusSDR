@@ -17,6 +17,10 @@
 //                 (setup.cs); a floor at or above dB Max no longer leaves
 //                 a zero or negative range. AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF. resizeEvent refills the new live
+//                 waterfall image from the history at once, so the
+//                 waterfall stays lit while a dock edge is dragged.
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
 //                 settling no longer rescales the whole waterfall history;
 //                 it is resampled into the history's current width and the
@@ -5015,6 +5019,14 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         // AetherSDR PR #1478 [@2bb3b5c] — see plan §authoring-time #2.
         if (m_historyResizeTimer) {
             m_historyResizeTimer->start();
+        }
+        // The new image is empty. Refill it from the history now, or the
+        // waterfall stays dark for as long as a dock edge or the window
+        // border is dragged and returns only when the debounce fires. The
+        // rebuild reads the history at its own width while the resize is
+        // settling (historyResizeSettling()), so this rescales nothing.
+        if (m_wfHistoryRowCount > 0) {
+            rebuildWaterfallViewport();
         }
     }
 

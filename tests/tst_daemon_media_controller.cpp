@@ -13,6 +13,9 @@
 //               thread (ThreadDisplaySink), and a stall it finds there ends
 //               the stream on this thread. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-12: A removed slice's display is said to end because the slice
+//               was removed, where the removal's stream unbinding ends it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Verify accurate wake-interval wording, same-event stage
 //               timing, and unknown split in the runtime unkey summary.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -3382,13 +3385,13 @@ void TstDaemonMediaController::streamRemovalRetiresEndpointAndSource()
     QTRY_COMPARE(harness.controller.activeSourceCount(), 0);
     // R-R3-01/37: the retirement carries the shared wording the window's
     // refusal filter matches (SpectrumEndpoint.h), not a local copy. Removal
-    // unbinds the slice's stream first, so the binding reason may win.
+    // unbinds the slice's stream first, and a display that ends there is
+    // still said to end because its slice was removed: a window that hears
+    // "binding changed" asks again for a slice that is gone.
     QTRY_VERIFY(!messageFor(controls, QStringLiteral("rejected"), 11).isEmpty());
     const QString retired = messageFor(controls, QStringLiteral("rejected"), 11)
                                 .value(QStringLiteral("reason")).toString();
-    QVERIFY2(retired == QLatin1String(kRetireReasonSliceRemoved)
-                 || retired == QLatin1String(kRetireReasonStreamBindingChanged),
-             qPrintable(retired));
+    QCOMPARE(retired, QString::fromLatin1(kRetireReasonSliceRemoved));
     harness.finish();
 }
 
