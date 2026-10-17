@@ -1174,6 +1174,7 @@ set(CORE_SOURCES
     src/core/audio/RadioMicSource.cpp
     src/core/audio/VaxTxMicSource.cpp
     src/core/audio/AudioDelayProbe.cpp
+    src/core/audio/NativeAudioFirstCall.cpp
     src/core/audio/DeviceRateMatcher.cpp
     src/core/audio/AudioDeviceTypes.cpp
     src/core/audio/AudioTestBarrier.cpp
@@ -1200,6 +1201,7 @@ set(CORE_SOURCES
     # remote window's uplink.
     src/core/audio/MicUplinkCollector.cpp
     src/core/audio/CaptureSupervisor.cpp
+    src/core/audio/CaptureStandby.cpp
     # Native audio plan Task 15: the ASIO session rules (portable; the
     # driver itself loads only in nereus-audio-capture on Windows) and the
     # window's ASIO backend over the helper.
@@ -1208,6 +1210,7 @@ set(CORE_SOURCES
     src/core/audio/AsioSession.cpp
     src/core/audio/AsioBackend.cpp
     src/core/audio/CaptureHelperLocator.cpp
+    src/core/audio/MicModeKeeper.cpp
     src/core/StationBinaryLocator.cpp
     src/core/audio/CompositeTxMicRouter.cpp
     src/core/audio/PortAudioBus.cpp
@@ -1670,6 +1673,8 @@ list(APPEND CORE_SOURCES
 if(APPLE)
     list(APPEND CORE_SOURCES src/core/audio/CoreAudioHalBus.cpp)
     list(APPEND CORE_SOURCES src/core/MacMicPermission.mm)
+    # 2026-10-16: the window's Mic Mode kept at Standard (MicModeKeeper.h).
+    list(APPEND CORE_SOURCES src/core/audio/MacMicMode.mm)
     # Native audio plan Task 8 (R-AUD-01): the Core Audio engine, its
     # system seam, the AUHAL output on the clock matcher and the input.
     list(APPEND CORE_SOURCES
@@ -3226,7 +3231,7 @@ option(NEREUS_USE_PCH "Use precompiled headers to speed up builds" ON)
 # SKIP_PRECOMPILE_HEADERS bypasses the include for that single file
 # without disabling PCH for the whole target.
 if(APPLE)
-    set_source_files_properties(src/core/MacMicPermission.mm
+    set_source_files_properties(src/core/MacMicPermission.mm src/core/audio/MacMicMode.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 if(NEREUS_USE_PCH)

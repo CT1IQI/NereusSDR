@@ -17,6 +17,10 @@
 //               waited, for the matcher's clock fit and its
 //               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: marks the process's first native audio call
+//               (NativeAudioFirstCall), for the persistent capture helper's
+//               timing.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/audio/CoreAudioOutputBus.h"
@@ -25,6 +29,7 @@
 #include "core/audio/AudioDelayProbe.h"
 #include "core/audio/AudioTestBarrier.h"
 #include "core/audio/CoreAudioHalProperties.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QtGlobal>
 
@@ -183,6 +188,7 @@ struct CoreAudioOutputBus::Impl {
         description.componentType = kAudioUnitType_Output;
         description.componentSubType = kAudioUnitSubType_HALOutput;
         description.componentManufacturer = kAudioUnitManufacturer_Apple;
+        markNativeAudioCall("Core Audio output open");
         AudioComponent component = AudioComponentFindNext(nullptr, &description);
         if (component == nullptr) {
             return fail(QStringLiteral("The system audio output unit is missing"), noErr);

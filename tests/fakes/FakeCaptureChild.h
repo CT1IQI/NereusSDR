@@ -80,10 +80,32 @@
 //                         still honoured): the engine's retry stays pending.
 //   bad-ring              Hello; on Open: Opening, Ready, then a wake with
 //                         the region's ring header zeroed.
+//   hang-warm             As ready until Warm; then nothing at all (Stop
+//                         and Shutdown are ignored too), as a helper stuck
+//                         in its first audio call.  With
+//                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it then creates
+//                         the empty file <dir>/<its pid>.
+//   warm-while-marked     As ready, but Warm is answered only once the file
+//                         NEREUS_FAKE_CAPTURE_WARM_FILE names is gone; every
+//                         command after it (Shutdown too) waits behind it,
+//                         as in the real helper.  With
+//                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it creates the
+//                         empty file <dir>/<its pid> once it holds Warm.
+//   exit-after-warm       As ready until Warm; answers it with Warmed, then
+//                         exits with code 3, as a helper that warms and
+//                         then crashes.
+//   warm-wrong-mic-mode   As ready, but its Warmed answers the Mic Mode
+//                         question its Warm did not ask: none for a Warm
+//                         that names a bundle, one for a Warm that names
+//                         none.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
 // Every scenario answers AsioDescribe with one driver, "Fake ASIO" (4
 // outputs, 2 inputs), AsioOpen with running (256 frames, 48 kHz) or, with
 // no uses, closed, and accepts AsioControlPanel (Task 15).
+// Every scenario that is still answering commands answers Warm with Warmed
+// (one input, listed at once; a Warm that names a bundle, as a stored Voice
+// Isolation made Standard); hang-open and its kin answer it until their
+// Open, no-hello and hang-warm never (2026-10-16).
 // Every scenario exits with code 0 on stdin EOF, and on Shutdown unless
 // it is ignoring commands.  An unknown scenario exits with code 2.
 //
@@ -114,6 +136,12 @@
 //               Claude Code.
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: Warm is answered with Warmed (the persistent helper);
+//               hang-warm, warm-while-marked and exit-after-warm.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a Warm that names a bundle is answered as a stored Voice
+//               Isolation made Standard; warm-wrong-mic-mode.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

@@ -47,6 +47,13 @@
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: process/generation tags and debug command timestamps.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: Warm lists the default engine's devices with no microphone
+//               open and answers Warmed (the persistent helper).  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: Warm first keeps the bundle it names at Mic Mode Standard
+//               (MicModeKeeper.h), before the helper's first engine call,
+//               and Warmed says what came of it.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -68,6 +75,7 @@
 #include "core/audio/DeviceSampleFormat.h"
 #include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioEngineBackend.h"
+#include "core/audio/MacMicMode.h"
 #include "core/audio/MatcherRing.h"
 #include "core/audio/PortAudioBus.h"
 #include "core/audio/PortAudioLibrary.h"
@@ -244,6 +252,14 @@ CaptureHelperAsio& asioHooks()
     return hooks;
 }
 
+// 2026-10-16: setCaptureHelperTestMicModeCalls.  Written once before the
+// helper starts its threads, read only by the main thread's warm().
+MicModeCalls& testRunMicModeCalls()
+{
+    static MicModeCalls calls;
+    return calls;
+}
+
 constexpr auto kTickInterval = std::chrono::milliseconds(10);
 constexpr auto kInputLostAfter = std::chrono::milliseconds(500);
 // More queued parent commands than this is a misbehaving parent; the
@@ -265,6 +281,7 @@ struct ParentCommand {
     bool probeEnabled = false;       // ProbeEnable
     P::AsioDescribe asioDescribe;    // AsioDescribe only
     P::AsioOpen asioOpen;            // AsioOpen only
+    P::Warm warm;                    // Warm only
 };
 
 struct CommandQueue {
@@ -282,7 +299,7 @@ struct CommandQueue {
 
 // Parses one parent record.  Anything but a valid Configure / AttachRing /
 // Open / Stop / Shutdown / ProbeEnable / AsioDescribe / AsioOpen /
-// AsioControlPanel is a protocol error.
+// AsioControlPanel / Warm is a protocol error.
 std::optional<ParentCommand> parseCommand(const P::Record& record)
 {
     ParentCommand command;
@@ -349,6 +366,14 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
             return std::nullopt;
         }
         return command;
+    case P::RecordType::Warm: {
+        const auto warm = P::decodeWarm(record.payload);
+        if (!warm) {
+            return std::nullopt;
+        }
+        command.warm = *warm;
+        return command;
+    }
     case P::RecordType::Hello:
     case P::RecordType::Status:
     case P::RecordType::Pcm:
@@ -356,6 +381,7 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
     case P::RecordType::RingAttached:
     case P::RecordType::AsioCaps:
     case P::RecordType::AsioState:
+    case P::RecordType::Warmed:
         break;
     }
     return std::nullopt;
@@ -650,6 +676,9 @@ private:
                 qCInfo(lcAudio) << "capture helper: no ASIO session for the control panel";
             }
             break;
+        case P::RecordType::Warm:
+            warm(command.warm);
+            break;
         default:
             break;
         }
@@ -754,7 +783,62 @@ private:
         }
     }
 
-    IAudioEngineBackend* backendFor(AudioEngineKind engine)
+    // 2026-10-16: the persistent helper's warm-up.  Its first engine call
+    // and device list happen now, before the window makes its own first
+    // call, and no microphone opens.  First of all it keeps the window's
+    // stored Mic Mode at Standard, when Warm names the window's bundle, so
+    // the window's own first audio call finds no Voice Isolation to apply
+    // (MicModeKeeper.h).  A test run lists nothing and makes no system
+    // Mic Mode call.
+    void warm(const P::Warm& request)
+    {
+        P::Warmed warmed;
+        warmed.startNs = audioProbeNowNs();
+        if (!request.micModeBundle.isEmpty()) {
+            const bool testRun = audioDevicesBarredForTestRun();
+            const MicModeCalls calls = testRun ? testRunMicModeCalls() : systemMicModeCalls();
+            const MicModeResult result = keepMicModeStandard(request.micModeBundle, calls);
+            warmed.micMode = result;
+            // A mode the record cannot carry (none such on macOS 27) goes
+            // as the largest it can, so Warmed is always sent; the line
+            // below names the mode read.
+            if (result.before < kMicModeNotRead || result.before > P::kMaxWarmedMicMode) {
+                warmed.micMode->before = P::kMaxWarmedMicMode;
+            }
+            qCInfo(lcAudio).noquote()
+                << QStringLiteral("capture helper: %1 (it was %2), in %3 ms")
+                       .arg(micModeOutcomeText(result.outcome),
+                            result.before == kMicModeNotRead ? QStringLiteral("not read")
+                                                             : micModeName(result.before),
+                            QString::number(double(audioProbeNowNs() - warmed.startNs) / 1e6,
+                                            'f', 1));
+        }
+        if (PortAudioBus::portAudioBarredForTestRun() || audioDevicesBarredForTestRun()) {
+            warmed.listedNs = warmed.startNs;
+            write(P::encodeWarmed(warmed));
+            return;
+        }
+        makeBackends();
+        const AudioEngineKind engine = defaultAudioEngine(m_backends);
+        // The older drivers would start PortAudio; only a native engine lists.
+        IAudioEngineBackend* backend =
+            engine == AudioEngineKind::PortAudio ? nullptr : backendFor(engine);
+        if (backend != nullptr && backend->running()) {
+            int inputs = 0;
+            for (const AudioDeviceInfo& info : backend->enumerate()) {
+                if (info.direction == AudioDeviceDirection::Input) {
+                    ++inputs;
+                }
+            }
+            warmed.inputs = std::min(inputs, P::kMaxWarmedInputs);
+        }
+        warmed.listedNs = std::max(audioProbeNowNs(), warmed.startNs);
+        qCInfo(lcAudio) << "capture helper: warmed with" << warmed.inputs << "inputs on"
+                        << audioEngineLabel(engine);
+        write(P::encodeWarmed(warmed));
+    }
+
+    void makeBackends()
     {
         if (!m_backendsMade) {
             AudioBackendContext context;
@@ -762,6 +846,11 @@ private:
             m_backends = makeSystemAudioBackends(context);
             m_backendsMade = true;
         }
+    }
+
+    IAudioEngineBackend* backendFor(AudioEngineKind engine)
+    {
+        makeBackends();
         const AudioBackendId id = audioBackendFor(engine);
         for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
             if (backend && backend->id() == id) {
@@ -1525,6 +1614,11 @@ void setCaptureHelperTestDevices(const QStringList& names)
 void setCaptureHelperAsio(CaptureHelperAsio asio)
 {
     asioHooks() = std::move(asio);
+}
+
+void setCaptureHelperTestMicModeCalls(MicModeCalls calls)
+{
+    testRunMicModeCalls() = std::move(calls);
 }
 
 int runCaptureHelper(int argc, char** argv)

@@ -23,11 +23,15 @@
 //               pickOlderDriverMic(), Both adds the two channels on the
 //               older drivers too.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: setCaptureHelperTestMicModeCalls(), a test run's stand-in
+//               for the Mic Mode calls of the warm-up.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/MicModeKeeper.h"
 
 #include <QByteArray>
 #include <QPair>
@@ -104,6 +108,12 @@ struct CaptureHelperAsio {
 };
 
 void setCaptureHelperAsio(CaptureHelperAsio asio);
+
+// 2026-10-16: the Mic Mode calls a test run's helper makes when Warm names
+// a bundle (MicModeKeeper.h).  A test run never makes the system's calls:
+// with none set here, it answers that the setting is unavailable.  Call
+// before runCaptureHelper; ignored outside a test run.
+void setCaptureHelperTestMicModeCalls(MicModeCalls calls);
 
 // Process-level pipe plumbing shared by the helper and its scripted test
 // double.  Not for use inside NereusSDR itself.

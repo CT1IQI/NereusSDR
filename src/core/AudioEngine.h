@@ -307,6 +307,13 @@
 //               bus's clock matcher (MatcherPacketTiming), where it said
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setSharedCaptureSupervisor(): on the Mac every engine
+//               uses the application's capture supervisor and its
+//               standing helper (CaptureStandby) instead of its own.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setDeviceListInBackground(): the window's catalog lists
+//               in the background. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -353,6 +360,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <array>
@@ -911,6 +919,24 @@ public:
     // --audio-delay-probe: every later start() turns the probe on after it
     // has started. Process-wide; set before the engine starts.
     static void setDelayProbeRequestedAtStart(bool requested);
+    // 2026-10-16: the window: the device catalog lists in the background,
+    // so nothing that builds it (catalogue(), the device layer's start)
+    // waits for this computer's first device list; the device layer's
+    // roles wait for it instead, no longer than the catalog's start would
+    // have (IAudioDeviceCatalog::firstListWaitLeftMs()).
+    // Process-wide; set before the first catalogue() call.  Off (nereusd
+    // and the tests): the start waits for the first list up to
+    // AudioDeviceCatalog::kStartWaitMs.
+    static void setDeviceListInBackground(bool inBackground);
+
+    // 2026-10-16: engines built from now on use this capture supervisor,
+    // the application's (CaptureStandby), instead of creating their own;
+    // nullptr goes back to their own.  An engine leaves a shared supervisor
+    // running when it goes, so its standing helper serves the next engine.
+    // One engine at a time uses it (a window replaces the last).  Set it
+    // before the first engine and clear it after the last, before the
+    // supervisor goes.  GUI thread only.
+    static void setSharedCaptureSupervisor(CaptureSupervisor* supervisor);
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
     // eagerly by start() with the platform-native virtual bus
@@ -1682,6 +1708,10 @@ private:
     // R-R3-36: (re)creates m_captureSupervisor from options, forwards its
     // status and applies m_txInputConfig. Never opens capture by itself.
     void installCaptureSupervisor(CaptureSupervisor::Options options);
+    // 2026-10-16: makes supervisor this engine's (its own or the shared
+    // one): the signal links, a held ASIO demand and m_txInputConfig.
+    void attachCaptureSupervisor(CaptureSupervisor* supervisor);
+    static QPointer<CaptureSupervisor>& sharedCaptureSupervisor();
 
     // ── Native audio plan Task 7: the device layer ──────────────────────
     // True once the catalogue and the stream supervisor run; builds them
@@ -1777,8 +1807,12 @@ private:
     // the capture helper. Created in the constructor; lives until the
     // engine is destroyed, so its reader pointer stays valid for the TX
     // worker across start()/stop().
+    // 2026-10-16: m_captureSupervisor is the engine's own
+    // (m_ownedCaptureSupervisor) or the application's shared one, which
+    // outlives the engine.
     AudioDeviceConfig m_txInputConfig;
-    std::unique_ptr<CaptureSupervisor> m_captureSupervisor;
+    std::unique_ptr<CaptureSupervisor> m_ownedCaptureSupervisor;
+    QPointer<CaptureSupervisor> m_captureSupervisor;
 
     // Native audio plan Task 7: the device layer (main thread).  The
     // supervisor refers to the catalogue and to this engine, so it is
@@ -1868,6 +1902,8 @@ private:
     // V-HW-8: the audio delay probe (setDelayProbeEnabled).
     void onDelayProbeHit(qint64 captureNs);    // main thread
     static std::atomic<bool>& delayProbeRequestedAtStart();
+    // setDeviceListInBackground.
+    static std::atomic<bool>& deviceListInBackground();
     std::atomic<bool> m_delayProbeEnabled{false};
     bool m_delayProbeOnLastBlock{false};               // DSP thread only
     AudioDelayProbeClicker m_delayProbeClicker;        // DSP thread only

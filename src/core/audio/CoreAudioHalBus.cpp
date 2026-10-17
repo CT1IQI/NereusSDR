@@ -37,6 +37,10 @@
 //                 TX ring on a 10 ms GUI timer, and the 16 ms guard dropped
 //                 a tenth of WSJT-X's audio between reads. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: the reader watch marks the process's first native audio
+//                 call (NativeAudioFirstCall), for the persistent capture
+//                 helper's timing. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-17: pullKeepingBacklog() keeps a whole stereo frame; the
 //                 drain comment says the guard's thresholds come from the
 //                 caller. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -47,6 +51,7 @@
 
 #include "core/LogCategories.h"
 #include "core/PerfMonitor.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QLoggingCategory>
 
@@ -181,6 +186,7 @@ struct CoreAudioHalBus::ReaderWatch {
         runningListener = Block_copy(^(UInt32, const AudioObjectPropertyAddress*) {
             self->readRunning();
         });
+        markNativeAudioCall("VAX device watch");
         AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &kDevicesAddress,
                                             queue, devicesListener);
         // The first answer before open() returns, so a caller asking right

@@ -24,6 +24,9 @@
 //               via Anthropic Claude Code.
 //   2026-10-12: wantOlderDrivers(). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: firstListWaitLeftMs(): what is left of a start's wait for
+//               its first list, so a reader never waits for it twice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -66,6 +69,14 @@ public:
     // catalog whose lists are there from the start (every one but the
     // engine's) has always listed.
     virtual bool hasListed() const { return true; }
+
+    // R-AUD-03: how much longer, in ms, the first list is worth waiting
+    // for: what is left of the few seconds a start gives it, when the start
+    // returned before it (the window lists in the background).  0 once it
+    // is in, once that time has gone, after a start that waited for it
+    // itself, and while stopped.  A reader that waits for firstListed()
+    // waits no longer than this, so the list is never waited for twice.
+    virtual int firstListWaitLeftMs() const { return 0; }
 
 signals:
     void devicesChanged();
