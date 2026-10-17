@@ -634,6 +634,16 @@ Advanced, and each control appears on one page only.
   2.5 seconds instead of restarting, and comes back with no added delay.
   Before, half a second with no packets restarted it, which added 1.3 to 2.4
   seconds more silence.
+- A remote window no longer starts with no sound until you mute and unmute. It
+  opens its speakers when the window starts, and after a speaker fault it asks
+  the Core for audio again on its own (after 1, 2 and 4 seconds, then every 4
+  seconds) until it plays; the problem and **Retry audio** then clear. While
+  this computer's list of audio devices is still coming in, the status reads
+  Waiting for audio from Core, for up to 10 seconds, instead of showing a
+  problem. A speaker or headphones device set to a format remote playback
+  cannot play now says so and is not asked for again until you change it. A
+  fault that comes while the window's connection is moving still tells the
+  Core to stop sending audio.
 - When a remote window's audio and displays move to a new connection, as after
   the network drops and comes back, the window asks the Core again for
   everything the move lost: receive audio, the headphones mix, the transmit
