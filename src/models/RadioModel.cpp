@@ -27260,8 +27260,9 @@ void RadioModel::teardownConnection()
     // comes first, as in Thetis, and unkeys whatever holds MOX: a MOX-button
     // key would otherwise survive the disconnect with nothing holding it
     // (its manual key is cleared further down with the session's TUN
-    // state). The TX-to-RX walk's hardware flip runs now, while the
-    // connection is still live, so the radio gets the MOX bit off.
+    // state). The TX-to-RX walk starts now, while the connection is still
+    // live; its hardware flip (hardwareFlipped(false)) follows on the walk's
+    // timers after this call returns (issue #434 follow-up).
     // RADE end-of-over callsigns (review Important 2): no end-of-over tail
     // on a disconnect. The unkey walks as it did before the tail existed,
     // so the amplifier's UNKEY (txAboutToEnd) and the TX channel's drain

@@ -2118,10 +2118,13 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // through QRhi, by looking for a QRhiWidget in the tree. Run at the top
     // of buildUI() it found none, so on Linux (where SpectrumWidget is not
     // a native window of its own) every pan logged "QRhiWidget: No QRhi"
-    // and stayed blank. Qt looks again only when a widget arrives from
-    // another native window, and the pans are built inside this one. A
-    // window saved at normal size is created at show(), after the pans, and
-    // the maximized start now follows the same order.
+    // and stayed blank. Qt does look again when a pan is parented into the
+    // window (QWidget::setParent, Qt 6.11 qwidget.cpp:10943-10960), but a
+    // QRhiWidget turns its QRhi setting on only in
+    // QRhiWidgetPrivate::init() (qrhiwidget.cpp:196), after the QWidget
+    // base constructor has already parented it, so that check finds
+    // nothing. A window saved at normal size is created at show(), after
+    // the pans, and the maximized start now follows the same order.
     restoreMainWindowGeometry();
 
     // ── Remote-daemon R2 Task 20: the remote gate, then the dial ─────────
