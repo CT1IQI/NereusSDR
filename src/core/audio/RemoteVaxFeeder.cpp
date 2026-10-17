@@ -627,7 +627,10 @@ void RemoteVaxFeeder::pump()
         // The source stopped rather than paused (all of it, or one slice
         // of the mix): no more reserve.
         quietRestart(now);
-    } else if ((m_growPending || m_trimOnReturn) && m_matcherReady && audioWaiting(now)) {
+    }
+    // Not an else: a backlog already waiting when the stop is seen is cut
+    // in the same pump.
+    if ((m_growPending || m_trimOnReturn) && m_matcherReady && audioWaiting(now)) {
         if (m_growPending) {
             // The link's audio is back within kQuietNs: a pause the
             // reserve should ride out next time. The matcher is rebuilt
@@ -652,7 +655,12 @@ void RemoteVaxFeeder::pump()
             }
         }
     }
-    const int moved = drainHandoff(true, now);
+    // Readiness is decided once, above: with the decision still open (no
+    // audio was waiting), a packet landing since then waits for the next
+    // pump's decision rather than resuming the matcher a grow would then
+    // rebuild while it plays.
+    const bool undecided = m_matcherReady && (m_growPending || m_trimOnReturn);
+    const int moved = undecided ? 0 : drainHandoff(true, now);
     if (!m_matcherReady) {
         // drainHandoff() fell back to direct writes.
         if (moved > 0) {
