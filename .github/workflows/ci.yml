@@ -451,6 +451,32 @@ jobs:
         run: sudo -E env "PATH=$PATH" "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" ctest --test-dir build -L traversal --output-on-failure
 
   # --------------------------------------------------------------------
+  # Change scope: does this run build at all?
+  #
+  # A pull request that changes only documentation (scripts/ci/change-scope.sh
+  # says what counts) needs no build and no test run. The build jobs below
+  # are required checks, and a required check that is skipped, or a matrix
+  # job skipped before it expands, does not report under its own name, so
+  # they still run: on a documentation-only pull request each one starts on
+  # a Linux runner, skips every step and passes in seconds. Every push and
+  # manual run builds. CI speed round, 2026-10-16, approved by J.J. Boyd.
+  # --------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-24.04
+    name: Change scope
+    outputs:
+      heavy: ${{ steps.scope.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull request's merge commit and its first parent, the base.
+          fetch-depth: 2
+
+      - name: Decide whether to build
+        id: scope
+        run: scripts/ci/change-scope.sh "${{ github.event_name }}"
+
+  # --------------------------------------------------------------------
   # Per-platform build + C++ test gate.
   #
   # Linux is the source-of-truth gate for the C++ test suite (see the
@@ -459,6 +485,10 @@ jobs:
   # OFF because the test fakes are Linux/Qt-specific.
   # --------------------------------------------------------------------
   build:
+    needs: changes
+    # Run even when the change scope job failed, so the required checks
+    # report: the first step then fails the job instead of skipping it.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -476,32 +506,46 @@ jobs:
         # leave them unset so CMake's NEREUS_TEST_SHARDS defaults to 0
         # (no sharding) — but they don't build tests anyway, so the
         # variable is moot for them.
+        #
+        # `cache` names the leg's compiler cache (see "Restore compiler
+        # cache" below).
         include:
           - os: ubuntu-24.04
             name: Linux x64 (1/4)
             shard: 0
             shards: 4
+            cache: Linux-s0
           - os: ubuntu-24.04
             name: Linux x64 (2/4)
             shard: 1
             shards: 4
+            cache: Linux-s1
           - os: ubuntu-24.04
             name: Linux x64 (3/4)
             shard: 2
             shards: 4
+            cache: Linux-s2
           - os: ubuntu-24.04
             name: Linux x64 (4/4)
             shard: 3
             shards: 4
+            cache: Linux-s3
           - os: macos-15
             name: macOS Apple Silicon
+            cache: macOS
           - os: windows-latest
             name: Windows x64
+            cache: Windows
 
-    runs-on: ${{ matrix.os }}
+    # A documentation-only pull request runs every leg on Linux, where it
+    # skips every step (see the changes job above).
+    runs-on: ${{ needs.changes.outputs.heavy == 'true' && matrix.os || 'ubuntu-24.04' }}
     name: Build (${{ matrix.name }})
 
     env:
+      # "true" when this run builds and tests; every step below but the
+      # first is conditional on it.
+      HEAVY: ${{ needs.changes.outputs.heavy }}
       # Pin ccache's cache directory under the workspace so it matches
       # the cache action's `path:` on every platform.  ccache 4.x's
       # XDG-based default (~/.cache/ccache on Linux, ~/Library/Caches
@@ -517,7 +561,21 @@ jobs:
       NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
 
     steps:
+      - name: Change scope
+        shell: bash
+        run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::The Change scope job ended ${{ needs.changes.result }}, so this job cannot tell whether to build."
+            exit 1
+          fi
+          if [ "$HEAVY" = "true" ]; then
+            echo "Building and testing."
+          else
+            echo "Documentation only: nothing to build or test."
+          fi
+
       - uses: actions/checkout@v4
+        if: env.HEAVY == 'true'
 
       # ------------------------------------------------------------------
       # Dependency downloads (cmake/NereusDependencyArchives.cmake)
@@ -537,6 +595,7 @@ jobs:
       # straight after the fetch, so a later build failure still keeps it;
       # one job per OS saves (Linux shard 0), the others only restore.
       - name: Restore dependency downloads
+        if: env.HEAVY == 'true'
         id: deps-cache
         uses: actions/cache/restore@v4
         with:
@@ -546,6 +605,7 @@ jobs:
             nereus-deps-${{ runner.os }}-
 
       - name: Fetch dependency downloads
+        if: env.HEAVY == 'true'
         shell: bash
         run: |
           # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
@@ -557,7 +617,7 @@ jobs:
           git config --global --add include.path "$mirrors"
 
       - name: Save dependency downloads
-        if: steps.deps-cache.outputs.cache-hit != 'true' && (matrix.shard == 0 || matrix.shard == '')
+        if: env.HEAVY == 'true' && (steps.deps-cache.outputs.cache-hit != 'true' && (matrix.shard == 0 || matrix.shard == ''))
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.nereus-deps
@@ -591,11 +651,11 @@ jobs:
         # libhamlib-utils: Ubuntu's Hamlib rigctl, which tst_cat_rigctld
         # drives against our rigctld listener (NEREUS_HAMLIB_RIGCTL in the
         # test step). Without it that check is skipped.
-        if: runner.os == 'Linux'
+        if: env.HEAVY == 'true' && (runner.os == 'Linux')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build pkg-config g++ mold \
+            cmake ninja-build pkg-config g++ mold ccache \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
@@ -608,38 +668,15 @@ jobs:
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
             libxcb-xinerama0 libxcb-xkb1
 
-      # Free up disk space on the Linux runner. ubuntu-24.04 ships with
-      # ~75 GB total, but ~25 GB is consumed by pre-installed Android
-      # SDK / .NET / GHC / unused hosted-tool-cache entries.  Phase
-      # 3J-1 closeout pushed the total link-time on-disk footprint
-      # past the remaining free budget: 451 test executables each
-      # linking against NereusSDRLib (~700 MB stripped, much larger
-      # with debug info) plus the vendored RADE neural-codec tree.
-      # Run #25835957362 died mid-link with "No space left on
-      # device" and the log blob got truncated before upload finished.
-      #
-      # Removes the canonical no-cost paths from the actions/runner-
-      # images known-issue:
-      #   https://github.com/actions/runner-images/issues/2840
-      # ~25 GB recovered, verified by `df -h` in the action output.
-      - name: Free up disk space (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          echo "── Before cleanup ──"
-          df -h /
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /opt/hostedtoolcache/PyPy
-          sudo rm -rf /opt/hostedtoolcache/Ruby
-          sudo rm -rf /opt/hostedtoolcache/go
-          sudo docker image prune --all --force 2>/dev/null || true
-          echo "── After cleanup ──"
-          df -h /
+      # The "Free up disk space (Linux)" step that stood here (removed in
+      # the CI speed round, 2026-10-16) cost 85 to 148 s a job. The
+      # ubuntu-24.04 runner now has 145 GB with 85 GB free before any
+      # cleanup (run 38980390590), and the build's own footprint is smaller
+      # with -g1 (see Configure (Linux)). The ccache stats step prints the
+      # free space at the end of every job.
 
       - name: Install Qt (Linux)
-        if: runner.os == 'Linux'
+        if: env.HEAVY == 'true' && (runner.os == 'Linux')
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
@@ -654,7 +691,7 @@ jobs:
       # macOS dependencies
       # ------------------------------------------------------------------
       - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+        if: env.HEAVY == 'true' && (runner.os == 'macOS')
         run: |
           # autoconf/automake/libtool/wget are required by third_party/rade
           # vendored Opus (autotools chain + wget-based DRED model download
@@ -664,13 +701,14 @@ jobs:
           # relying on openssl@3 arriving transitively rather than
           # declaring the dependency this build actually has, the same
           # way fftw already is declared.
-          brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
+          # ccache: see "Restore compiler cache" below.
+          brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget ccache
 
       # ------------------------------------------------------------------
       # Windows dependencies
       # ------------------------------------------------------------------
       - name: Install Qt (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
@@ -737,14 +775,20 @@ jobs:
       # (documented since v2.24.1) so the discovery step below does not
       # have to assume install-qt-action's `dir` default the way the
       # removed aqt-search step did.
+      #
+      # mingw-w64-x86_64-ccache (CI speed round, 2026-10-16): the compiler
+      # cache for this leg, a native Windows program run by its full path
+      # (see "Locate ccache (Windows)"). Its DLLs sit beside it in
+      # mingw64/bin, so it starts without that folder on PATH, where
+      # MSYS2's own compilers would shadow Qt's MinGW.
       - name: Set up MSYS2 MINGW64 with OpenSSL (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-openssl
+          install: mingw-w64-x86_64-openssl mingw-w64-x86_64-ccache
 
       # Fix round 2 assertions kept exactly as they were (reviewer judged
       # them correct): a directory existing is not proof it is usable.
@@ -756,7 +800,7 @@ jobs:
       # loudly rather than letting a not-REQUIRED-guarded leg configure
       # quietly without TLS.
       - name: Locate MSYS2 OpenSSL (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         shell: bash
         run: |
           # msys2-location has NO trailing separator (verified 2026-08-08
@@ -802,11 +846,11 @@ jobs:
           echo "OPENSSL_ROOT_DIR=$ARCH_DIR" >> "$GITHUB_ENV"
 
       - name: Install Ninja (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         run: choco install ninja -y
 
       - name: Download FFTW3 (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         shell: bash
         run: |
           # The zip comes from the dependency downloads fetched above,
@@ -819,62 +863,97 @@ jobs:
           cp /tmp/fftw3/libfftw3-3.def $GITHUB_WORKSPACE/third_party/fftw3/lib/
 
       # ------------------------------------------------------------------
-      # Compiler cache (ccache for Linux/macOS, sccache for Windows)
+      # Compiler cache (ccache on every leg)
       # ------------------------------------------------------------------
-      - name: Install ccache (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y ccache
+      # CI speed round, 2026-10-16. Run 38980390590 hit 0 of 1221 app
+      # objects and 1 of 2112 test objects on every Linux shard, and 16% on
+      # macOS. Causes, each checked:
+      #   - The cache was capped at 500M, a fifth of what one shard writes
+      #     at -g, so ccache evicted the oldest entries while it built, and
+      #     the oldest is the precompiled header's, written first.
+      #   - GCC's precompiled headers are not byte-for-byte reproducible
+      #     (three identical compiles, three different .gch files), and
+      #     ccache hashes the .gch into every object that uses it. With the
+      #     header's entry gone, the rebuilt .gch matched nothing, so every
+      #     object that uses it missed: nearly all of them.
+      #   - The restore fell back to another shard's or another pull
+      #     request's cache, and every pull request saved about 470 MB per
+      #     job, churning the 10 GB pool.
+      # Now:
+      #   - A cache per leg (matrix.cache), saved only by pushes to main,
+      #     and by a pull request only when nothing matched (the first run
+      #     of a new key prefix). Pull requests restore main's.
+      #   - max_size 5G is a ceiling, not the working size: before the save
+      #     every entry this run did not use is dropped (--evict-older-than;
+      #     a hit refreshes the entry's time), so the cache holds one
+      #     build's objects and the PCH entry survives.
+      #   - -g1 (line tables only) on every configure shrinks each object
+      #     about six times (MeterWidget.cpp: 739 KB to 117 KB compressed).
+      #     Code generation is unchanged and backtraces keep file and line.
+      #   - compiler_check=content: the restored Qt MinGW and Homebrew
+      #     compilers can carry new file times; their bytes decide.
+      # sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+      # is required so PCH'd compilations are cacheable. Without it, ccache
+      # bypasses any TU compiled with -include-pch (treats them as
+      # "no_input_file"). hash_dir=false improves cross-runner cache reuse
+      # by removing the absolute path from the hash inputs.
+      #
+      # The Linux legs carry ctest's measured test times
+      # (build/Testing/Temporary/CTestCostData.txt) in the same cache, so
+      # the parallel test run starts the longest tests first.
+      #
+      # Windows has used ccache since this round. The note about sccache
+      # that stood here, kept for its history: Windows intentionally skips
+      # sccache. The GitHub Actions Cache backend (Azure Blob) had a
+      # multi-hour outage during Phase 3N shakedown that caused sccache
+      # startup to fail hard ("Server startup failed: cache storage failed
+      # to read: <h2>Our services aren't available right now</h2>"), and
+      # sccache has no graceful fallback. ccache reads only a local
+      # directory, and actions/cache only warns when the service fails, so
+      # an outage costs a cold build, not a failed job.
+      - name: Locate ccache (Windows)
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
+        shell: bash
+        run: |
+          # msys2-location has no trailing separator (see "Locate MSYS2
+          # OpenSSL (Windows)"); cygpath -m gives the D:/... form Ninja
+          # and CMake take.
+          CCACHE_BIN="$(cygpath -m '${{ steps.msys2.outputs.msys2-location }}')/mingw64/bin/ccache.exe"
+          if [ ! -x "$CCACHE_BIN" ]; then
+            echo "::error::No ccache at $CCACHE_BIN: mingw-w64-x86_64-ccache may not have installed."
+            exit 1
+          fi
+          echo "CCACHE_BIN=$CCACHE_BIN" >> "$GITHUB_ENV"
 
-      - name: Install ccache (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ccache
-
-      - name: Restore ccache
-        if: runner.os != 'Windows'
-        uses: actions/cache@v4
+      - name: Restore compiler cache
+        if: env.HEAVY == 'true'
+        id: ccache-restore
+        uses: actions/cache/restore@v4
         with:
-          path: ${{ github.workspace }}/.ccache
-          # Per-shard cache key on Linux so the 4 parallel shards don't
-          # race on the same write key (only one save per key wins per
-          # run).  matrix.shard is empty on macOS, so the key collapses
-          # to the original `ccache-macOS-<sha>` form there.  Restore
-          # falls through: shard-specific → any-shard-this-OS → any
-          # prior cache for this OS.
-          key: ccache-${{ runner.os }}-shard${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            ${{ github.workspace }}/.ccache
+            ${{ github.workspace }}/build/Testing/Temporary/CTestCostData.txt
+          key: ccache-v2-${{ matrix.cache }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-shard${{ matrix.shard }}-
-            ccache-${{ runner.os }}-
+            ccache-v2-${{ matrix.cache }}-
 
       - name: Configure ccache
-        if: runner.os != 'Windows'
-        # sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
-        # is required so PCH'd compilations are cacheable. Without it, ccache
-        # bypasses any TU compiled with -include-pch (treats them as
-        # "no_input_file"). hash_dir=false improves cross-runner cache reuse
-        # by removing the absolute path from the hash inputs.  max-size at
-        # 500M per shard so 4 Linux shards × 500M stays well under the
-        # 10 GB repo cache pool ceiling (with codeql + Qt install caches
-        # also competing for space).
+        if: env.HEAVY == 'true'
+        shell: bash
         run: |
-          ccache --max-size=500M
-          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
-          ccache --set-config=hash_dir=false
-          ccache --zero-stats
-
-      # Windows intentionally skips sccache. The GitHub Actions Cache backend
-      # (Azure Blob) had a multi-hour outage during Phase 3N shakedown that
-      # caused sccache startup to fail hard ("Server startup failed: cache
-      # storage failed to read: <h2>Our services aren't available right now</h2>"),
-      # and sccache has no graceful fallback. 'sccache --show-stats' is not a
-      # reliable probe because it queries a freshly started empty server that
-      # hasn't touched the backend yet. Qt install is already cached via
-      # install-qt-action's cache: true, which is the dominant cost anyway.
+          ccache="${CCACHE_BIN:-ccache}"
+          "$ccache" --set-config=max_size=5G
+          "$ccache" --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          "$ccache" --set-config=hash_dir=false
+          "$ccache" --set-config=compiler_check=content
+          "$ccache" --zero-stats
+          echo "CCACHE_RUN_START=$(date +%s)" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
       # Configure
       # ------------------------------------------------------------------
       - name: Configure (Linux)
-        if: runner.os == 'Linux'
+        if: env.HEAVY == 'true' && (runner.os == 'Linux')
         # 2026-05-12 (PR #238 review P1 #4): NEREUS_BUILD_TESTS=ON
         # so the test suite actually compiles + runs in CI.  Prior
         # configure left it off, the ctest step ran with
@@ -907,9 +986,16 @@ jobs:
         # test helpers start on this absolute path instead.
         # Use origin-relative build RPATHs so the flat Linux PR artifact
         # finds its adjacent Nereus shared libraries after download.
+        #
+        # 2026-10-16 (CI speed round): -g1 in place of -g on every leg, so
+        # the compiler cache holds a whole build (see "Compiler cache"
+        # above). CMake's RelWithDebInfo default is "-O2 -g -DNDEBUG";
+        # NEREUSSDR_AGGRESSIVE_OPT still turns the -O2 into -O3.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
             -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
             -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -922,7 +1008,7 @@ jobs:
             -DNEREUS_TEST_SHARD=${{ matrix.shard }}
 
       - name: Configure (macOS)
-        if: runner.os == 'macOS'
+        if: env.HEAVY == 'true' && (runner.os == 'macOS')
         run: |
           # Build against the openssl@3 keg only; the reason is in
           # scripts/ci/macos-openssl.sh. The unlink runs here, after the
@@ -930,13 +1016,15 @@ jobs:
           scripts/ci/macos-openssl.sh unlink
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Configure (Windows)
-        if: runner.os == 'Windows'
+        if: env.HEAVY == 'true' && (runner.os == 'Windows')
         shell: bash
         run: |
           # -DNEREUS_GPU_SPECTRUM=ON is explicit so CMake's FATAL_ERROR
@@ -950,76 +1038,23 @@ jobs:
           # round 3); passed explicitly here rather than relied on as an
           # ambient env var so find_package(OpenSSL) in CMakeLists.txt
           # cannot silently prefer a different copy.
+          #
+          # CCACHE_BIN: see "Locate ccache (Windows)".
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE_BIN" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE_BIN" \
             -DNEREUS_GPU_SPECTRUM=ON \
             -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
 
       # ------------------------------------------------------------------
       # Build
       # ------------------------------------------------------------------
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-
-      # Every libcrypto or libssl the built binaries link must be openssl@3's
-      # libcrypto.3 or libssl.3. release.yml runs the same check, but only
-      # when a release is cut; this leg runs the same configure on every PR.
-      - name: Check OpenSSL link (macOS)
-        if: runner.os == 'macOS'
-        run: scripts/ci/macos-openssl.sh check-link build "$(brew --prefix openssl@3)/lib"
-
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: cmake --build build -j$NUMBER_OF_PROCESSORS
-
-      # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
-      # above has NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
-      # build the app with tests off (their configure steps above leave
-      # NEREUS_BUILD_TESTS at its OFF default), but the Linux-only sources
-      # (the PipeWire bridge and the pipe bus) compile only here, so this
-      # is the one build before merge that compiles them with tests off.
-      # It builds the app and nereusd a second time in that shape.
+      # One build of everything a leg needs.
       #
-      # One shard is enough: every shard builds the same app. It builds in
-      # Release, since only compiling and linking matter here, and uses its
-      # own ccache directory and cache key: NEREUS_BUILD_TESTS is a PUBLIC
-      # definition on NereusCore, so none of these objects match the main
-      # build's, and sharing the shard's 500M directory would evict them.
-      # The build tree is removed afterwards to keep disk free for the
-      # test link.
-      - name: Restore tests-off ccache (Linux)
-        if: runner.os == 'Linux' && matrix.shard == 0
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache-notests
-          key: ccache-notests-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            ccache-notests-${{ runner.os }}-
-
-      - name: Build with tests off (Linux)
-        if: runner.os == 'Linux' && matrix.shard == 0
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache-notests
-        run: |
-          ccache --max-size=500M
-          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
-          ccache --set-config=hash_dir=false
-          ccache --zero-stats
-          cmake -B build-notests -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
-            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-            -DNEREUS_BUILD_TESTS=OFF
-          cmake --build build-notests -j$(nproc) --target NereusSDR nereusd
-          ccache --show-stats
-          rm -rf build-notests
-
-      # Build the test executables explicitly.  Every tst_* executable is
+      # Linux builds the test executables explicitly.  Every tst_* executable is
       # now EXCLUDE_FROM_ALL, so a routine `cmake --build build` builds
       # only the main app (seconds, not the ~32 minutes it takes to link
       # 513 test binaries).  CI must therefore ask for the `all_tests`
@@ -1032,14 +1067,34 @@ jobs:
       # created by tests/CMakeLists.txt, which is only add_subdirectory'd
       # when that option is ON.  Asking for the target elsewhere would
       # fail with "No rule to make target".
-      - name: Build test executables (Linux)
-        if: runner.os == 'Linux'
-        run: cmake --build build -j$(nproc) --target all_tests
+      #
+      # CI speed round, 2026-10-16: `all` and `all_tests` in one Ninja run,
+      # so the test objects compile while the app links instead of after.
+      # The tests need `all` too: nereusd, nereus_pairing_peer and
+      # nereus_rendezvous_peer are in it.
+      - name: Build
+        if: env.HEAVY == 'true'
+        id: build
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
+            macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
+            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" ;;
+          esac
+
+      # Every libcrypto or libssl the built binaries link must be openssl@3's
+      # libcrypto.3 or libssl.3. release.yml runs the same check, but only
+      # when a release is cut; this leg runs the same configure on every PR.
+      - name: Check OpenSSL link (macOS)
+        if: env.HEAVY == 'true' && (runner.os == 'macOS')
+        run: scripts/ci/macos-openssl.sh check-link build "$(brew --prefix openssl@3)/lib"
 
       # ------------------------------------------------------------------
       # Test
       # ------------------------------------------------------------------
       - name: Test
+        if: env.HEAVY == 'true'
         working-directory: build
         shell: bash
         # 2026-05-12 (PR #238 review P1 #4): drop --no-tests=ignore so
@@ -1074,12 +1129,26 @@ jobs:
         # is still ended by ctest first. tst_rendezvous_client sets its own
         # 120 s (tests/CMakeLists.txt), since its hang starts late enough in
         # the process that 240 s would leave gdb no time before 300 s.
+        #
+        # CI speed round, 2026-10-16: the tests run side by side, one per
+        # core (the runner has four), as on a developer's machine
+        # (docs/development/fast-test-loop.md). They ran one at a time
+        # before: 48 to 68 minutes a shard. ctest honors each test's
+        # PROCESSORS, RUN_SERIAL and RESOURCE_LOCK (the native-window tests
+        # still run one at a time), and reads the last measured times from
+        # the cache restored above, longest first. Tests labeled realtime
+        # (nereus_add_test REALTIME: wall-clock deadlines in the test) run
+        # afterwards one at a time on an otherwise idle runner, as before.
+        # Both passes always run; the step fails if either does.
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             export QT_QPA_PLATFORM=xcb
             export QTEST_FUNCTION_TIMEOUT=240000
             export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
-            xvfb-run -a ctest --output-on-failure
+            status=0
+            xvfb-run -a ctest -LE realtime -j"$(nproc)" --output-on-failure --no-tests=error || status=1
+            xvfb-run -a ctest -L realtime --output-on-failure --no-tests=ignore || status=1
+            exit "$status"
           else
             ctest --output-on-failure --no-tests=ignore
           fi
@@ -1092,7 +1161,7 @@ jobs:
       # list clean.  macOS / Windows always upload (matrix.shard is
       # empty for them, treated as 0 by the comparison).
       - name: Locate built binary
-        if: github.event_name == 'pull_request' && (matrix.shard == 0 || matrix.shard == '')
+        if: env.HEAVY == 'true' && (github.event_name == 'pull_request' && (matrix.shard == 0 || matrix.shard == ''))
         id: locate
         shell: bash
         # The app is a thin executable over the NereusSDRLib shared library,
@@ -1112,7 +1181,7 @@ jobs:
           esac
 
       - name: Upload PR build artifact
-        if: github.event_name == 'pull_request' && (matrix.shard == 0 || matrix.shard == '')
+        if: env.HEAVY == 'true' && (github.event_name == 'pull_request' && (matrix.shard == 0 || matrix.shard == ''))
         uses: actions/upload-artifact@v4
         with:
           # Strip the shard suffix from the artifact name so the Linux
@@ -1123,8 +1192,188 @@ jobs:
           if-no-files-found: warn
 
       # ------------------------------------------------------------------
-      # Cache stats
+      # Compiler cache save and stats
       # ------------------------------------------------------------------
+      # Saved by pushes to main, and by a pull request only when the restore
+      # matched nothing (see "Compiler cache" above), once the build has
+      # passed, whether or not the tests did. Every entry this run did not
+      # use is dropped first.
+      - name: Trim compiler cache to this run
+        if: ${{ !cancelled() && env.HEAVY == 'true' && steps.build.outcome == 'success' && (github.event_name != 'pull_request' || steps.ccache-restore.outputs.cache-matched-key == '') }}
+        id: ccache-trim
+        shell: bash
+        run: |
+          ccache="${CCACHE_BIN:-ccache}"
+          "$ccache" --evict-older-than "$(( $(date +%s) - CCACHE_RUN_START + 60 ))s"
+
+      - name: Save compiler cache
+        if: ${{ !cancelled() && steps.ccache-trim.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.ccache
+            ${{ github.workspace }}/build/Testing/Temporary/CTestCostData.txt
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
       - name: ccache stats
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && env.HEAVY == 'true' }}
+        shell: bash
+        run: |
+          "${CCACHE_BIN:-ccache}" --show-stats
+          df -h .
+
+  # --------------------------------------------------------------------
+  # Linux build with tests off.
+  #
+    # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
+    # jobs above have NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
+    # build the app with tests off (their configure steps above leave
+    # NEREUS_BUILD_TESTS at its OFF default), but the Linux-only sources
+    # (the PipeWire bridge and the pipe bus) compile only here, so this
+    # is the one build before merge that compiles them with tests off.
+    # It builds the app and nereusd a second time in that shape.
+    #
+    # One build is enough: every shard builds the same app. It builds in
+    # Release, since only compiling and linking matter here, and uses its
+    # own ccache directory and cache key: NEREUS_BUILD_TESTS is a PUBLIC
+    # definition on NereusCore, so none of these objects match the main
+    # build's.
+    #
+    # CI speed round, 2026-10-16: a job of its own, no longer a step of
+    # Linux shard 1/4, where it added its build to that shard's time to
+    # green. It is not a required check, so it runs only when the build
+    # jobs build (see the changes job) and does not hold up a merge.
+  # --------------------------------------------------------------------
+  build-notests:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-24.04
+    name: Build with tests off (Linux)
+
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-notests
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Build job's dependency downloads; that job saves them.
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        run: |
+          mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      # The Build job's Linux packages, less the ones only its tests use.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config g++ mold ccache \
+            libgl1-mesa-dev libfftw3-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libpipewire-0.3-dev libpulse-dev \
+            libssl-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
+          cache: true
+
+      # The Build job's compiler cache rules (see "Compiler cache" there),
+      # under a key of its own.
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.ccache-notests
+          key: ccache-v2-Linux-notests-${{ github.sha }}
+          restore-keys: |
+            ccache-v2-Linux-notests-
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=max_size=5G
+          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          ccache --set-config=hash_dir=false
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+          echo "CCACHE_RUN_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Build with tests off
+        id: build
+        run: |
+          cmake -B build-notests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=OFF
+          cmake --build build-notests -j"$(nproc)" --target NereusSDR nereusd
+
+      - name: Trim compiler cache to this run
+        if: steps.build.outcome == 'success' && (github.event_name != 'pull_request' || steps.ccache-restore.outputs.cache-matched-key == '')
+        id: ccache-trim
+        run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_RUN_START + 60 ))s"
+
+      - name: Save compiler cache
+        if: steps.ccache-trim.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache-notests
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
+      - name: ccache stats
+        if: ${{ !cancelled() }}
         run: ccache --show-stats
+
+  # --------------------------------------------------------------------
+  # Prune old compiler caches (pushes to main).
+  #
+  # Each push to main saves one compiler cache per leg
+  # (ccache-v2-<leg>-<sha>), and restores take the newest, so the older
+  # ones only take room in the repository's 10 GB cache pool, where they
+  # would push out caches still in use. Keep the newest per leg on main
+  # and delete the rest. Pull requests' bootstrap caches age out on their
+  # own after seven days unused. CI speed round, 2026-10-16.
+  # --------------------------------------------------------------------
+  prune-caches:
+    needs: [build, build-notests]
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    name: Prune old compiler caches
+    permissions:
+      actions: write
+    steps:
+      - name: Delete all but the newest compiler cache per leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh cache list --ref refs/heads/main --key ccache-v2- --limit 1000 \
+              --json id,key,createdAt \
+            | jq -r 'group_by(.key | sub("-[0-9a-f]{40}$"; ""))
+                     | map(sort_by(.createdAt) | reverse | .[1:][])
+                     | .[] | "\(.id) \(.key)"' \
+            | while read -r id key; do
+                echo "Deleting $key"
+                gh cache delete "$id"
+              done

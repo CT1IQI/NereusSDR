@@ -161,8 +161,9 @@ average). A `realtime` failure under load is a rerun-alone item: rerun that
 test by itself on a quiet machine before you call anything done. Never
 treat it as background noise: if it also fails alone, it is a real failure.
 
-CI keeps running the `realtime` tests in its normal suite, with no label
-filter, because each CI job has its runner to itself.
+CI does the same on each Linux job: everything else side by side, one test
+per core, then the `realtime` tests one at a time on the otherwise idle
+runner (the Test step in `.github/workflows/ci.yml`).
 
 To add a test to the group, register it with
 `nereus_add_test(<name> REALTIME ...)` and call
