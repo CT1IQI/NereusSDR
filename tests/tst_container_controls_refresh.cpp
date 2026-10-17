@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: The RADE applet in its container is enabled in a RADE mode
+//               and grayed with its reason off one. J.J. Boyd / KG4VCF,
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -34,6 +37,7 @@
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
 #include "gui/SpectrumWidget.h"
+#include "gui/applets/RadeApplet.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/FilterButtonItem.h"
@@ -283,6 +287,39 @@ private slots:
         slice->setPanKey(QStringLiteral("pan-1"));
         QCOMPARE(window->spectrumForSlice(slice), other);
         QVERIFY(!buttons->buttonState(Id::PeakHold));
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // The RADE applet in its container follows the active slice's mode in
+    // a real window: grayed with its reason off a RADE mode (disabled,
+    // never hidden), enabled with no reason line in one.
+    void theRadeAppletIsEnabledInARadeMode()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        RadioModel* model = window->radioModel();
+        SliceModel* slice = ensureSlice(model);
+        QVERIFY(slice != nullptr);
+        auto* rade = window->findChild<RadeApplet*>();
+        QVERIFY(rade != nullptr);
+        ContainerManager* cm = model->containerManager();
+        QVERIFY(cm != nullptr);
+        QVERIFY2(cm->workspaceStore() != nullptr, "the window shows its applets from the workspace");
+
+        slice->setDspMode(DSPMode::USB);
+        QTRY_VERIFY(!rade->unavailableReason().isEmpty());
+        QVERIFY(!rade->isEnabled());
+
+        slice->setDspMode(DSPMode::RADE_U);
+        QTRY_VERIFY(rade->unavailableReason().isEmpty());
+        QVERIFY2(rade->isEnabled(), "in a RADE mode the RADE applet is enabled");
+        if (auto* label = rade->findChild<QLabel*>(QStringLiteral("appletUnavailableReason"))) {
+            QVERIFY(!label->isVisibleTo(rade));
+        }
+
+        slice->setDspMode(DSPMode::USB);
+        QTRY_VERIFY(!rade->isEnabled());
         QVERIFY(sessions.replace({}, false));
     }
 };
