@@ -670,6 +670,10 @@ Advanced, and each control appears on one page only.
   screen is moved back where it can be reached: when it is shown again, at the
   end of a transmit, or when a monitor is added, removed or resized. Before,
   the Rotor could read as ticked while its window sat off every screen.
+- A slice you control that was placed on a pan this window does not show now
+  moves onto the window's first pan. Before, it sat on a hidden pan: it played
+  but could not be seen, and the hidden pan still drew a spectrum. The
+  window's layout is not changed.
 - A Core sends its spectrum and waterfall to remote windows and phones from a
   thread of its own, so they keep flowing while the desktop app that runs the
   Core is busy drawing. Before, a Windows desktop Core with the screen locked
