@@ -26,6 +26,9 @@
 //                 m_lastBusGeneration hands each one out once.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-16 : pullVaxTxMicKeepingBacklog() for a remote window's
+//                 uplink. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-15 : isVaxTxBusOpen(); openVaxOutputs() opens the VAX TX
 //                 device in a remote window too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1304,6 +1307,14 @@ public:
     // bytes so we do not allocate per call.
     int pullVaxTxMic(float* dst, int n);
 
+    // As pullVaxTxMic(), for a reader that takes the audio in bursts: a
+    // remote window's uplink, read on a GUI timer and sent on to the Core.
+    // It keeps up to maxBacklogFrames behind the app writing the device and
+    // skips only what is older, where pullVaxTxMic keeps 16 ms
+    // (CoreAudioHalBus), less than a 10 ms timer's late tick plus one of
+    // WSJT-X's writes.
+    int pullVaxTxMicKeepingBacklog(float* dst, int n, int maxBacklogFrames);
+
     /// Returns the operator's PC-mic source selection independently of
     /// whether the capture bus currently exists or is open. Worker routing
     /// uses this fail-silent intent query so capture loss cannot expose the
@@ -1615,6 +1626,9 @@ signals:
 #endif
 
 private:
+    // pullVaxTxMic's body; a maxBacklogFrames above 0 keeps that backlog.
+    int pullVaxTxMicImpl(float* dst, int n, int maxBacklogFrames);
+
     // Slot ID for the TX-monitor channel in MasterMixer. Negative so it
     // cannot collide with any non-negative RX slice ID. -1 is avoided as
     // a common "invalid" sentinel; -2 is used here.

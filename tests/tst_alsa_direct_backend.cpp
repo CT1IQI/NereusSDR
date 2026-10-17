@@ -20,6 +20,11 @@
 //               changes and refused nodes, multichannel cards, a lost
 //               stream, and the catalogue case without a wall-clock bound.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-17: lossBeforeTheSinkIsKept holds the writer where it marks
+//               the stream closed and sets the sink there, so a loss kept
+//               after that mark, outside the sink's lock, fails it every
+//               time (a CI run found the writer marking it closed first).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -64,6 +69,10 @@ using namespace NereusSDR;
 namespace {
 
 constexpr int kWaitMs = 5000;
+// lossBeforeTheSinkIsKept: the longest the writer is held where it marks a
+// lost stream closed.  The case passes for any length; a loss kept outside
+// the sink's lock fails it whenever the sink is set inside it.
+constexpr int kLossHoldMs = 500;
 // The refused-listing delay the tests' systems use (the real one waits
 // kAlsaRefusedRelistMs for udev).
 constexpr int kTestRelistMs = 50;
@@ -451,6 +460,26 @@ struct EventLog {
     {
         std::lock_guard<std::mutex> lock(mutex);
         return kinds;
+    }
+};
+
+// A one-shot signal between the test and the writer's thread.
+struct Gate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool opened = false;
+    void open()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            opened = true;
+        }
+        cv.notify_all();
+    }
+    bool waitFor(int ms)
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::milliseconds(ms), [this] { return opened; });
     }
 };
 
@@ -1100,19 +1129,33 @@ private slots:
     }
 
     // A loss before the engine sets its sink (it does so after open()
-    // returns) is kept and sent when the sink is set, once.
+    // returns) is kept and sent when the sink is set, once.  The writer is
+    // held where it marks the stream closed, until the sink is set or
+    // kLossHoldMs passes, and the sink is set there: a stream that reads
+    // closed has its loss kept already, so the call sends it.  A loss kept
+    // only after that mark, outside the sink's lock, would find the sink
+    // set and reach it from the writer after the check.
     void lossBeforeTheSinkIsKept()
     {
+        Gate marked;    // outlive the bus: its writer runs the hook
+        Gate sinkSet;
         FakeOpener opener;
         opener.prefill = 3;
         AlsaDirectBus bus(usbCard(), outputRequest(), opener.opener());
+        bus.setLossMarkedHookForTest([&marked, &sinkSet] {
+            marked.open();
+            sinkSet.waitFor(kLossHoldMs);
+        });
         QVERIFY(bus.open(AudioFormat{}));
         const std::shared_ptr<FakePcmState> pcm = opener.last();
         pcm->queue({-ENODEV});
-        QTRY_VERIFY_WITH_TIMEOUT(!bus.isOpen(), kWaitMs);
+        QVERIFY(marked.waitFor(kWaitMs));
+        QVERIFY(!bus.isOpen());
         EventLog events;
         bus.setStreamEventSink(events.sink());
-        QCOMPARE(events.take(), (QList<AudioStreamEvent::Kind>{AudioStreamEvent::Kind::DeviceLost}));
+        const QList<AudioStreamEvent::Kind> sent = events.take();   // before the writer goes on
+        sinkSet.open();
+        QCOMPARE(sent, (QList<AudioStreamEvent::Kind>{AudioStreamEvent::Kind::DeviceLost}));
         EventLog again;
         bus.setStreamEventSink(again.sink());
         QVERIFY(again.take().isEmpty());
