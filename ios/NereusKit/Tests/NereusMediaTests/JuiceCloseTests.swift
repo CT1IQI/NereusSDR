@@ -170,11 +170,10 @@ struct JuiceCloseTests {
         }
         #expect(turn.allocationCount("created") == 1)
         #expect(!hasRelayCandidate(agent))
+        // Begin close sends the first release before it returns. The held
+        // success goes at once, so it has as much of the close deadline as
+        // possible to reach the agent: one that lands after it is dropped.
         #expect(juice_begin_close(agent) == 0)
-        try await LocalRendezvous.waitUntil("the first release", within: .seconds(2),
-                                            whileAlive: { turn.exitDiagnostic }) {
-            turn.releaseTransactions.count >= 1
-        }
         #expect(FileManager.default.createFile(atPath: hold.path, contents: Data()))
         try await LocalRendezvous.waitUntil("the close deadline", within: .seconds(8),
                                             whileAlive: { turn.exitDiagnostic }) {
