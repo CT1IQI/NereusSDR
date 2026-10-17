@@ -934,7 +934,6 @@ private slots:
 
         ctrl->onMoxHardwareFlipped(false);
         QCOMPARE(ctrl->attenuatorDb(), 5);    // not stuck on 31
-
     }
 
     // The same through the real MoxController: unkey, then key again before
@@ -966,7 +965,64 @@ private slots:
         QTRY_COMPARE(flips.size(), 3);
         QCOMPARE(flips.last(), false);
         QCOMPARE(ctrl->attenuatorDb(), 5);
+    }
 
+    // ── Issue #434 follow-up: a save while keyed ───────────────────────────
+    // A disconnect while keyed saves before MoxController's unkey reaches
+    // the controller, and the controller is marked unloaded right after, so
+    // that save is the one the next connect loads. It must hold the RX
+    // values the key saved, not the TX ones.
+    void keyedSave_storesTheRxAttenuation()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:00:04:35");
+        auto& s = AppSettings::instance();
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.loadSettings(mac);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setForceAttWhenPsOff(true);
+        ctrl.setPsActive(false);
+        ctrl.setCurrentDspMode(DSPMode::USB);
+        ctrl.setTxAttenuationForBand(Band::Band20m, 20);
+        ctrl.setAttenuation(5, 0);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.attenuatorDb(), 31);
+        ctrl.saveSettings(mac);
+
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Value")).toInt(), 5);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Band/")
+                                      + bandKeyName(Band::Band20m)).toInt(), 5);
+        QCOMPARE(ctrl.attenuatorDb(), 31);   // the radio stays on the TX value
+
+        // Unkeyed, a save stores the value in hand again.
+        ctrl.onMoxHardwareFlipped(false);
+        ctrl.setAttenuation(8, 0);
+        ctrl.saveSettings(mac);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Value")).toInt(), 8);
+    }
+
+    void keyedSave_hpsdrStoresTheRxPreamp()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:00:04:36");
+        auto& s = AppSettings::instance();
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.loadSettings(mac);
+        ctrl.setIsHpsdrBoard(true);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setPreampMode(PreampMode::On);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Off);
+        ctrl.saveSettings(mac);
+
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/preamp/rx1Band/")
+                                      + bandKeyName(Band::Band20m)).toInt(),
+                 static_cast<int>(PreampMode::On));
     }
 
     // HPSDR boards save the RX preamp mode at the key instead; a second key
