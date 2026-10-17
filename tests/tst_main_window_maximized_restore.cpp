@@ -15,10 +15,12 @@
 // QWidget::setWindowState(), which creates a hidden top-level's native
 // window at once. MainWindow restored its geometry at the top of buildUI(),
 // before any SpectrumWidget existed, so Qt decided the window's composition
-// with no QRhiWidget in its tree and never looked again: Qt checks a
-// widget tree for QRhiWidgets when the native window is created, or when
-// a widget moves into it from another native window, and the pans are
-// built inside the window. On Linux the SpectrumWidget is not a native
+// with no QRhiWidget in its tree. Qt checks again when a widget is
+// parented into the window (QWidget::setParent, Qt 6.11
+// qwidget.cpp:10943-10960), but a QRhiWidget turns its QRhi setting on
+// only in QRhiWidgetPrivate::init() (qrhiwidget.cpp:196), after the
+// QWidget base constructor has parented it, so that check found nothing
+// to enable. On Linux the SpectrumWidget is not a native
 // window of its own (on macOS and Windows it is), so it then had no QRhi.
 // A window saved at normal size is created at show(), after the pans exist,
 // which is why only the maximized start failed.
