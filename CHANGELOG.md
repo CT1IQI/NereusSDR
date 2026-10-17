@@ -624,6 +624,12 @@ Advanced, and each control appears on one page only.
   a direct secure WebSocket (WSS) at once. Where UDP between the window and
   the Core is blocked but TCP port 443 works, it used to wait 40 to 85
   seconds first. Audio and display kept flowing on the relay meanwhile.
+- When a remote window's audio and displays move to a new connection, as after
+  the network drops and comes back, the window asks the Core again for
+  everything the move lost: receive audio, the headphones mix, the transmit
+  monitor, streams for programs on this computer and pan displays. Before, the
+  receive audio could stay silent until you muted and unmuted, and a display
+  being set up could stall.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
 - On Linux, a window closed while maximized or full screen comes back with
