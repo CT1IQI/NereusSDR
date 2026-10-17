@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-17: a playback failure's disable that cannot be sent (the old
+//               peer not ready while the Core moves) is still owed
+//               (audioDisableUnsent) and the move sends it; before, a
+//               failure that is not retried left the Core streaming to a
+//               stopped receiver, and one after an unsent request had the
+//               move ask for audio first. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-17: a speaker failure's retry step that runs while no request
 //               can be made (the old peer not ready while the Core moves)
 //               is asked again by the move (audioRequestUnsent); before,
@@ -1788,13 +1795,19 @@ struct RemoteMediaController::Private {
     // accepted context or stop().
     bool audioRestarting = false;
     // The latest audio request is the disable a playback failure sent
-    // (sendAudioDisable); a move that loses it sends it again.
+    // (sendAudioDisable), or owes (audioDisableUnsent); a move that loses
+    // it sends it again.
     bool audioFailureDisableSent = false;
     // 2026-10-17: the latest audio request is one requestAudio could not
     // make (no ready media connection, as when the old peer reports not
     // ready while the Core moves), so a move asks again. It ends a
     // failure's disable as the latest request: the window wants audio now.
     bool audioRequestUnsent = false;
+    // 2026-10-17: the latest audio request is a playback failure's disable
+    // that sendAudioDisable could not send (no ready media connection), so
+    // a move sends it. audioFailureDisableSent is set with it; a request or
+    // a disable actually sent clears it.
+    bool audioDisableUnsent = false;
     QString selectedOutput;
     RemoteAudioStatus audioStatus;
     QTimer* audioStatusTimer = nullptr;
@@ -4056,6 +4069,7 @@ void RemoteMediaController::stop()
     d->audioRestarting = false;
     d->audioFailureDisableSent = false;
     d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     // R-R3-43: receiver streams stop with the media connection. Their
     // sinks stay registered and are asked for again on the next one.
     d->receiverRevisions.clear();
@@ -4547,8 +4561,10 @@ void RemoteMediaController::askAgainAfterMove()
         // again on the restart backoff (scheduleAudioRetry) keeps its step:
         // a new disable would move the revision past the step's fence, and
         // the step's own request (requestAudio, which clears the flag) asks
-        // the Core on the new connection anyway.
-        if (audioUnanswered && !d->audioRetryPending) {
+        // the Core on the new connection anyway. 2026-10-17: a disable that
+        // could not be sent at all (the old peer not ready) is sent here
+        // too, whether or not the Core answered the request before it.
+        if ((audioUnanswered || d->audioDisableUnsent) && !d->audioRetryPending) {
             qCInfo(lcRemoteMedia) << "Turning audio off again on the new connection";
             sendAudioDisable();
             if (!current()) { return; }
@@ -6753,7 +6769,15 @@ void RemoteMediaController::scheduleAudioRetry()
 
 void RemoteMediaController::sendAudioDisable()
 {
-    if (!d->peer || !d->peer->isReady()) { return; }
+    if (!d->peer || !d->peer->isReady()) {
+        // 2026-10-17: the disable is still owed, so a move sends it
+        // (askAgainAfterMove); before, the Core went on streaming to a
+        // stopped receiver, or the move asked for audio again.
+        d->audioFailureDisableSent = true;
+        d->audioRequestUnsent = false;
+        d->audioDisableUnsent = true;
+        return;
+    }
     ++d->audioRevision;
     if (!d->audioRevision) { ++d->audioRevision; }
     QJsonObject disable{{QStringLiteral("op"), QStringLiteral("audio")},
@@ -6767,6 +6791,7 @@ void RemoteMediaController::sendAudioDisable()
     }
     d->audioFailureDisableSent = true;
     d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     send(disable);
 }
 
@@ -6786,6 +6811,7 @@ void RemoteMediaController::requestAudio()
         // audio off again (askAgainAfterMove).
         d->audioFailureDisableSent = false;
         d->audioRequestUnsent = true;
+        d->audioDisableUnsent = false;
         refreshAudioStatus();
         return;
     }
@@ -6793,6 +6819,7 @@ void RemoteMediaController::requestAudio()
     if (!d->audioRevision) { ++d->audioRevision; }
     d->audioFailureDisableSent = false;
     d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     d->lastAudioRequestMs = d->clock.elapsed();
     const bool enabled = d->model->isConnected() && !d->model->audioEngine()->masterMuted();
     const QPointer<RemoteMediaController> self(this);

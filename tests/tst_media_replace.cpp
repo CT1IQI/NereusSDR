@@ -31,6 +31,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17: a failure that is not retried, raised while the old peer is
+//               not ready between the Core's move and the window's, has its
+//               disable sent once on the new connection and nothing asked,
+//               also after a retry step that could not ask; the lost
+//               disable's test waits a short settle for a late ask
+//               (kLateRequestSettleMs). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: an audio restart's request, a transmit monitor route, a
 //               headphones request and a receiver stream request lost to a
 //               media move are asked again once the window moves. J.J.
@@ -274,6 +281,7 @@ QList<QJsonObject> controlsNamed(const QSignalSpy& spy, const QString& op)
 // that a test can make report not ready, as an agent that stopped hearing
 // its pair does while the Core moves (the stall rule's note in
 // RemoteMediaController). Everything else goes to the real transport.
+// It must forward any method added to IMediaTransport.
 class ReadinessGateTransport final : public IMediaTransport {
 public:
     explicit ReadinessGateTransport(QObject* parent)
@@ -360,6 +368,10 @@ public:
 private:
     LibDataChannelMediaTransport* m_inner;
 };
+
+// How long a test waits after the request it expects, so that a late one
+// sent after it on the same ordered channel would have landed too.
+constexpr int kLateRequestSettleMs = 300;
 
 // The audio requests the Core took naming one media connection, in order.
 QList<QJsonObject> audioRequestsOn(const QSignalSpy& spy, const QString& connectionId)
@@ -2588,6 +2600,161 @@ private slots:
         const QString newId = media.mediaConnectionId();
         // The disable is sent again on the new connection, and only it.
         QTRY_VERIFY_WITH_TIMEOUT(!audioRequestsOn(coreControls, newId).isEmpty(), 5000);
+        QTest::qWait(kLateRequestSettleMs);
+        const QList<QJsonObject> onNew = audioRequestsOn(coreControls, newId);
+        QCOMPARE(onNew.size(), 1);
+        QCOMPARE(onNew.constFirst().value(QStringLiteral("enabled")).toBool(true), false);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QVERIFY(media.audioStatus().state != RemoteAudioStatus::State::Playing);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-17: a failure that is not asked for again, raised in the gap
+    // between the Core's move and the window's while the old peer reports
+    // not ready, so its disable cannot be sent. The disable is still owed:
+    // the window's move sends it once on the new connection and asks for
+    // nothing. Before, nothing was sent and the Core went on streaming to a
+    // stopped receiver.
+    void aFailureNotRetriedWhileNotReadySendsItsDisableAfterTheMove()
+    {
+        Test::RemoteAudioSessionHarness h;
+        QList<QPointer<ReadinessGateTransport>> links;
+        RemoteMediaController media(&h.client, &h.remote, nullptr, nullptr,
+            [&links](QObject* parent) -> IMediaTransport* {
+                auto* link = new ReadinessGateTransport(parent);
+                links.append(link);
+                return link;
+            });
+        DaemonMediaController daemon(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QCOMPARE(links.size(), 1);
+        const QPointer<ReadinessGateTransport> oldLink = links.constFirst();
+        media.holdAudioRestartForTest(true);
+        // The Core moves first; its replace is held on the way to the window.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The old peer reports not ready; the speakers fail in a way that is
+        // not retried, and the disable cannot be sent.
+        QVERIFY(oldLink);
+        oldLink->notReady = true;
+        media.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerCallbackTooLarge);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The window moves and sends the disable on the new connection.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        const QString newId = media.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(!audioRequestsOn(coreControls, newId).isEmpty(), 5000);
+        QTest::qWait(kLateRequestSettleMs);
+        const QList<QJsonObject> onNew = audioRequestsOn(coreControls, newId);
+        QCOMPARE(onNew.size(), 1);
+        QCOMPARE(onNew.constFirst().value(QStringLiteral("enabled")).toBool(true), false);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QVERIFY(media.audioStatus().state != RemoteAudioStatus::State::Playing);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-17: the same gap after a failure's retry step could not ask
+    // (its request unsent), then a failure that is not retried. Its disable
+    // is the latest request, so the window's move sends it and does not ask
+    // for audio first. Before, the move asked once, the fault came back with
+    // a second problem shown, and only then was the disable sent.
+    void aFailureNotRetriedAfterAnUnsentRequestSendsItsDisableAfterTheMove()
+    {
+        Test::RemoteAudioSessionHarness h;
+        QList<QPointer<ReadinessGateTransport>> links;
+        RemoteMediaController media(&h.client, &h.remote, nullptr, nullptr,
+            [&links](QObject* parent) -> IMediaTransport* {
+                auto* link = new ReadinessGateTransport(parent);
+                links.append(link);
+                return link;
+            });
+        DaemonMediaController daemon(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QCOMPARE(links.size(), 1);
+        const QPointer<ReadinessGateTransport> oldLink = links.constFirst();
+        media.holdAudioRestartForTest(true);
+        // The Core moves first; its replace is held on the way to the window.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The speakers fail; the disable goes out on the old connection and
+        // is dropped, and the failure's retry step waits.
+        media.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerOpenFailed);
+        QTRY_VERIFY_WITH_TIMEOUT(media.audioRestartStepHeldForTest(), 10000);
+        // The old peer reports not ready; the step runs and cannot ask.
+        QVERIFY(oldLink);
+        oldLink->notReady = true;
+        media.holdAudioRestartForTest(false);
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QVERIFY(!media.audioRestartPendingForTest());
+        // A failure that is not retried follows; its disable cannot be sent.
+        media.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerCallbackTooLarge);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The window moves and sends the disable, and asks for nothing.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        const QString newId = media.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(!audioRequestsOn(coreControls, newId).isEmpty(), 5000);
+        QTest::qWait(kLateRequestSettleMs);
         const QList<QJsonObject> onNew = audioRequestsOn(coreControls, newId);
         QCOMPARE(onNew.size(), 1);
         QCOMPARE(onNew.constFirst().value(QStringLiteral("enabled")).toBool(true), false);
