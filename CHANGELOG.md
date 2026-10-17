@@ -623,9 +623,9 @@ Advanced, and each control appears on one page only.
   because another program, such as an Android emulator, holds the same IPv4
   port. Before, the other program could get the traffic and the connection
   timed out.
-- The receive S-ATT no longer ends up at its transmit value when you key
-  again while the radio is still finishing an unkey, or disconnect or lose
-  the radio while transmitting. Before, the next receive, or the next connect, used the
+- The receive S-ATT no longer ends up at its transmit value when you key again
+  while the radio is still finishing an unkey, or disconnect or lose the radio
+  while transmitting. Before, the next receive, or the next connect, used the
   transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
   preamp stayed off.
 - A Core sends its spectrum and waterfall to remote windows and phones from a
