@@ -10,13 +10,14 @@ libjuice is licensed under the Mozilla Public License 2.0. The complete
 license is supplied in MPLv2.txt. This backend does not supply the R5 TURN
 TCP/TLS fallback; that deployment acceptance remains separate.
 
-Modifications (MPL-2.0 section 3.1): the desktop/Core build applies three
+Modifications (MPL-2.0 section 3.1): the desktop/Core build applies four
 numbered patches to build-owned copies of the pinned source in
 cmake/NereusRemoteMedia.cmake:
 
   cmake/patches/libjuice-0001-give-turn-allocations-back.patch
   cmake/patches/libjuice-0002-bounded-turn-release-lifecycle.patch
   cmake/patches/libjuice-0003-keep-poll-worker-with-retained-agents.patch
+  cmake/patches/libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch
 
 The first changes src/agent.c to give TURN allocations back with an
 authenticated Refresh of LIFETIME 0 when an agent is destroyed. The second
@@ -28,7 +29,9 @@ callbacks stop during closing. The old direct-destroy best-effort behavior
 remains for legacy callers; a resolver test hook is excluded from release
 builds. The third changes src/conn_poll.c to retain the poll worker while
 finished agents still own the registry, allowing a new agent to wake it. It
-adds no worker or timeout change.
+adds no worker or timeout change. The fourth changes src/udp.c so that, on
+macOS only, a dual-stack (IPv6 wildcard) socket holds its IPv4 port before it
+binds, and so never shares a port with another program's IPv4-only socket.
 
 These changes are licensed under the Mozilla Public License 2.0, like
 the covered files they modify, which retain their upstream notices. The
