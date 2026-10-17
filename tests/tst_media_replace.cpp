@@ -2965,6 +2965,7 @@ private slots:
         const QList<QJsonObject> onLink = audioRequestsOn(coreControls, id);
         QCOMPARE(onLink.size(), before + 1);
         QVERIFY(onLink.constLast().value(QStringLiteral("enabled")).toBool());
+        QCOMPARE(media.mediaConnectionId(), id);
         source.stop();
         speaker.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));

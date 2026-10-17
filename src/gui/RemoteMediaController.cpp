@@ -2000,7 +2000,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
                 if (!self) { return; }
             }
         }
-        // Not isReady():an agent that stopped hearing its pair may say it
+        // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
         // Nor audioEnabled: the audio receiver gives up on a starved
         // stream within a second and waits to be asked again, which a dead
