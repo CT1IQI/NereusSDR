@@ -16,6 +16,10 @@
 // footer's two requests are the only signals left for the window to
 // connect. The waterfall rows return with the Waterfall tab.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// 2026-10-16 - The footer names the Setup Display pages as the tree shows
+// them, and the FFT tab's opens FFT & Engine. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -162,10 +166,10 @@ private slots:
             page->findChild<QPushButton*>(QStringLiteral("pillSetupDefaults"))->click();
             page->findChild<QPushButton*>(QStringLiteral("pillResetPan"))->click();
         }
-        QCOMPARE(pages, QStringList({QStringLiteral("Spectrum Defaults"),
-                                     QStringLiteral("Spectrum Defaults"),
-                                     QStringLiteral("Waterfall Defaults"),
-                                     QStringLiteral("3D View")}));
+        QCOMPARE(pages, QStringList({QStringLiteral("Spectrum"),
+                                     QStringLiteral("FFT & Engine"),
+                                     QStringLiteral("Waterfall"),
+                                     QStringLiteral("View")}));
         QCOMPARE(resets, 4);
     }
 };

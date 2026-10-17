@@ -168,6 +168,10 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-16  J.J. Boyd (KG4VCF): the pill's "Setup defaults" link names
+//               the Setup Display pages as the tree shows them, and the FFT
+//               tab's opens FFT & Engine instead of Spectrum. AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -2937,20 +2941,24 @@ void SpectrumOverlayPanel::setDisplayPillTab(DisplayPillTab tab)
     AppSettings::instance().setValue(QString::fromLatin1(kPillLastTabKey), pillTabName(tab));
 }
 
+// The Setup Display page that holds this tab's defaults, by the name the
+// Setup tree shows. FFT's sizing, size, window, Hz/bin and frame rate are
+// on FFT & Engine, not on Spectrum.
 QString SpectrumOverlayPanel::pillSetupPage() const
 {
     switch (m_pillTab) {
     case DisplayPillTab::Spectrum:
+        return QStringLiteral("Spectrum");
     case DisplayPillTab::Fft:
-        return QStringLiteral("Spectrum Defaults");
+        return QStringLiteral("FFT & Engine");
     case DisplayPillTab::Levels:
-        return QStringLiteral("Grid & Scales");
+        return QStringLiteral("Levels");
     case DisplayPillTab::Waterfall:
-        return QStringLiteral("Waterfall Defaults");
+        return QStringLiteral("Waterfall");
     case DisplayPillTab::View3D:
-        return QStringLiteral("3D View");
+        return QStringLiteral("View");
     }
-    return QStringLiteral("Spectrum Defaults");
+    return QStringLiteral("Spectrum");
 }
 
 bool SpectrumOverlayPanel::displayPillVisible() const
