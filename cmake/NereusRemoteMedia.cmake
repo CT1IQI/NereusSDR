@@ -76,6 +76,11 @@
 #               so winpthreads' lazy rwlock setup is never raced on Windows.
 #               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 #               Anthropic Claude Code.
+#   2026-10-16: libjuice-0004: on macOS a dual-stack ICE socket holds its
+#               IPv4 port first, so it never shares a port with another
+#               program's IPv4 socket (a data channel that never opened).
+#               J.J. Boyd (KG4VCF), with AI-assisted implementation via
+#               Anthropic Claude Code.
 #
 # =================================================================
 
@@ -287,6 +292,10 @@ function(nereus_add_remote_media_dependency)
         "libjuice-0002-bounded-turn-release-lifecycle.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
         "libjuice-0003-keep-poll-worker-with-retained-agents.patch")
+    # The change is compiled on macOS only (__APPLE__); the source is the
+    # same on every system.
+    _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
+        "libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"
         "libdatachannel-0003-retain-juice-agent-through-turn-release.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"

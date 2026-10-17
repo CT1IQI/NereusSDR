@@ -42,6 +42,9 @@
 //   2026-10-15: handshakeStateForTest(): how far a handshake has come, for
 //               a test whose wait for ready() ran out. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: Display send thread: displaySink(), the display and raw
+//               I/Q sends for any thread, valid after stop(). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/IMediaTransport.h"
@@ -163,6 +166,7 @@ public:
     bool displayBusy() const override;
     bool sendRtp(const QByteArray& packet) override;
     std::shared_ptr<MediaRtpSink> audioRtpSink() override;
+    std::shared_ptr<MediaDisplaySink> displaySink() override;
     bool sendMicRtp(const QByteArray& packet) override;
     bool sendTx(const QByteArray& message) override;
     bool setMicPacketSink(MicPacketSink sink) override;

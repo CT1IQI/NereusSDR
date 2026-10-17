@@ -8,6 +8,9 @@
 #   2026-10-15: reverses the patches with core.autocrlf=input, as the
 #               build applies them. J.J. Boyd (KG4VCF), with
 #               AI-assisted implementation via Anthropic Claude Code.
+#   2026-10-16: includes libjuice-0004 (src/udp.c, the macOS dual-stack
+#               port hold). J.J. Boyd (KG4VCF), with AI-assisted
+#               implementation via Anthropic Claude Code.
 foreach(_required IN ITEMS REPO BUILD ORIGINAL_JUICE ORIGINAL_DC PATCHED_JUICE DATACHANNEL WORK)
     if(NOT DEFINED ${_required})
         message(FATAL_ERROR "check-relay-cleanup-patches: -D${_required}= is required")
@@ -39,7 +42,8 @@ foreach(_entry IN ITEMS
         "src/agent.c|82341e8ffb23606253f625abec515972c5cadfb6b15923d04ff45eda2ad0831c"
         "src/agent.h|fc1d88cf387189b645e31228b6e9f68a8bf1a4efad8f483a710fc81125ea9656"
         "src/juice.c|408a423f1c3f4a7c4a17ce7b4612ad1e5295b3c3c4b8fb7024a610afdd36b7b8"
-        "src/conn_poll.c|5ccfb2f2622c43b5bb5b3ce727c9ce638b5bc4519b8b3c2ee0f927e1efbd3afb")
+        "src/conn_poll.c|5ccfb2f2622c43b5bb5b3ce727c9ce638b5bc4519b8b3c2ee0f927e1efbd3afb"
+        "src/udp.c|bf376496a4605df9a08651641e99c1d4a31ac88ad6cda2ad20bc8ebbc108ea20")
     string(REPLACE "|" ";" _entry "${_entry}")
     list(GET _entry 0 _relative)
     list(GET _entry 1 _expected)
@@ -62,6 +66,7 @@ foreach(_entry IN ITEMS
 endforeach()
 
 foreach(_patch IN ITEMS
+        libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch
         libjuice-0003-keep-poll-worker-with-retained-agents.patch
         libjuice-0002-bounded-turn-release-lifecycle.patch
         libjuice-0001-give-turn-allocations-back.patch)
@@ -75,7 +80,8 @@ foreach(_patch IN ITEMS
     endif()
 endforeach()
 
-foreach(_relative IN ITEMS include/juice/juice.h src/agent.c src/agent.h src/juice.c src/conn_poll.c)
+foreach(_relative IN ITEMS include/juice/juice.h src/agent.c src/agent.h src/juice.c src/conn_poll.c
+        src/udp.c)
     file(SHA256 "${WORK}/juice/${_relative}" _restored)
     file(SHA256 "${ORIGINAL_JUICE}/${_relative}" _pinned)
     if(NOT _restored STREQUAL _pinned)
