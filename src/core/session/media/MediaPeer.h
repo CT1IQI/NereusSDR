@@ -38,6 +38,10 @@
 //   2026-10-15: setTxReceiptHook, given to each start's
 //               transport, for the remote transmit cut guard. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: Display send thread: displaySink(), the display and raw
+//               I/Q sends for the Core's display thread, with this peer's
+//               checks. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -145,6 +149,16 @@ public:
     /// (false while not started). Without one audioRtpSink() answers "not
     /// ready" for ever and receive audio goes nowhere on this connection.
     bool transportHasAudioRtpSink() const;
+    /// Display send thread: submitDisplay(), displayBusy(), submitIq() and
+    /// iqBusy() for another thread (the Core's display send thread), with
+    /// the same checks, from any thread; ready() is isReady() there. The
+    /// same object for this peer's whole life; it refuses while the peer is
+    /// not started, and when the transport has no such send
+    /// (IMediaTransport::displaySink). Owner's thread only.
+    std::shared_ptr<MediaDisplaySink> displaySink() const;
+    /// Display send thread: whether this peer's started transport has such
+    /// a send (false while not started).
+    bool transportHasDisplaySink() const;
     /// Task 36: one packet on the microphone line (the answerer's), whose
     /// SSRC must be micAudioSsrc().
     bool sendMicRtp(const QByteArray& packet);
