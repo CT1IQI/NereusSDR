@@ -16,6 +16,8 @@
 //                keyed, and the VAX TX device read only after key().
 //   2026-10-15 - The pump reads only while the program-audio key is on; the
 //                Core ending the key ends it here.
+//   2026-10-17 - The pump reads keeping the Core's deepest buffer; the
+//                drain before a key does not.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -25,6 +27,7 @@
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
 #include "core/TciServer.h"
+#include "core/session/media/RemoteMicReceiver.h"
 #include "gui/RemoteRigctlServer.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -324,6 +327,41 @@ private slots:
         QVERIFY(w.core.audio.isEmpty());
         programAudioKey = true;
         w.server.pumpAudio();
+        QCOMPARE(w.core.audio.size(), 128);
+    }
+
+    void thePumpKeepsTheCoresDeepestBufferTheDrainDoesNot()
+    {
+        // A late GUI tick finds more than the Mac bus's 16 ms guard; the
+        // pump keeps up to what the Core's transmit side holds. The drain
+        // before a key throws everything away, so it reads as pull().
+        Window w;
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeVaxTx"));
+        bus->open(fmt);
+        FakeAudioBus* vaxTx = bus.get();
+        w.model.localAudioDevices()->setVaxTxBusForTest(std::move(bus));
+        QVector<float> stale(2 * 64, 0.9f);
+        vaxTx->setPullData(QByteArray(reinterpret_cast<const char*>(stale.constData()),
+                                      stale.size() * int(sizeof(float))));
+        QVERIFY(w.connect());
+        QCOMPARE(w.ask("T 1\n"), QByteArray("RPRT 0\n"));
+        // The stale audio went, and not through the backlog read (the pump's
+        // timer may tick meanwhile, finding nothing).
+        QCOMPARE(vaxTx->pullCount(), 1);
+        QCOMPARE(vaxTx->keepingBacklogReads(), 0);
+        w.core.accept(5);
+        QVector<float> tone(2 * 128, 0.5f);
+        vaxTx->setPullData(QByteArray(reinterpret_cast<const char*>(tone.constData()),
+                                      tone.size() * int(sizeof(float))));
+        w.server.pumpAudio();
+        QCOMPARE(vaxTx->keepingBacklogReads(), 1);
+        // Stereo float32 frames, in bytes.
+        QCOMPARE(vaxTx->lastMaxBacklogBytes(),
+                 qint64(RemoteMicConfig::kMaxDepthFrames) * 2 * qint64(sizeof(float)));
         QCOMPARE(w.core.audio.size(), 128);
     }
 
