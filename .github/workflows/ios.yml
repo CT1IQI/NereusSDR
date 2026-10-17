@@ -17,7 +17,11 @@
 name: iOS
 
 on:
+  # Pushes run only on main: a pull request's branch already runs here
+  # through pull_request, so a push trigger there ran every commit twice
+  # and held two of the account's few macOS runners.
   push:
+    branches: [main]
     paths:
       - 'ios/**'
       - 'tests/data/link/**'
