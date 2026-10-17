@@ -6221,6 +6221,13 @@ nereus_add_test(tst_daemon_display_keep
 nereus_add_test(tst_daemon_display_retune
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Display send thread: the Core's displays leave on a thread of their own.
+# With the main thread held for 500 ms (as Direct3D holds it on a locked
+# Windows session) every display message is sent off the main thread and
+# no gap between them reaches 50 ms. REALTIME: wall-clock bounds.
+nereus_add_test(tst_daemon_display_send_thread
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session REALTIME)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -8957,6 +8964,15 @@ target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
     "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
     "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
     "${libdatachannel_SOURCE_DIR}/deps/json/include")
+# On macOS libjuice's dual-stack ICE socket holds its IPv4 port first
+# (cmake/patches/libjuice-0004): every socket it binds gets its own IPv4
+# datagrams with many ports held for IPv4 elsewhere, and a data channel opens
+# with most of its port range held that way.
+nereus_add_test(tst_juice_dual_stack_port CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_juice_dual_stack_port PRIVATE datachannel-static)
+target_include_directories(tst_juice_dual_stack_port PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libjuice_SOURCE_DIR}/src")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
 # crypto and control vectors, the Core's and the desktop's conformance
 # runners (rendezvous/conformance/v1/), and the Core against the Python
