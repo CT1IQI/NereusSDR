@@ -3689,7 +3689,27 @@ Notes on the keys:
     cannot read. They are never in the LAN announcement or Bonjour
     (section 14), never sent to the rendezvous, never logged, and nothing
     unauthenticated asks for them. A device keeps them with the paired
-    Core and dials them as direct rungs (section 21.1).
+    Core and dials them as direct rungs (section 21.1). **Keeping and
+    clearing** (JJ, 2026-10-16). Each well-formed list replaces the one the
+    device kept for that Core. The explicit empty list, `{"addresses":[]}`
+    with no entries at all, clears the addresses the device kept from the
+    Core's list: the Core re-reads its interfaces every 5 s, so a momentary
+    gap heals within 5 s for a device still connected, while a kept dead
+    address (an IPv6 address after IPv6 is turned off on the Core, say)
+    costs every reconnect. Anything else leaves the kept list as it is:
+    text that is not JSON, a value that is not an object, an `addresses`
+    that is missing or not an array, and an array that had entries none of
+    which the device can dial, since that is not the Core's own empty
+    answer. When an accepted list, empty or not, no longer names an
+    address the last one named, that address also leaves the addresses the
+    device proved the Core answers at (where it last reached it, section
+    21.1), and stops being the one tried first, so no reconnect dials it
+    again. The one exception is the address the current session is on: it
+    stays, and stays counted as the Core's, until an accepted list arrives
+    on a session somewhere else, which drops it then. The phone never
+    removes the last address it reached the Core at. Addresses the device
+    proved that the Core never named stay. Every identity and sign-in check
+    that guards keeping the list guards clearing it too.
 - **`connectedDevices`** (iPhone app plan Task 71;
   `ConnectedDevicesFacade`): who is on the Core, the list a device's
   Devices page reads for "Connected now". Sent only at agreed minor 11 to

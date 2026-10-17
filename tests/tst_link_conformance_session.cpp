@@ -297,6 +297,12 @@
 //               with, now that a receiver takes its DSP > Options values
 //               when it is bound to its slice.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: The connectable station waits until every meter reading
+//               the snapshot carries is a measurement, the signal
+//               readings held to WDSP's seed plus the slice's receive
+//               offset: a meter refresh inside the first block sent the
+//               S-meter's seed (-399.02 dBm) in the station object.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -837,11 +843,36 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
         // the runner feeds the first block itself: 16 frames at a time,
         // each time waiting three of the pump's polls for the reading (the
         // pump reads the receive lane's cached meters, a poll behind),
-        // until the ADC peak leaves the no-reading value.
+        // until every reading the snapshot carries is a measurement.
+        //
+        // The ADC peak alone does not say that. WDSP measures a block's
+        // meters one after another (RXA.c:665 the ADC meter, :668 the
+        // S-meter after the nbp0 filter, :695 the AGC meter), each under
+        // its own lock, and the receive lane reads them one by one
+        // (RxChannel::refreshMeterCacheOnLane), the S-meter first. A
+        // refresh that lands while the first block is between those lines
+        // caches a real ADC peak beside the S-meter's -400 seed
+        // (meter.c:69-70). The pump adds the slice's receive offset to the
+        // signal readings, so that seed reaches the slice as -400 plus the
+        // offset (-399.02 on this radio), above the no-reading value, and
+        // the snapshot went out with it. So each signal reading is held to
+        // the seed plus the offset, computed as the pump computes it, and
+        // the AGC readings to their own seed. The next refresh reads the
+        // finished block, so the wait ends one poll later.
         NereusSDR::Test::P1FakeRadio& fake = station->harness->fake();
-        const auto firstBlockMeasured = [station]() {
-            for (SliceModel* slice : station->model->slices()) {
-                if (slice->adcPeakDbfs() <= SliceMeterPump::kNoReadingDbm) {
+        RadioModel* const stationModel = station->model;
+        const auto firstBlockMeasured = [stationModel]() {
+            for (SliceModel* slice : stationModel->slices()) {
+                const double signalSeedDbm = SliceMeterPump::kNoReadingDbm
+                    + stationModel->rxMeterOffsetDbForSlice(slice->sliceIndex());
+                if (slice->signalStrengthDbm() <= signalSeedDbm
+                    || slice->signalPeakDbm() <= signalSeedDbm
+                    || slice->signalAverageDbm() <= signalSeedDbm
+                    || slice->adcPeakDbfs() <= SliceMeterPump::kNoReadingDbm
+                    || slice->adcAverageDbfs() <= SliceMeterPump::kNoReadingDbm
+                    || slice->agcGainDb() <= SliceMeterPump::kNoReadingDbm
+                    || slice->agcPeakDb() <= SliceMeterPump::kNoReadingDbm
+                    || slice->agcAverageDb() <= SliceMeterPump::kNoReadingDbm) {
                     return false;
                 }
             }
@@ -861,18 +892,8 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
         if (!measured) {
             return QStringLiteral("the connectable station's receiver did not measure a block");
         }
-        const bool readings = QTest::qWaitFor([station, &polls]() {
-            if (polls.isEmpty()) {
-                return false;
-            }
-            for (SliceModel* slice : station->model->slices()) {
-                if (slice->signalStrengthDbm() <= SliceMeterPump::kNoReadingDbm
-                    || slice->signalPeakDbm() <= SliceMeterPump::kNoReadingDbm
-                    || slice->signalAverageDbm() <= SliceMeterPump::kNoReadingDbm) {
-                    return false;
-                }
-            }
-            return true;
+        const bool readings = QTest::qWaitFor([&firstBlockMeasured, &polls]() {
+            return !polls.isEmpty() && firstBlockMeasured();
         }, 5000);
         if (!readings) {
             return QStringLiteral("the slices' signal readings did not settle");

@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 - Off a RADE mode the RADE applet is grayed whole for its
+//                 capability (disabled, never hidden), so its transmit
+//                 gate is read below the applet (isEnabledTo). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF. Take transmit offered and taken with
 //                nobody holding transmit; a program's refused key names
 //                the button. AI-assisted via Anthropic Claude Code.
@@ -1946,8 +1950,8 @@ private slots:
         QVERIFY(rade);
         QComboBox* const radeProfile = rade->profileComboForTest();
         QPushButton* const radeReset = rade->resetVocoderButtonForTest();
-        QTRY_VERIFY(radeProfile->isEnabled());
-        QVERIFY(radeReset->isEnabled());
+        QTRY_VERIFY(radeProfile->isEnabledTo(rade));
+        QVERIFY(radeReset->isEnabledTo(rade));
 
         StationCapabilities granted = h.server().buildCapabilities();
         granted.txPermitted = true;
@@ -1957,25 +1961,25 @@ private slots:
         QVERIFY(txEq->toolTip() != reason);
         QVERIFY(!vox->isEnabled());
         QCOMPARE(vox->toolTip(), TxRefusals::micNotConnected().text);
-        QVERIFY(radeProfile->isEnabled());
-        QVERIFY(radeReset->isEnabled());
+        QVERIFY(radeProfile->isEnabledTo(rade));
+        QVERIFY(radeReset->isEnabledTo(rade));
 
         StationCapabilities withdrawn = h.server().buildCapabilities();
         withdrawn.txPermitted = false;
         h.pushCapabilities(withdrawn);
         QTRY_VERIFY(!txEq->isEnabled());
         QCOMPARE(txEq->toolTip(), reason);
-        QVERIFY(radeProfile->isEnabled());
-        QVERIFY(radeReset->isEnabled());
+        QVERIFY(radeProfile->isEnabledTo(rade));
+        QVERIFY(radeReset->isEnabledTo(rade));
 
         // A Core without the TX profile commands (transmitSettingsVersion
         // below 3) greys both with the plain reason, on the live session.
         StationCapabilities older = h.server().buildCapabilities();
         older.transmitSettingsVersion = 2;
         h.pushCapabilities(older);
-        QTRY_VERIFY(!radeProfile->isEnabled());
+        QTRY_VERIFY(!radeProfile->isEnabledTo(rade));
         QCOMPARE(radeProfile->toolTip(), IStationLink::transmitSettingsUnavailableReason());
-        QVERIFY(!radeReset->isEnabled());
+        QVERIFY(!radeReset->isEnabledTo(rade));
         QCOMPARE(radeReset->toolTip(), IStationLink::transmitSettingsUnavailableReason());
 
         QCOMPARE(client->sessionEpoch(), epoch);

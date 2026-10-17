@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 : pullVaxTxMicKeepingBacklog(): a remote window's uplink
+//                 keeps the VAX TX device's backlog. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-16 : setDeviceListInBackground(): the window's catalog lists
 //                 in the background, so nothing waits for this computer's
 //                 first device list (the window held its open up to 3 s
@@ -5001,6 +5004,16 @@ int AudioEngine::pullTxMic(float* dst, int n)
 
 int AudioEngine::pullVaxTxMic(float* dst, int n)
 {
+    return pullVaxTxMicImpl(dst, n, 0);
+}
+
+int AudioEngine::pullVaxTxMicKeepingBacklog(float* dst, int n, int maxBacklogFrames)
+{
+    return pullVaxTxMicImpl(dst, n, std::max(1, maxBacklogFrames));
+}
+
+int AudioEngine::pullVaxTxMicImpl(float* dst, int n, int maxBacklogFrames)
+{
     // VaxTxMicSource → CompositeTxMicRouter → TxChannel mic input.
     // Closes the AudioEngine.cpp:306 TODO ("pull TX audio from
     // m_vaxTxBus when [...] consumer that pulls from m_vaxTxBus / mic
@@ -5033,7 +5046,10 @@ int AudioEngine::pullVaxTxMic(float* dst, int n)
         scratch.resize(static_cast<size_t>(needBytes));
     }
 
-    const qint64 gotBytes = m_vaxTxBus->pull(scratch.data(), needBytes);
+    const qint64 gotBytes = maxBacklogFrames > 0
+        ? m_vaxTxBus->pullKeepingBacklog(scratch.data(), needBytes,
+                                         qint64(maxBacklogFrames) * kVaxTxBytesPerFrame)
+        : m_vaxTxBus->pull(scratch.data(), needBytes);
     if (gotBytes <= 0) {
         return 0;
     }
