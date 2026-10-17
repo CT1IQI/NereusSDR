@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # The steps of a Linux CI job on the self-hosted runners, run inside the CI
 # image by scripts/ci/box-run.sh (the checkout is /src, the runner's own
-# folder /box). CI speed round, 2026-10-16; one script for the test jobs and
-# the realtime job, 2026-10-17.
+# folder /box). CI speed round, 2026-10-16; moved into this script,
+# 2026-10-17.
 #
 #   scripts/ci/box-linux.sh configure   fetch the dependencies and configure
 #   scripts/ci/box-linux.sh build       build the app and $TARGET
-#   scripts/ci/box-linux.sh test        run this job's tests
+#   scripts/ci/box-linux.sh test        run this job's tests (not the
+#                                       realtime tests: linux-realtime in
+#                                       ci.yml runs those on an idle runner)
 #   scripts/ci/box-linux.sh stats       this job's compiler cache hits
 #
 # From the environment: SHARDS and SHARD (the name-hash test shards, as on
-# the hosted legs; SHARDS=0 for none) and TARGET (all_tests for the
-# ordinary tests, tests_realtime for the realtime tests).
+# the hosted legs; SHARDS=0 for none) and TARGET (the test target to build,
+# all_tests).
 set -euo pipefail
 
 : "${SHARDS:?}" "${SHARD:?}" "${TARGET:?}"
@@ -55,19 +57,14 @@ case "${1:-}" in
         ;;
 
     test)
-        # The hosted legs' Test step: the ordinary tests 8 at a time, the
-        # realtime tests one at a time.
-        if [ "$TARGET" = tests_realtime ]; then
-            select=(-L realtime)
-        else
-            select=(-LE realtime -j8)
-        fi
+        # The hosted legs' Test step, first pass: the tests not labeled
+        # realtime, 8 at a time.
         export QT_QPA_PLATFORM=xcb
         export QTEST_FUNCTION_TIMEOUT=240000
         export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
         cd build
         status=0
-        xvfb-run -a ctest "${select[@]}" --output-on-failure --no-tests=error || status=1
+        xvfb-run -a ctest -LE realtime -j8 --output-on-failure --no-tests=error || status=1
         cp Testing/Temporary/CTestCostData.txt "$cost_data" 2>/dev/null || true
         exit "$status"
         ;;

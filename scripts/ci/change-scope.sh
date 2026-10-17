@@ -13,12 +13,16 @@
 # "Reads" is checked for every documentation path: any tracked file outside
 # docs/ and website/ (source, tests, CMake, the resource lists, tools/,
 # hal-plugin/, scripts/, ...) that names the path or its folder on a line
-# that is not a comment. A top-level file's name counts only on its own,
-# not as the end of a longer path (docs/x/README.md does not name
-# README.md). A folder counts when it is named on its own or with a file
-# pattern after it ("icons/%1.svg", "icons/*.svg"), not as the start of
-# another file's path: docs/architecture/a.md does not name the folder of
-# docs/architecture/b.md. Files that build nothing are not searched: *.md files
+# that is not a comment. A top-level file's name counts on its own or after
+# a path prefix that is a variable, a quote or a parenthesis
+# ("${CMAKE_SOURCE_DIR}/README.md", "/CHANGELOG.md"), not as the end of a
+# longer path (docs/x/README.md does not name README.md). Each folder the
+# file is in, up to but not including docs/ and website/ themselves,
+# counts when it is named on its own (with or without a trailing slash) or
+# with a file pattern after it ("icons/%1.svg", "docs/help/*.md"), not as
+# the start of another file's path: docs/architecture/a.md does not name
+# the folder of docs/architecture/b.md. Files that build nothing are not
+# searched: *.md files
 # anywhere (they are text; one the app compiles in is named by its
 # resource list, which is searched), .github/ (the release workflow and
 # the pull request template; ci.yml's own checks run on every pull
@@ -28,8 +32,10 @@
 # change there has to run the tests. A comment that names a document (this
 # is common: "see docs/architecture/...") reads nothing, so it does not
 # count. Which lines are comments depends on the file's kind:
-#   C, C++, Objective-C, Swift, JavaScript: "//" or "/*" before the path,
-#     or a line starting with "*" (inside a block comment);
+#   C, C++, Objective-C, Swift, JavaScript: "//" or "/*" before the path
+#     at the start of the line or after a space, a tab or ";" (so a URL's
+#     "//" does not count), or a line starting with "*" (inside a block
+#     comment);
 #   CMake, Python, shell, YAML, PowerShell, systemd units: "#" before the
 #     path;
 # (a configure template, x.in, is the kind of x);
@@ -48,8 +54,9 @@
 #   scripts/ci/change-scope.sh <github.event_name>
 #
 # CI speed round, 2026-10-16; the review fixes (top-level *.md only,
-# --no-renames, every path checked, the whole repository searched),
-# 2026-10-17.
+# --no-renames, every path checked, the whole repository searched;
+# prefixed top-level names, folders without a slash, every parent folder,
+# URLs), 2026-10-17.
 set -uo pipefail
 
 out="${GITHUB_OUTPUT:-/dev/stdout}"
@@ -61,11 +68,14 @@ decide() {
 }
 
 # Prints the first line, outside the documentation itself, that names $1
-# and is not a comment, as file:line:text. Status 0 if there is one, 1 if
-# there is none, 2 if the search failed.
+# (a file, or a folder ending in "/") and is not a comment, as
+# file:line:text. Status 0 if there is one, 1 if there is none, 2 if the
+# search failed.
 reader_of() {
     local hits status
-    hits="$(git grep -n -F -e "$1" -- . ':(exclude)docs/' ':(exclude)website/' \
+    # A folder is searched for without its slash, so "docs/x/icons" with no
+    # slash after it is found too; the awk below decides what follows.
+    hits="$(git grep -n -F -e "${1%/}" -- . ':(exclude)docs/' ':(exclude)website/' \
         ':(exclude,glob)**/*.md' ':(exclude)*.md' ':(exclude).github/' \
         ':(exclude).gitattributes' ':(exclude).gitignore' ':(exclude)CODEOWNERS' \
         ':(exclude)LICENSE*' ':(exclude)scripts/ci/change-scope.sh' 2>/dev/null)"
@@ -81,28 +91,51 @@ reader_of() {
             # file:line:text; the file name has no colon in this repository.
             file = $0; sub(/:.*/, "", file)
             text = $0; sub(/^[^:]*:[0-9]+:/, "", text)
-            # The first mention that is a whole name. A top-level file (no
-            # "/" in it) preceded by a path or word character is the end of
-            # a longer name. A folder (ending in "/") followed by a name
-            # character is the start of another path, unless a file
-            # pattern follows (%, *, $, {, <).
-            rest = text; offset = 0; at = 0
+            # The first mention that is a whole name.
+            #  - A top-level file (no "/" in it) preceded by a path or word
+            #    character is the end of a longer name, unless that is a
+            #    "/" after a variable, quote, parenthesis, space or the
+            #    start of the line ("${ROOT}/README.md", "/CHANGELOG.md").
+            #  - A folder (searched for without its slash) counts when the
+            #    line ends there or a quote, space or ")" follows, or a "/"
+            #    followed by nothing that names a file, or by a file
+            #    pattern (%, *, $, {, <) before the next "/". Followed by
+            #    any other name character, it is the start of a longer
+            #    name or the path of another file.
             folder = (substr(needle, length(needle), 1) == "/")
-            while ((i = index(rest, needle)) > 0) {
-                prev = (offset + i > 1) ? substr(text, offset + i - 1, 1) : ""
-                after = substr(text, offset + i + length(needle))
+            word = folder ? substr(needle, 1, length(needle) - 1) : needle
+            rest = text; offset = 0; at = 0
+            while ((i = index(rest, word)) > 0) {
+                pos = offset + i
+                prev = (pos > 1) ? substr(text, pos - 1, 1) : ""
+                after = substr(text, pos + length(word))
                 whole = 1
                 if (index(needle, "/") == 0 && prev ~ /[A-Za-z0-9_.\/-]/) {
                     whole = 0
+                    if (prev == "/") {
+                        prev2 = (pos > 2) ? substr(text, pos - 2, 1) : ""
+                        if (prev2 == "" || prev2 ~ /[}")'"'"' \t]/) {
+                            whole = 1
+                        }
+                    }
                 }
-                if (folder && after ~ /^[A-Za-z0-9_.-]/ && after !~ /^[^\/ \t"'\''`)]*[%*${<]/) {
-                    whole = 0
+                if (folder) {
+                    if (after == "" || after ~ /^["'"'"' \t)]/) {
+                        # named on its own
+                    } else if (substr(after, 1, 1) == "/") {
+                        tail = substr(after, 2)
+                        if (tail ~ /^[A-Za-z0-9_.-]/ && tail !~ /^[^\/ \t"'"'"'`)]*[%*${<]/) {
+                            whole = 0
+                        }
+                    } else {
+                        whole = 0
+                    }
                 }
                 if (whole) {
-                    at = offset + i
+                    at = pos
                     break
                 }
-                offset += i
+                offset = pos
                 rest = substr(text, offset + 1)
             }
             if (at == 0) {
@@ -117,7 +150,7 @@ reader_of() {
             } else if (file ~ /(^|\/)CMakeLists\.txt$/ || file ~ /\.(cmake|py|sh|bash|ya?ml|ps1|toml|cfg|ini|service|socket|conf)$/) {
                 kind = "hash"
             }
-            if (kind == "slash" && (before ~ /\/\// || before ~ /\/\*/ || text ~ /^[ \t]*\*/)) {
+            if (kind == "slash" && (before ~ /(^|[ \t;])\/[\/*]/ || text ~ /^[ \t]*\*/)) {
                 next
             }
             if (kind == "hash" && before ~ /#/) {
@@ -157,13 +190,17 @@ while IFS= read -r file; do
             decide true "$file is not documentation: every build runs."
             ;;
     esac
-    # The file itself, and its folder for files read by folder (a test
-    # that opens every icon in a folder names the folder, not each file).
+    # The file itself, and each folder it is in for files read by folder
+    # (a test that opens every icon in a folder names the folder, not each
+    # file), up to but not including docs/ and website/ themselves: a test
+    # checks that no text it shows mentions "docs/", which reads nothing.
     # A top-level file has no folder to check.
     needles=("$file")
-    case "$file" in
-        */*) needles+=("$(dirname "$file")/") ;;
-    esac
+    dir="$(dirname "$file")"
+    while [ "$dir" != . ] && [ "$dir" != docs ] && [ "$dir" != website ]; do
+        needles+=("$dir/")
+        dir="$(dirname "$dir")"
+    done
     for needle in "${needles[@]}"; do
         reader="$(reader_of "$needle")"
         case $? in

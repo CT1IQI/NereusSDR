@@ -14,8 +14,11 @@ on:
         options: [self-hosted, github-hosted]
         default: self-hosted
 
-# A newer push to a pull request cancels the run before it. On main every
-# run finishes, so back-to-back merges do not cancel a compiler cache save.
+# A newer push to a pull request cancels the run before it. On main a run
+# that has started always finishes, so back-to-back merges do not cancel a
+# compiler cache save; a main run still waiting to start is replaced by a
+# newer one (GitHub keeps one pending run per group), which builds the
+# later commit and saves its cache.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -476,7 +479,7 @@ jobs:
   # whenever it cannot see a self-hosted runner online. Approved by J.J. Boyd,
   # 2026-10-16. `legs` is the build job's matrix: every leg below for
   # hosted, macOS and Windows only for self-hosted, where the linux-box,
-  # linux-box-realtime, build-notests and linux-report jobs take the Linux
+  # linux-realtime, build-notests and linux-report jobs take the Linux
   # legs' place.
   # --------------------------------------------------------------------
   changes:
@@ -1340,11 +1343,15 @@ jobs:
   #
   # The ordinary tests are halved by the same name-hash shards the hosted
   # legs use (about 6 minutes of tests each at 8 at a time, from the hosted
-  # run 38980390590's test times). The realtime tests (572 s, one at a time)
-  # run in linux-box-realtime once both of these jobs have finished, so no
-  # other test of this run shares the machine with them, as none shares the
-  # hosted shard's runner with them. Every test runs exactly once, as on
-  # the hosted legs.
+  # run 38980390590's test times). The realtime tests (572 s, one at a
+  # time) do not run here: other runs' jobs share this machine, so they run
+  # in linux-realtime on an idle GitHub-hosted runner, as on the hosted
+  # path. Every test runs exactly once, as on the hosted legs.
+  #
+  # Time to green on this path, estimated with warm caches: about 11
+  # minutes for these two jobs (a 3 to 5 minute build and 6 of tests) and
+  # about 18 for linux-realtime (setup, a 4-core build, 10 minutes of
+  # realtime tests), so about 18 in all, set by linux-realtime.
   # --------------------------------------------------------------------
   linux-box:
     needs: changes
@@ -1407,58 +1414,153 @@ jobs:
           rm -rf build .box-home
           df -h . | tail -1
 
-  # The realtime tests on the self-hosted runners, after linux-box (see
-  # there). It runs whether or not linux-box passed, so a run reports every
-  # failure at once.
-  linux-box-realtime:
-    needs: [changes, linux-box]
-    # Never a fork's pull request, whatever the changes job says.
-    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: [self-hosted, nereus-linux]
-    name: Linux on the self-hosted runners (realtime tests)
+  # The realtime tests when Linux runs on the self-hosted runners.
+  #
+  # Tests labeled realtime (nereus_add_test REALTIME) have wall-clock
+  # deadlines, so they run one at a time on a machine nothing else uses:
+  # here a GitHub-hosted runner, alongside the linux-box jobs. The steps
+  # are the build job's Linux steps (keep the two in step), with no test
+  # shards and only the realtime tests built and run. Its compiler cache,
+  # ccache-v2-Linux-realtime, follows the build job's save rules.
+  # CI speed round, 2026-10-17, after the review found the realtime tests
+  # sharing the self-hosted machine with other runs' jobs.
+  linux-realtime:
+    needs: changes
+    if: needs.changes.outputs.route == 'box'
+    runs-on: ubuntu-24.04
+    name: Linux realtime tests (hosted)
     timeout-minutes: 90
     env:
-      NEREUS_BOX_CCACHE: /home/skyrunner/nereus-ccache
-      BOX: SHARDS=0 SHARD=0 TARGET=tests_realtime scripts/ci/box-linux.sh
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
 
-      - name: Container image
-        run: scripts/ci/box-run.sh image
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
 
+      - name: Fetch dependency downloads
+        run: |
+          mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      # The build job's "Install system dependencies (Linux)" (see there
+      # for why each package is here).
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config g++ mold ccache \
+            libgl1-mesa-dev libfftw3-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libpipewire-0.3-dev libpulse-dev \
+            libssl-dev \
+            python3-websockets python3-cryptography \
+            gdb \
+            libhamlib-utils \
+            xvfb libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
+          cache: true
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-v2-Linux-realtime-${{ github.sha }}
+          restore-keys: |
+            ccache-v2-Linux-realtime-
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=max_size=5G
+          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          ccache --set-config=hash_dir=false
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+          echo "CCACHE_RUN_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # The build job's Configure (Linux), with no test shards.
       - name: Configure
-        run: scripts/ci/box-run.sh run "$BOX configure"
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
+            -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
+            -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=ON
 
+      # `all` as well: the tests run nereusd, nereus_pairing_peer and
+      # nereus_rendezvous_peer (see Build in the build job).
       - name: Build
         id: build
-        run: scripts/ci/box-run.sh run "$BOX build"
+        run: cmake --build build -j"$(nproc)" --target all tests_realtime
 
+      # The build job's Test step, realtime pass only.
       - name: Test
-        run: scripts/ci/box-run.sh run "$BOX test"
+        working-directory: build
+        run: |
+          export QT_QPA_PLATFORM=xcb
+          export QTEST_FUNCTION_TIMEOUT=240000
+          export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
+          xvfb-run -a ctest -L realtime --output-on-failure --no-tests=error
+
+      - name: Trim compiler cache to this run
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name != 'pull_request' || steps.ccache-restore.outputs.cache-matched-key == '') }}
+        id: ccache-trim
+        run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_RUN_START + 60 ))s"
+
+      - name: Save compiler cache
+        if: ${{ !cancelled() && steps.ccache-trim.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
       - name: ccache stats
         if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
-        run: scripts/ci/box-run.sh run "$BOX stats"
-
-      - name: Clean up
-        if: always()
         run: |
-          scripts/ci/box-run.sh cleanup
-          rm -rf build .box-home
-          df -h . | tail -1
+          ccache --show-stats -v
+          df -h .
 
   # --------------------------------------------------------------------
   # The required Linux checks when Linux runs on the self-hosted runners.
   #
   # Branch protection requires "Build (Linux x64 (1/4))" to "(4/4)". When
   # Linux runs on the self-hosted runners, these four report its result
-  # under those names: each passes only if both linux-box jobs, the
-  # realtime job and the build with tests off all passed. On the hosted
+  # under those names: each passes only if both linux-box jobs,
+  # linux-realtime and the build with tests off all passed. On the hosted
   # path this job is skipped and the build job's Linux legs report under
   # the same names (shard 1/4 runs the build with tests off there).
   # --------------------------------------------------------------------
   linux-report:
-    needs: [changes, linux-box, linux-box-realtime, build-notests]
+    needs: [changes, linux-box, linux-realtime, build-notests]
     if: ${{ !cancelled() && needs.changes.outputs.route == 'box' }}
     runs-on: ubuntu-24.04
     name: Build (${{ matrix.name }})
@@ -1478,7 +1580,7 @@ jobs:
             fi
           }
           check "Linux build and tests on the self-hosted runners" "${{ needs.linux-box.result }}"
-          check "Linux realtime tests on the self-hosted runners" "${{ needs.linux-box-realtime.result }}"
+          check "Linux realtime tests" "${{ needs.linux-realtime.result }}"
           check "Linux build with tests off" "${{ needs.build-notests.result }}"
           exit "$failed"
 
@@ -1626,7 +1728,7 @@ jobs:
   # own after seven days unused. CI speed round, 2026-10-16.
   # --------------------------------------------------------------------
   prune-caches:
-    needs: [build, build-notests]
+    needs: [build, build-notests, linux-realtime]
     if: ${{ !cancelled() && github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     name: Prune old compiler caches
