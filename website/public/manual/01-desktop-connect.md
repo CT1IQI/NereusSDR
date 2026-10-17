@@ -197,6 +197,10 @@ Core; inspecting another saved Core does not redirect this page.
    enabled, wait for the health readback, then check local playback/mute and
    actual receive sound. Changing an OS speaker device and retrying Core media
    address different parts of the path.
+   After a speaker fault the window asks the Core again on its own until the
+   speakers play, so you do not need to mute and unmute. A device set to a
+   format remote playback cannot play (channels, sample rate or sample type)
+   says so and waits until you change it.
 
 ## Choose whether a saved target connects at startup
 

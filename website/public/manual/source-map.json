@@ -2,8 +2,8 @@
   "downloads": [
     {
       "output": "manual/01-desktop-connect.md",
-      "output_sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
-      "sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
+      "output_sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
+      "sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
@@ -20,8 +20,8 @@
     },
     {
       "output": "manual/04-slices.md",
-      "output_sha256": "8f13ec5655c1acb31208d566971d8d4ca3a533902ba32486d2206d66e99338ae",
-      "sha256": "8f13ec5655c1acb31208d566971d8d4ca3a533902ba32486d2206d66e99338ae",
+      "output_sha256": "e8da42fcd29f5885417e27a427cc69dd9e442acc1392be5047504cd52230aebf",
+      "sha256": "e8da42fcd29f5885417e27a427cc69dd9e442acc1392be5047504cd52230aebf",
       "source": "docs/manual/04-slices.md"
     },
     {
@@ -56,8 +56,8 @@
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
-      "sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
+      "output_sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
+      "sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -432,8 +432,8 @@
     },
     {
       "output": "manual/01-desktop-connect.html",
-      "output_sha256": "be6288842f7a13afa1c7c8999ade164efc9734a31208965c0cafb01b0a8352eb",
-      "sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
+      "output_sha256": "231eea4890f2de747b09a44cda025cf603858aff55d04c81648b10bbe84e1689",
+      "sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
@@ -450,8 +450,8 @@
     },
     {
       "output": "manual/04-slices.html",
-      "output_sha256": "980402c91eb2479556e1bb5975eb0be958c53fb72a88ce562f30e8cf4bea370a",
-      "sha256": "8f13ec5655c1acb31208d566971d8d4ca3a533902ba32486d2206d66e99338ae",
+      "output_sha256": "cb3627fb689452d47fd2c6c5aaaf57de332aebf3df870e7926c8079a0087b2b3",
+      "sha256": "e8da42fcd29f5885417e27a427cc69dd9e442acc1392be5047504cd52230aebf",
       "source": "docs/manual/04-slices.md"
     },
     {
@@ -486,8 +486,8 @@
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "f194a4336479238ffd3d6f71cdf09d3d71a47107dce88381b82cfaad7d0f9377",
-      "sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
+      "output_sha256": "6d6f2b417ece13563b17f02fd9a710efa4251e558bad1130c72130a58c628a0b",
+      "sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -570,8 +570,8 @@
     },
     {
       "output": "guides/upgrading-to-2026.10.1.html",
-      "output_sha256": "363f2077ec404ffa1c82e5dd736e0b2ca0bdeb5007c5fd6403c780644902ec3c",
-      "sha256": "7fc2deb1d17c8955276795f51e1997db4d04361478f76da69193222d59122ffb",
+      "output_sha256": "eb790800cb284bb7772ec1d21e0c66eec86f86d2f789ff136f4264d10fb2eebd",
+      "sha256": "8dcde06da8cf2ea55ed9b61d7108df84b79d1c9c6cad52d6425f3d1dce4db67f",
       "source": "docs/guides/upgrading-to-2026.10.1.md"
     },
     {

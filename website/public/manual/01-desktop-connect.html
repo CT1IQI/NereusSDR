@@ -166,7 +166,11 @@ compressed streams keep their separate 48 kbps target.</li>
 <li>If receive media failed while controls still work, use <strong>Retry audio</strong> when
 enabled, wait for the health readback, then check local playback/mute and
 actual receive sound. Changing an OS speaker device and retrying Core media
-address different parts of the path.</li>
+address different parts of the path.
+After a speaker fault the window asks the Core again on its own until the
+speakers play, so you do not need to mute and unmute. A device set to a
+format remote playback cannot play (channels, sample rate or sample type)
+says so and waits until you change it.</li>
 </ol>
 <h2 id="choose-whether-a-saved-target-connects-at-startup">Choose whether a saved target connects at startup</h2>
 <p>After successfully saving/connecting the intended target, open <strong>File &gt;
