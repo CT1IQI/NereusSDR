@@ -25,6 +25,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-17: includes <QPointer>, which it used through the shared
+//                precompiled header only. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-14: comments say how often P1 reports its PTT level: on each
 //                change and each status tick. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -223,6 +226,7 @@
 // derived values are cited inline below.
 
 #include "core/MoxController.h"
+#include <QPointer>
 #include <QScopeGuard>
 
 #include <QSignalBlocker>
