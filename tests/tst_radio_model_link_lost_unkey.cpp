@@ -32,10 +32,13 @@
 //      MainWindow wires it, a link loss or the operator's disconnect still
 //      ends with hardwareFlipped(false) (instant and real walk timers), the
 //      controller puts the RX S-ATT back, and the next over saves afresh.
-//      The disconnect's save, made while still keyed, stores the RX value.
+//      The disconnect's save, made while still keyed, stores the RX value;
+//      a link loss saves nothing, and a disconnect after its unkey stores
+//      the RX value too.
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
+#include <QScopeGuard>
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
@@ -532,20 +535,27 @@ private slots:
                     ctrl.onMoxHardwareFlipped(isTx);
                 }, Qt::QueuedConnection);
 
+        // Every row shares the MAC: a marker shows which save each row made.
+        const QString valueKey = QStringLiteral("options/stepAtt/rx1Value");
+        constexpr int kNotSaved = 99;
+        s.setHardwareValue(mac, valueKey, QString::number(kNotSaved));
+        s.setHardwareValue(mac, bandKey, QString::number(kNotSaved));
+
         mox->setMox(true);
         QTRY_VERIFY(rig.model.mox());
         QTRY_COMPARE(flips, (QList<bool>{true}));
         QCOMPARE(ctrl.attenuatorDb(), 31);   // force-31 (PS off + flag)
 
         if (operatorDisconnect) {
+            // The teardown saves while keyed (checked below).
             rig.model.disconnectFromRadio();
             ctrl.setRadioConnection(nullptr);   // as MainWindow does
-            // The teardown saved while keyed: the RX value, never 31.
-            QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Value")).toInt(), 5);
-            QCOMPARE(s.hardwareValue(mac, bandKey).toInt(), 5);
         } else {
+            // A lost link saves nothing (no teardown); a later disconnect
+            // does, after the unkey below.
             rig.conn.setStateForTest(ConnectionState::LinkLost);
             rig.model.onConnectionStateChangedForTest(ConnectionState::LinkLost);
+            QCOMPARE(s.hardwareValue(mac, valueKey).toInt(), kNotSaved);
         }
         QTRY_COMPARE_WITH_TIMEOUT(flips.size(), 2, 5000);
         QCOMPARE(flips.last(), false);
@@ -553,6 +563,13 @@ private slots:
         pump();
         QCOMPARE(flips.size(), 2);
         QCOMPARE(ctrl.attenuatorDb(), 5);    // put back at the unkey
+        if (!operatorDisconnect) {
+            rig.model.disconnectFromRadio();
+            ctrl.setRadioConnection(nullptr);
+        }
+        // Either save stored the RX value, never 31.
+        QCOMPARE(s.hardwareValue(mac, valueKey).toInt(), 5);
+        QCOMPARE(s.hardwareValue(mac, bandKey).toInt(), 5);
 
         // The unkey cleared what the key saved: the next over saves afresh
         // and comes back to the new RX value, not to 5.

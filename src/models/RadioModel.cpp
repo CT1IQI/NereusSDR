@@ -27379,9 +27379,11 @@ void RadioModel::teardownConnection()
     }
 
     // Issue #177 — clear any in-flight TUN-off bookkeeping.  If we are
-    // tearing down mid-walk, MoxController::rxReady will never fire (timers
-    // are stopped) so the deferred completion would otherwise stay armed
-    // across the next connect.  Clearing the latch + m_isTuning matches
+    // tearing down mid-walk, MoxController::rxReady comes only after this
+    // call returns, on the walk's timers (issue #434 follow-up), so the
+    // deferred completion would otherwise stay armed across the next
+    // connect; with the latch clear, that rxReady finds nothing to do.
+    // Clearing the latch + m_isTuning matches
     // Thetis chkTUN_CheckedChanged's _tuning=false reset (console.cs:30122
     // [v2.10.3.13]) at session end.
     m_pendingTuneOff = false;
