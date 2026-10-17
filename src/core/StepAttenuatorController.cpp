@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434 follow-up: a band change while keyed (RX1 or
+//                 RX2) keeps the RX S-ATT and preamp for the band left and
+//                 restores the band entered's at the unkey.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16 — Issue #434 follow-up: a save while keyed (a disconnect
 //                 while keyed) stores the RX S-ATT and preamp the key saved.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -374,7 +378,14 @@ void StepAttenuatorController::setBand(Band band)
     }
 
     // Save current ATT/preamp to old band.
-    m_bandState[static_cast<int>(m_currentBand)] = { m_attDb, m_preampMode };
+    // Issue #434 follow-up: while keyed the band left keeps the RX values
+    // the key saved, not the TX ones in their place (see the stash comment
+    // in onMoxHardwareFlipped: that slot must survive the TX window).
+    const bool attHeld = rxAttHeldForTx();
+    const bool preampHeld = rxPreampHeldForTx();
+    m_bandState[static_cast<int>(m_currentBand)] = {
+        attHeld ? m_savedRxAttDbForTx : m_attDb,
+        preampHeld ? m_savedPreampMode : m_preampMode };
 
     m_currentBand = band;
 
@@ -394,7 +405,12 @@ void StepAttenuatorController::setBand(Band band)
         // R-R3-46: within this radio's range (a band remembered at 45 dB
         // reads 31 on a radio that stops at 31, as the radio clamps it).
         const int restoredDb = std::clamp(it->second.attDb, m_minAttDb, m_maxAttDb);
-        if (restoredDb != m_attDb) {
+        if (attHeld) {
+            // Issue #434 follow-up: keyed, the TX value stays on the radio
+            // and the readout; the band entered's RX value is what the
+            // unkey puts back.
+            m_savedRxAttDbForTx = restoredDb;
+        } else if (restoredDb != m_attDb) {
             m_attDb = restoredDb;
             if (m_bandRestoreToRadio && !m_isMox) {
                 // R-R3-46 / R-R3-11: to slice A's ADC (and the linked one).
@@ -403,13 +419,23 @@ void StepAttenuatorController::setBand(Band band)
             emit attenuationChanged(m_attDb);
         }
         const PreampMode restoredPreamp = clampPreampForBoard(it->second.preamp);
-        if (restoredPreamp != m_preampMode) {
+        if (preampHeld) {
+            // Issue #434 follow-up: keyed, the preamp stays Off; the unkey
+            // restores the band entered's mode.
+            m_savedPreampMode = restoredPreamp;
+        } else if (restoredPreamp != m_preampMode) {
             m_preampMode = restoredPreamp;
             if (m_bandRestoreToRadio && !m_isMox) {
                 // Level Cal: the mode's whole drive, as RX1PreampMode sends.
                 applyPreampDrive();
             }
             emit preampModeChanged(m_preampMode);
+        }
+        // Issue #434 follow-up: nothing goes to the radio while keyed, so
+        // the band entered's values go on the fall, after the unkey has
+        // put the RX ones back.
+        if (m_bandRestoreToRadio && m_isMox) {
+            m_bandRestoreHeldForMox = true;
         }
     }
 
@@ -669,6 +695,18 @@ bool StepAttenuatorController::rx2PreampPresent() const noexcept
     default:
         return false;
     }
+}
+
+bool StepAttenuatorController::rxAttHeldForTx() const noexcept
+{
+    return m_isMox && m_savedRxAttDbValid;
+}
+
+bool StepAttenuatorController::rxPreampHeldForTx() const noexcept
+{
+    // The unkey restores the saved modes only with ATT on TX on
+    // (onMoxHardwareFlipped), so they stand in only then.
+    return m_isMox && m_savedRxPreampValid && m_attOnTxEnabled;
 }
 
 void StepAttenuatorController::applyRx2PreampDrive()
@@ -1072,10 +1110,11 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // Issue #434: in Thetis each MOX change, its Thread.Sleep delays
             // included, runs to its end in one call, so the key's
             // HdwMOXChanged (console.cs:29633) and the unkey's
-            // (console.cs:29675) [v2.10.3.15] always take turns.  MoxController emits
-            // hardwareFlipped(false) only after its unkey timers, and a key
-            // inside that wait stops them, so a second key can arrive with
-            // the preamp already forced Off.  Save only on the first key.
+            // (console.cs:29675) [v2.10.3.15] always take turns.
+            // MoxController emits hardwareFlipped(false) only after its
+            // unkey timers, and a key inside that wait stops them, so a
+            // second key can arrive with the preamp already forced Off.
+            // Save only on the first key.
             if (!m_savedRxPreampValid) {
                 saveRxPreampMode();
                 if (rx2PreampPresent()) {
@@ -1228,6 +1267,13 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
                 }
                 m_savedRxAttDbValid = false;
             }
+        }
+        // Issue #434 follow-up: a band change while keyed (setBand) sends
+        // the band entered's RX values now.
+        if (m_bandRestoreHeldForMox) {
+            m_bandRestoreHeldForMox = false;
+            sendRx1Attenuation(m_attDb);
+            applyPreampDrive();
         }
         // R-R3-46 / R-R3-11: an ADC whose attenuator moved while keyed
         // (setAdcRouting holds its sends through MOX, when attenuatorDb()
@@ -2178,7 +2224,13 @@ void StepAttenuatorController::setRx2Band(Band band)
     // had, raised or not, as Thetis's RX2Band setter saves it.
     m_rx2AutoAttHistory.clear();
     m_rx2BandAttDb[static_cast<int>(m_rx2Band)] = m_rx2AttDb;
-    m_rx2BandPreamp[static_cast<int>(m_rx2Band)] = m_rx2PreampMode;
+    // Issue #434 follow-up: while keyed the HPSDR's RX2 mode is the Off the
+    // key forced; the band left keeps the mode the key saved, and the band
+    // entered's mode is what the unkey restores.  (The key leaves RX2's
+    // attenuation alone.)
+    const bool rx2PreampHeld = rxPreampHeldForTx() && rx2PreampPresent();
+    m_rx2BandPreamp[static_cast<int>(m_rx2Band)] =
+        rx2PreampHeld ? m_savedRx2PreampMode : m_rx2PreampMode;
     m_rx2Band = band;
     const auto it = m_rx2BandAttDb.find(static_cast<int>(band));
     if (it != m_rx2BandAttDb.end()) {
@@ -2192,7 +2244,11 @@ void StepAttenuatorController::setRx2Band(Band band)
     // The restored mode reaches the radio with the ADC's value
     // (setAdcRouting sends it; the HPSDR has no second ADC to move to).
     const auto pit = m_rx2BandPreamp.find(static_cast<int>(band));
-    if (pit != m_rx2BandPreamp.end() && pit->second != m_rx2PreampMode) {
+    if (rx2PreampHeld) {
+        if (pit != m_rx2BandPreamp.end()) {
+            m_savedRx2PreampMode = pit->second;
+        }
+    } else if (pit != m_rx2BandPreamp.end() && pit->second != m_rx2PreampMode) {
         m_rx2PreampMode = pit->second;
         emit rx2PreampModeChanged(m_rx2PreampMode);
     }
@@ -2410,12 +2466,13 @@ bool StepAttenuatorController::storeSettings(const QString& mac)
     // this: its HdwMOXChanged(false) runs inside the same MOX change
     // (console.cs:29675 [v2.10.3.15]), before anything can save.
     // RX1EnableAtt is not swapped: the unkey leaves it off, as Thetis does.
-    const int rxAttDb = (m_isMox && m_savedRxAttDbValid)
-        ? m_savedRxAttDbForTx : m_attDb;
-    const PreampMode rxPreampMode = (m_isMox && m_savedRxPreampValid)
-        ? m_savedPreampMode : m_preampMode;
+    // The preamp modes are swapped only with ATT on TX on, as the unkey
+    // restores them only then.
+    const int rxAttDb = rxAttHeldForTx() ? m_savedRxAttDbForTx : m_attDb;
+    const PreampMode rxPreampMode =
+        rxPreampHeldForTx() ? m_savedPreampMode : m_preampMode;
     const PreampMode rx2PreampMode =
-        (m_isMox && m_savedRxPreampValid && rx2PreampPresent())
+        (rxPreampHeldForTx() && rx2PreampPresent())
         ? m_savedRx2PreampMode : m_rx2PreampMode;
 
     // Step attenuator global config.

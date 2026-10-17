@@ -32,6 +32,10 @@
 //   2026-09-30: Level Cal 2 re-review: a stored RX2 value above 31 loads
 //               and restores as 31. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-16: Issue #434 follow-up: a band change while keyed sends
+//               the band entered's RX value on the fall. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -45,6 +49,7 @@
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
+#include "core/WdspTypes.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -1051,6 +1056,40 @@ private slots:
         QCOMPARE(facade.settleReason("rx2AttenuationDb"),
                  QStringLiteral("RX2's attenuator goes from 0 to 31 dB."));
         QVERIFY(OperatorWording::isPlain(facade.settleReason("rx2AttenuationDb")));
+    }
+
+    // Issue #434 follow-up: on the Core (band restore to the radio), a band
+    // change while keyed sends nothing then, as the radio carries the TX
+    // value; the band entered's RX value goes on the fall, after the unkey.
+    void bandChangeWhileKeyedSendsTheBandEnteredOnTheFall()
+    {
+        StepAttenuatorController ctrl;
+        ctrl.setBand(Band::Band20m);
+        loadController(ctrl, QStringLiteral("02:00:00:00:ad:36"));
+        RecordingConnection radio;
+        ctrl.setRadioConnection(&radio);
+        ctrl.setBandRestoreToRadio(true);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setForceAttWhenPsOff(true);
+        ctrl.setPsActive(false);
+        ctrl.setCurrentDspMode(DSPMode::USB);
+        ctrl.setAttenuation(5);
+        ctrl.setBand(Band::Band40m);
+        ctrl.setAttenuation(9);
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.attenuatorDb(), 5);
+
+        ctrl.onMoxHardwareFlipped(true);
+        radio.sends.clear();
+        ctrl.setBand(Band::Band40m);
+        QCOMPARE(radio.sends, Sends{});
+        QCOMPARE(ctrl.attenuatorDb(), 31);
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.attenuatorDb(), 9);
+        QVERIFY(radio.sends.contains(QPair<int, int>(0, 9)));
+        ctrl.setRadioConnection(nullptr);
     }
 };
 
