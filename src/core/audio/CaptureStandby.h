@@ -6,9 +6,11 @@
 //
 // On macOS a bundled app's first Core Audio call reads its stored Mic Mode,
 // and when that mode is Voice Isolation the system then re-applies it for
-// 40 to 100 s, during which a process that becomes a new Core Audio client
-// blocks in its first call.  A client that is already running keeps
-// working, and the helper has no bundle id, so it never reads the Mic Mode.
+// 40 to 100 s, during which device lists and microphone opens wait on it,
+// in every audio process.  The helper has no bundle id, so it never reads
+// the Mic Mode; its warm-up first keeps the window's stored Mic Mode at
+// Standard (Options::micModeBundle), so the window's own first call finds
+// nothing to re-apply.
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md,
 // addendum of 2026-10-16.
 //
@@ -16,6 +18,9 @@
 //   2026-10-16: the persistent capture helper, held for the whole
 //               application.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: work is held at most 1 s (was 3 s), and the warm-up keeps
+//               the window's Mic Mode at Standard.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -55,8 +60,9 @@ class NEREUS_CORE_EXPORT CaptureStandby final : public QObject {
     Q_OBJECT
 
 public:
-    // How long whenWarm() holds work for a helper that has not warmed.
-    static constexpr int kWarmWaitMs = 3000;
+    // How long whenWarm() holds work for a helper that has not warmed: the
+    // first window waits no more than this for it.
+    static constexpr int kWarmWaitMs = 1000;
 
     explicit CaptureStandby(CaptureSupervisor::Options options = {},
                             int warmWaitMs = kWarmWaitMs, QObject* parent = nullptr);

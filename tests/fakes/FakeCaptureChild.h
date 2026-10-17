@@ -94,12 +94,17 @@
 //   exit-after-warm       As ready until Warm; answers it with Warmed, then
 //                         exits with code 3, as a helper that warms and
 //                         then crashes.
+//   warm-wrong-mic-mode   As ready, but its Warmed answers the Mic Mode
+//                         question its Warm did not ask: none for a Warm
+//                         that names a bundle, one for a Warm that names
+//                         none.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
 // Every scenario answers AsioDescribe with one driver, "Fake ASIO" (4
 // outputs, 2 inputs), AsioOpen with running (256 frames, 48 kHz) or, with
 // no uses, closed, and accepts AsioControlPanel (Task 15).
 // Every scenario that is still answering commands answers Warm with Warmed
-// (one input, listed at once); hang-open and its kin answer it until their
+// (one input, listed at once; a Warm that names a bundle, as a stored Voice
+// Isolation made Standard); hang-open and its kin answer it until their
 // Open, no-hello and hang-warm never (2026-10-16).
 // Every scenario exits with code 0 on stdin EOF, and on Shutdown unless
 // it is ignoring commands.  An unknown scenario exits with code 2.
@@ -134,6 +139,9 @@
 //   2026-10-16: Warm is answered with Warmed (the persistent helper);
 //               hang-warm, warm-while-marked and exit-after-warm.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a Warm that names a bundle is answered as a stored Voice
+//               Isolation made Standard; warm-wrong-mic-mode.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

@@ -9,6 +9,7 @@
 #include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
 #include "core/audio/CaptureStandby.h"
+#include "core/audio/MacMicMode.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
@@ -253,6 +254,9 @@ int main(int argc, char* argv[])
 
         parser.process(app);
         NereusSDR::AudioEngine::setDelayProbeRequestedAtStart(parser.isSet(delayProbeOpt));
+        // 2026-10-16: the window never waits for this computer's device
+        // list to open.
+        NereusSDR::AudioEngine::setDeviceListInBackground(true);
 
         // Command-line values only. The saved-Setup fallback cannot be read
         // yet: AppSettings is not loaded until CoreInit::initialize() below,
@@ -358,15 +362,19 @@ int main(int argc, char* argv[])
     // window, and stands by for the whole application: every window's
     // AudioEngine uses its supervisor, across Core switches.  A bundled
     // app's first Core Audio call makes macOS read the app's stored Mic
-    // Mode, and with Voice Isolation stored a new Core Audio client then
-    // blocks in its first call for 40 to 100 s; a running one does not, and
-    // the helper has no bundle id.  So the first session (and the
-    // microphone permission query) starts once the helper has listed its
-    // devices, or after CaptureStandby::kWarmWaitMs, from the event loop:
-    // nothing waits here, and the window's own first audio call comes after
-    // the helper's.  See
+    // Mode, and with Voice Isolation stored the system's voice processing
+    // then goes round every audio process for 40 to 100 s, and device
+    // lists and microphone opens wait on it.  The helper has no bundle id,
+    // so it reads no Mic Mode; its warm-up first sets this app's stored
+    // Mic Mode to Standard, then lists its devices.  The first session
+    // (and the microphone permission query) starts once the helper has
+    // warmed, or after CaptureStandby::kWarmWaitMs, from the event loop:
+    // nothing waits here, and the window's own first audio call comes
+    // after the helper's.  See
     // docs/architecture/2026-09-22-optional-microphone-capture-design.md.
-    auto standingCapture = std::make_unique<NereusSDR::CaptureStandby>();
+    NereusSDR::CaptureSupervisor::Options standingOptions;
+    standingOptions.micModeBundle = NereusSDR::macMainBundleId();
+    auto standingCapture = std::make_unique<NereusSDR::CaptureStandby>(standingOptions);
     NereusSDR::AudioEngine::setSharedCaptureSupervisor(standingCapture->supervisor());
 #endif
 

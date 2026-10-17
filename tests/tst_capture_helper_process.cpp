@@ -36,6 +36,9 @@
 //   2026-10-16: the helper in a test run answers Warm with nothing listed
 //               and opens nothing (the persistent helper).  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a Warm that names a bundle keeps its Mic Mode at Standard
+//               through the test run's stand-in calls, never the system's.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -71,6 +74,28 @@ const QString kMissingDevice = QStringLiteral("NereusSDR test device that does n
 // and never initialises PortAudio. main() hands it this device list, which
 // it answers from in place of the computer's real devices.
 const QString kListedDevice = QStringLiteral("NereusSDR test microphone");
+
+// 2026-10-16: the helper child's stand-in Mic Mode calls (main below):
+// "voice-isolation" stores Voice Isolation and takes a write, "refuses"
+// stores it and refuses one; unset, the child has none.
+constexpr char kHelperMicModeEnv[] = "NEREUS_TEST_HELPER_MIC_MODE";
+constexpr char kMicModeBundle[] = "com.example.window";
+
+MicModeCalls helperTestMicModeCalls(const QByteArray& script)
+{
+    static long stored = kMicModeVoiceIsolation;
+    static bool takesWrites = true;
+    takesWrites = script != "refuses";
+    MicModeCalls calls;
+    calls.read = [](const QString&) { return stored; };
+    calls.write = [](long mode, const QString&) {
+        if (takesWrites) {
+            stored = mode;
+        }
+        return takesWrites;
+    };
+    return calls;
+}
 
 // One child process plus an incremental record reader over its stdout.
 class Child {
@@ -344,11 +369,68 @@ private slots:
             QCOMPARE(warmed->inputs, -1);
             QVERIFY(warmed->startNs > 0);
             QCOMPARE(warmed->listedNs, warmed->startNs);
+            QVERIFY(!warmed->micMode);                          // Warm named no bundle
         }
         helper.send(P::encodeShutdown());
         QVERIFY(helper.finishes(3000));
         QCOMPARE(helper.process().exitCode(), 0);
         QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+    }
+
+    // 2026-10-16: a Warm that names a bundle keeps its stored Mic Mode at
+    // Standard first, and Warmed says what came of it.  A test run makes
+    // only its stand-in calls; with none, it answers that the setting is
+    // unavailable, and never reaches the system's.
+    void helperKeepsTheNamedBundleAtMicModeStandard_data()
+    {
+        QTest::addColumn<QByteArray>("script");
+        QTest::addColumn<int>("outcome");
+        QTest::addColumn<int>("before");
+        QTest::newRow("voice isolation") << QByteArray("voice-isolation")
+                                         << int(MicModeOutcome::MadeStandard)
+                                         << int(kMicModeVoiceIsolation);
+        QTest::newRow("refused") << QByteArray("refuses") << int(MicModeOutcome::Refused)
+                                 << int(kMicModeVoiceIsolation);
+        QTest::newRow("no stand-in calls") << QByteArray() << int(MicModeOutcome::Unavailable)
+                                           << int(kMicModeNotRead);
+    }
+
+    void helperKeepsTheNamedBundleAtMicModeStandard()
+    {
+        QFETCH(QByteArray, script);
+        QFETCH(int, outcome);
+        QFETCH(int, before);
+        Child helper;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.remove(QString::fromLatin1(kHelperMicModeEnv));
+        if (!script.isEmpty()) {
+            env.insert(QString::fromLatin1(kHelperMicModeEnv), QString::fromLatin1(script));
+        }
+        helper.process().setProcessEnvironment(env);
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        P::Warm warm;
+        warm.micModeBundle = QString::fromLatin1(kMicModeBundle);
+        helper.send(P::encodeWarm(warm));
+        const auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::Warmed);
+        const auto warmed = P::decodeWarmed(record->payload);
+        QVERIFY(warmed.has_value());
+        QVERIFY(warmed->micMode.has_value());
+        QCOMPARE(warmed->micMode->outcome, MicModeOutcome(outcome));
+        QCOMPARE(warmed->micMode->before, long(before));
+        QCOMPARE(warmed->inputs, -1);                           // still lists nothing
+        // The next Warm, naming no bundle, asks nothing more.
+        helper.send(P::encodeWarm());
+        const auto again = helper.next(3000);
+        QVERIFY(again.has_value());
+        const auto warmedAgain = P::decodeWarmed(again->payload);
+        QVERIFY(warmedAgain.has_value());
+        QVERIFY(!warmedAgain->micMode);
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
     }
 
     void helperReportsMissingNamedDevice()
@@ -739,6 +821,10 @@ int main(int argc, char* argv[])
 {
     if (argc > 1 && std::strcmp(argv[1], "--capture-helper") == 0) {
         NereusSDR::setCaptureHelperTestDevices({kListedDevice});
+        const QByteArray micMode = qgetenv(kHelperMicModeEnv);
+        if (!micMode.isEmpty()) {
+            NereusSDR::setCaptureHelperTestMicModeCalls(helperTestMicModeCalls(micMode));
+        }
         // LogManager::applyFilterRules applies this parent-app default.
         // An explicit launch environment rule must still enable the query,
         // then remain inherited by the helper's default QProcess launch.

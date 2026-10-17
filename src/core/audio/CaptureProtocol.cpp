@@ -19,6 +19,8 @@
 //   2026-10-16: version 5 Warm and Warmed codecs, the persistent helper's
 //               warm-up.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: Warm's Mic Mode bundle and Warmed's Mic Mode answer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureProtocol.h"
@@ -714,11 +716,85 @@ std::optional<std::int64_t> readDecimalNs(const QJsonObject& obj, const QString&
     return static_cast<std::int64_t>(value);
 }
 
+// Warmed's "micMode" words.  NoBundle never goes on the wire: a Warm with
+// no bundle is answered "not-asked".
+constexpr char kMicModeNotAsked[] = "not-asked";
+
+QString micModeWireName(MicModeOutcome outcome)
+{
+    switch (outcome) {
+    case MicModeOutcome::AlreadyStandard: return QStringLiteral("standard");
+    case MicModeOutcome::MadeStandard:    return QStringLiteral("made-standard");
+    case MicModeOutcome::Refused:         return QStringLiteral("refused");
+    case MicModeOutcome::Unavailable:     return QStringLiteral("unavailable");
+    case MicModeOutcome::NoBundle:        break;
+    }
+    return {};
+}
+
+std::optional<MicModeOutcome> micModeFromWireName(const QString& name)
+{
+    for (MicModeOutcome outcome : {MicModeOutcome::AlreadyStandard, MicModeOutcome::MadeStandard,
+                                   MicModeOutcome::Refused, MicModeOutcome::Unavailable}) {
+        if (name == micModeWireName(outcome)) {
+            return outcome;
+        }
+    }
+    return std::nullopt;
+}
+
+// The mode read before, as the outcome allows it.
+bool micModeBeforeFits(MicModeOutcome outcome, long before)
+{
+    switch (outcome) {
+    case MicModeOutcome::AlreadyStandard: return before == kMicModeStandard;
+    case MicModeOutcome::MadeStandard:    return before != kMicModeStandard && before != kMicModeNotRead;
+    case MicModeOutcome::Refused:         return before != kMicModeStandard;
+    case MicModeOutcome::Unavailable:     return before == kMicModeNotRead;
+    case MicModeOutcome::NoBundle:        break;
+    }
+    return false;
+}
+
 } // namespace
 
-QByteArray encodeWarm()
+bool isBundleId(const QString& text)
 {
-    return encodeRecord(RecordType::Warm, QByteArrayLiteral("{}"));
+    if (text.isEmpty() || text.size() > kMaxBundleIdChars) {
+        return false;
+    }
+    for (const QChar c : text) {
+        const char16_t u = c.unicode();
+        const bool letterOrDigit = (u >= u'A' && u <= u'Z') || (u >= u'a' && u <= u'z')
+                                   || (u >= u'0' && u <= u'9');
+        if (!letterOrDigit && u != u'-' && u != u'.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+QByteArray encodeWarm(const Warm& warm)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("micModeBundle"), warm.micModeBundle);
+    return checkedRecord(RecordType::Warm, toJson(obj), decodeWarm);
+}
+
+std::optional<Warm> decodeWarm(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("micModeBundle")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto bundle = readString(*obj, QStringLiteral("micModeBundle"));
+    if (!bundle || (!bundle->isEmpty() && !isBundleId(*bundle))) {
+        return std::nullopt;
+    }
+    Warm warm;
+    warm.micModeBundle = *bundle;
+    return warm;
 }
 
 QByteArray encodeWarmed(const Warmed& warmed)
@@ -727,13 +803,19 @@ QByteArray encodeWarmed(const Warmed& warmed)
     obj.insert(QStringLiteral("inputs"), warmed.inputs);
     obj.insert(QStringLiteral("startNs"), QString::number(static_cast<qlonglong>(warmed.startNs)));
     obj.insert(QStringLiteral("listedNs"), QString::number(static_cast<qlonglong>(warmed.listedNs)));
+    obj.insert(QStringLiteral("micMode"), warmed.micMode
+                                              ? micModeWireName(warmed.micMode->outcome)
+                                              : QString::fromLatin1(kMicModeNotAsked));
+    obj.insert(QStringLiteral("micModeBefore"),
+               static_cast<qint64>(warmed.micMode ? warmed.micMode->before : kMicModeNotRead));
     return checkedRecord(RecordType::Warmed, toJson(obj), decodeWarmed);
 }
 
 std::optional<Warmed> decodeWarmed(const QByteArray& json)
 {
     static const QSet<QString> kKeys = {QStringLiteral("inputs"), QStringLiteral("startNs"),
-                                        QStringLiteral("listedNs")};
+                                        QStringLiteral("listedNs"), QStringLiteral("micMode"),
+                                        QStringLiteral("micModeBefore")};
     const auto obj = parseExactObject(json, kKeys);
     if (!obj) {
         return std::nullopt;
@@ -741,13 +823,28 @@ std::optional<Warmed> decodeWarmed(const QByteArray& json)
     const auto inputs = readInteger(*obj, QStringLiteral("inputs"), -1, kMaxWarmedInputs);
     const auto startNs = readDecimalNs(*obj, QStringLiteral("startNs"));
     const auto listedNs = readDecimalNs(*obj, QStringLiteral("listedNs"));
-    if (!inputs || !startNs || !listedNs || *startNs <= 0 || *listedNs < *startNs) {
+    const auto micModeText = readString(*obj, QStringLiteral("micMode"));
+    const auto before = readInteger(*obj, QStringLiteral("micModeBefore"), kMicModeNotRead,
+                                    kMaxWarmedMicMode);
+    if (!inputs || !startNs || !listedNs || *startNs <= 0 || *listedNs < *startNs
+        || !micModeText || !before) {
         return std::nullopt;
     }
     Warmed warmed;
     warmed.inputs = static_cast<int>(*inputs);
     warmed.startNs = *startNs;
     warmed.listedNs = *listedNs;
+    if (*micModeText == QLatin1String(kMicModeNotAsked)) {
+        if (*before != kMicModeNotRead) {
+            return std::nullopt;
+        }
+        return warmed;
+    }
+    const auto outcome = micModeFromWireName(*micModeText);
+    if (!outcome || !micModeBeforeFits(*outcome, static_cast<long>(*before))) {
+        return std::nullopt;
+    }
+    warmed.micMode = MicModeResult{*outcome, static_cast<long>(*before)};
     return warmed;
 }
 

@@ -38,7 +38,10 @@
 // every setChoice() made in the same turn is known before anything opens
 // and the mic is opened before the outputs.  startMicOnly() starts the mic
 // role alone (a capture demand before the radio starts); the outputs then
-// wait, their choices kept, until startOutputs().
+// wait, their choices kept, until startOutputs().  A start asked before
+// the catalog's first device list waits for it, no longer than the
+// catalog's firstListWaitLeftMs() (R-AUD-03): on the empty list a chosen
+// device would read as not connected and open only on its retry.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
@@ -53,6 +56,10 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: a start before the catalog's first list waits for it, as
+//               long as the catalog's start would have (R-AUD-03), now
+//               that the window lists in the background.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -101,8 +108,9 @@ public:
     bool outputsStarted() const { return m_started && !m_outputsDeferred; }
     AudioRoleStatus status(AudioRole role) const;
 
-    // Scales every retry and the Bluetooth mic wait (0.01: a hundred times
-    // faster).  Applies to timers armed after the call.
+    // Scales every retry, the Bluetooth mic wait and the first-list wait
+    // (0.01: a hundred times faster).  Applies to timers armed after the
+    // call.
     void setRetryScaleForTest(double scale);
     // The armed retry's unscaled delay (250, 500, ...), -1 when none is armed.
     int retryDelayMsForTest(AudioRole role) const;
@@ -167,6 +175,8 @@ private:
     std::optional<AudioDeviceInfo> resolvePlatformMic() const;
 
     void start();
+    bool waitsForFirstList();
+    void endFirstListWait();
     void evaluate(AudioRole role, bool defaultMoved);
     void evaluateOff(AudioRole role);
     void evaluateChosen(AudioRole role, bool defaultMoved);
@@ -196,6 +206,10 @@ private:
     bool m_outputsHeld = false;
     bool m_outputsDeferred = false;   // startMicOnly(): the outputs wait for startOutputs()
     QTimer m_bluetoothWait;
+    QTimer m_firstListWait;                // R-AUD-03: a start asked before the first list
+    bool m_firstListWaitOver = false;      // listed, or waited what the catalog had left
+    bool m_micAskedBeforeList = false;     // startMicOnly() during the wait
+    bool m_outputsAskedBeforeList = false; // start() or startOutputs() during the wait
     double m_retryScale = 1.0;
 };
 

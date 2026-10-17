@@ -41,12 +41,16 @@
 //   ASIO payloads may be up to kMaxAsioJsonBytes long.
 //
 //   Warm-up (version 5, the persistent helper on macOS):
-//     Warm   window to helper  {}: list the devices of the default engine
-//            now, with no microphone open
-//     Warmed helper to window  {"inputs","startNs","listedNs"}: how many
-//            inputs it listed (-1: it listed none, as in a test run) and the
-//            steady-clock nanoseconds before its first engine call and after
-//            the list, as decimal strings
+//     Warm   window to helper  {"micModeBundle"}: keep that bundle's stored
+//            Mic Mode at Standard first ("" for none; MicModeKeeper.h),
+//            then list the devices of the default engine now, with no
+//            microphone open
+//     Warmed helper to window  {"inputs","startNs","listedNs","micMode",
+//            "micModeBefore"}: how many inputs it listed (-1: it listed
+//            none, as in a test run), the steady-clock nanoseconds at the
+//            warm-up's start and after the list, as decimal strings, and
+//            what came of the Mic Mode ("not-asked" when Warm named no
+//            bundle) with the mode it read before (-1: none read)
 //
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
@@ -68,6 +72,9 @@
 //   2026-10-16: version 5 adds Warm and Warmed, the persistent helper's
 //               warm-up.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: Warm names the bundle whose stored Mic Mode the helper
+//               keeps at Standard, and Warmed says what came of it.  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -76,6 +83,7 @@
 #include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioStreamHost.h"
+#include "core/audio/MicModeKeeper.h"
 
 #include <QByteArray>
 #include <QList>
@@ -266,18 +274,38 @@ std::optional<bool> decodeProbeEnable(const QByteArray& json);
 // ── Warm-up (version 5) ───────────────────────────────────────────────────
 
 inline constexpr int kMaxWarmedInputs = 1024;
+// A bundle id is 1 to kMaxBundleIdChars of A-Z, a-z, 0-9, hyphen and
+// period (Apple developer documentation, Bundle Resources, Information
+// Property List, CFBundleIdentifier); the length bound is ours.
+inline constexpr int kMaxBundleIdChars = 255;
+// The largest stored Mic Mode carried; macOS 27 numbers three (0 to 2).
+inline constexpr long kMaxWarmedMicMode = 1024;
+
+// Warm.  micModeBundle: the bundle whose stored Mic Mode the helper keeps
+// at Standard before its first engine call; empty for none.
+struct Warm {
+    QString micModeBundle;
+};
+
+bool isBundleId(const QString& text);
 
 // The helper's answer to Warm.  inputs -1..kMaxWarmedInputs (-1: nothing
 // was listed); startNs above 0 and listedNs at or after it, both
 // std::chrono::steady_clock nanoseconds (audioProbeNowNs), carried as
-// canonical decimal strings like ProbeHit's.
+// canonical decimal strings like ProbeHit's.  micMode is empty when Warm
+// named no bundle, else what came of it (never NoBundle); micMode->before
+// is kMicModeNotRead or 0..kMaxWarmedMicMode, and as the outcome says:
+// Standard for AlreadyStandard, another mode for MadeStandard, none read
+// for Unavailable.
 struct Warmed {
     int inputs = -1;
     std::int64_t startNs = 0;
     std::int64_t listedNs = 0;
+    std::optional<MicModeResult> micMode;
 };
 
-QByteArray encodeWarm();                 // payload is the empty JSON object {}
+QByteArray encodeWarm(const Warm& warm = {});
+std::optional<Warm> decodeWarm(const QByteArray& json);
 QByteArray encodeWarmed(const Warmed& warmed);
 std::optional<Warmed> decodeWarmed(const QByteArray& json);
 

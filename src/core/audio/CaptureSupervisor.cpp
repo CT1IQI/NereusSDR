@@ -53,6 +53,10 @@
 //               for it (no open deadline until Warmed); the warm-up has its
 //               own bound, warmTimeoutMs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: Warm names Options::micModeBundle until a Warmed has
+//               answered for it, and the window logs that answer in one
+//               line.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -65,6 +69,7 @@
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
+#include "core/audio/MicModeKeeper.h"
 #include "core/audio/NativeAudioFirstCall.h"
 
 #include <QCoreApplication>
@@ -615,7 +620,19 @@ private:
             return;
         }
         m_warmSent = true;
-        write(P::encodeWarm());
+        P::Warm warm;
+        if (!m_micModeAnswered) {
+            warm.micModeBundle = m_options.micModeBundle;
+        }
+        if (!warm.micModeBundle.isEmpty() && !P::isBundleId(warm.micModeBundle)) {
+            qCWarning(lcAudio).noquote()
+                << QStringLiteral("capture: \"%1\" is no bundle id; Mic Mode left as it is")
+                       .arg(warm.micModeBundle);
+            m_micModeAnswered = true;
+            warm.micModeBundle.clear();
+        }
+        m_warmAskedMicMode = !warm.micModeBundle.isEmpty();
+        write(P::encodeWarm(warm));
         m_warmClock.start();
         m_warmTimer->start(m_options.warmTimeoutMs);
     }
@@ -651,6 +668,12 @@ private:
             protocolError(QStringLiteral("a warm-up answer nobody asked for"));
             return;
         }
+        if (warmed->micMode.has_value() != m_warmAskedMicMode) {
+            protocolError(m_warmAskedMicMode
+                              ? QStringLiteral("a warm-up answer with no Mic Mode answer")
+                              : QStringLiteral("a Mic Mode answer nobody asked for"));
+            return;
+        }
         m_warmAnswered = true;
         m_warmTimer->stop();
         m_standbyRespawns = kStandbyRespawnsPerWarm;
@@ -670,11 +693,22 @@ private:
             against = QStringLiteral("the window had made no native audio call by then");
         }
         qCInfo(lcAudio).noquote()
-            << QStringLiteral("capture: helper %1 %2 in %3 ms, at steady %4 ms, %5 ms after it "
-                              "was started; %6")
+            << QStringLiteral("capture: helper %1 warmed (%2) in %3 ms, at steady %4 ms, %5 ms "
+                              "after it was started; %6")
                    .arg(QString::number(pid), listed, ms(warmed->listedNs - warmed->startNs),
                         QString::number(warmed->listedNs / 1'000'000),
                         ms(warmed->listedNs - m_spawnNs), against);
+        if (warmed->micMode) {
+            m_micModeAnswered = true;
+            const MicModeLogLine line = micModeLogLine(*warmed->micMode);
+            if (line.text.isEmpty()) {
+                qCDebug(lcAudio) << "Mic Mode: Standard for this app";
+            } else if (line.warning) {
+                qCWarning(lcAudio).noquote() << line.text;
+            } else {
+                qCInfo(lcAudio).noquote() << line.text;
+            }
+        }
         m_publishWarmed(pid);
         // A generation asked for during the warm-up opens now.
         if (m_open && !m_dying && !m_stopGenerationOpen) {
@@ -1476,6 +1510,7 @@ private:
         m_stopGenerationOpen = false;
         m_warmSent = false;
         m_warmAnswered = false;
+        m_warmAskedMicMode = false;
     }
 
     void afterProcessGone()
@@ -1598,6 +1633,8 @@ private:
     bool m_pendingSpawn = false;
     bool m_warmSent = false;                  // this process was sent Warm
     bool m_warmAnswered = false;              // and answered Warmed
+    bool m_warmAskedMicMode = false;          // its Warm named micModeBundle
+    bool m_micModeAnswered = false;           // a Warmed answered for micModeBundle (any process)
     std::int64_t m_spawnNs = 0;               // audioProbeNowNs() at spawn
 
     // Generation.

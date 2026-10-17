@@ -44,6 +44,9 @@
 //               warm-up, which has its own bound (Options::warmTimeoutMs,
 //               WarmDeadline).  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: Options::micModeBundle, the bundle whose stored Mic Mode
+//               the helper keeps at Standard at its first warm-up.  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -81,6 +84,10 @@ struct CaptureSupervisorOptions {
     // A standing helper's warm-up (2026-10-16): its first audio call can
     // wait out a macOS Mic Mode re-apply, 40 to 100 s.
     int warmTimeoutMs = 120000;
+    // The window's bundle id (2026-10-16), empty for none: Warm asks the
+    // helper to keep its stored Mic Mode at Standard, until one helper has
+    // answered (MicModeKeeper.h).
+    QString micModeBundle;
 };
 
 // Owns the helper process on a private I/O thread and publishes its status.
@@ -102,6 +109,9 @@ struct CaptureSupervisorOptions {
 // standing helper that ends (killed past a deadline, exited, failed) is
 // replaced by one fresh helper at once, and by another only after that one
 // answered Warmed.  The other deadlines and kills are as for any helper.
+// With Options::micModeBundle set, Warm first has the helper keep that
+// bundle's stored Mic Mode at Standard, until a Warmed has answered for it;
+// the answer is logged in one line (MicModeKeeper.h).
 //
 // Each generation gets its own shared-memory region and wake (CaptureShm),
 // handed to the helper with AttachRing; the helper builds the clock

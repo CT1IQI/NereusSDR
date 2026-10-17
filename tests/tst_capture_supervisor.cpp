@@ -63,6 +63,11 @@
 //               CaptureStandby holds work until the helper has warmed or
 //               its bound.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: Warm names the window's bundle for its Mic Mode until a
+//               helper has answered for it, and the answer is logged once;
+//               an invalid bundle id is never sent; a Warmed out of step
+//               with its Warm is a protocol error.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -161,15 +166,16 @@ struct Recorder {
     std::vector<Status> seen;
 };
 
-// Counts the warnings that contain a text, from any thread, while it lives;
-// every message still reaches the test log.
+// Counts the warnings (or messages of another type) that contain a text,
+// from any thread, while it lives; every message still reaches the test log.
 class WarningWatch {
 public:
-    explicit WarningWatch(QString text)
+    explicit WarningWatch(QString text, QtMsgType type = QtWarningMsg)
         : m_previous(qInstallMessageHandler(&WarningWatch::handle))
     {
         QMutexLocker lock(&s_mutex);
         s_text = std::move(text);
+        s_type = type;
         s_count = 0;
         s_previous = m_previous;
     }
@@ -189,7 +195,7 @@ private:
         QtMessageHandler previous = nullptr;
         {
             QMutexLocker lock(&s_mutex);
-            if (type == QtWarningMsg && message.contains(s_text)) {
+            if (type == s_type && message.contains(s_text)) {
                 ++s_count;
             }
             previous = s_previous;
@@ -202,6 +208,7 @@ private:
     QtMessageHandler m_previous;
     static inline QMutex s_mutex;
     static inline QString s_text;
+    static inline QtMsgType s_type = QtWarningMsg;
     static inline int s_count = 0;
     static inline QtMessageHandler s_previous = nullptr;
 };
@@ -1640,6 +1647,112 @@ private slots:
         QCOMPARE(supervisor.helperProcessId(), qint64(0));
         QCOMPARE(supervisor.lastHelperProcessId(), fourth);
         QCOMPARE(supervisor.status().state, State::Closed);     // no microphone was asked for
+    }
+
+    // ── The window's Mic Mode (2026-10-16) ──────────────────────────────────
+
+    // Warm names the window's bundle until a helper has answered for it:
+    // the first helper keeps the Mic Mode at Standard, and its replacements
+    // are not asked again.  The window logs the answer once.  (The fake
+    // answers a Warm that names a bundle as Voice Isolation made Standard,
+    // and one that names none with no Mic Mode answer.)
+    void standbyKeepsTheWindowsMicModeOnce()
+    {
+        WarningWatch line(QStringLiteral("Mic Mode: set to Standard for this app; it was "
+                                         "Voice Isolation"),
+                          QtInfoMsg);
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("exit-after-warm"));
+        options.micModeBundle = QStringLiteral("com.example.window");
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 4, 2 * kHelperStartMs);
+        QCOMPARE(line.count(), 1);
+    }
+
+    // A helper that ends in its warm-up has not answered for the Mic Mode,
+    // so the next helper's Warm names the bundle again.
+    void aHelperEndedInItsWarmUpLeavesTheMicModeToTheNext()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        WarmHold hold;
+        QVERIFY(hold.isValid());
+        WarningWatch line(QStringLiteral("Mic Mode: set to Standard for this app"), QtInfoMsg);
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("warm-while-marked"));
+        options.micModeBundle = QStringLiteral("com.example.window");
+        options.warmTimeoutMs = 1500;                           // 120000 in production
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        const qint64 stuck = waitForPid(supervisor, kHelperStartMs);
+        QVERIFY(stuck > 0);
+        QVERIFY(markers.waitHanging(stuck, kHelperStartMs));
+        QVERIFY(waitProcessGone(stuck, options.warmTimeoutMs + 3000));  // killed
+        QVERIFY(hold.release());                                // the next one answers
+        QTRY_COMPARE_WITH_TIMEOUT(warmed.size(), 1, 2 * kHelperStartMs);
+        QVERIFY(warmed.at(0).at(0).toLongLong() != stuck);
+        QCOMPARE(line.count(), 1);
+    }
+
+    // With no bundle (nereusd, a bare binary), Warm asks nothing and the
+    // window logs no Mic Mode line.  (A Mic Mode answer to it would be a
+    // protocol error, and the helper would never be reported warmed.)
+    void standbyWithoutABundleAsksNoMicMode()
+    {
+        WarningWatch line(QStringLiteral("Mic Mode:"), QtInfoMsg);
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QTRY_COMPARE_WITH_TIMEOUT(warmed.size(), 1, kHelperStartMs);
+        QCOMPARE(line.count(), 0);
+    }
+
+    // A bundle id that is not one is never sent: the window warns once and
+    // its helpers warm with no Mic Mode asked.  (Sent, it would make no
+    // Warm record at all, and no helper would warm.)
+    void standbyWithAnInvalidBundleIdAsksNoMicMode()
+    {
+        WarningWatch warning(QStringLiteral("capture: \"not a bundle id\" is no bundle id; "
+                                            "Mic Mode left as it is"));
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("exit-after-warm"));
+        options.micModeBundle = QStringLiteral("not a bundle id");
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 2, 2 * kHelperStartMs);
+        QCOMPARE(warning.count(), 1);
+    }
+
+    // A Warmed out of step with its Warm (no Mic Mode answer when one was
+    // asked, or one nobody asked for) is a protocol error: the helper is
+    // killed and never reported warmed.
+    void warmedMicModeOutOfStepIsAProtocolError_data()
+    {
+        QTest::addColumn<QString>("bundle");
+        QTest::addColumn<QString>("detail");
+        QTest::newRow("asked, not answered")
+            << QStringLiteral("com.example.window")
+            << QStringLiteral("a warm-up answer with no Mic Mode answer");
+        QTest::newRow("answered, not asked")
+            << QString() << QStringLiteral("a Mic Mode answer nobody asked for");
+    }
+
+    void warmedMicModeOutOfStepIsAProtocolError()
+    {
+        QFETCH(QString, bundle);
+        QFETCH(QString, detail);
+        WarningWatch error(QStringLiteral("capture: protocol error from helper: ") + detail);
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("warm-wrong-mic-mode"));
+        options.micModeBundle = bundle;
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        const qint64 first = waitForStartedPid(supervisor, kHelperStartMs);
+        QVERIFY(first > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(error.count() >= 1, kHelperStartMs);
+        QVERIFY(waitProcessGone(first, 3000));
+        QCOMPARE(warmed.size(), 0);
     }
 
     // ── CaptureStandby (2026-10-16) ─────────────────────────────────────────

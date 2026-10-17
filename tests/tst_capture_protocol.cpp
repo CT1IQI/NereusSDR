@@ -16,6 +16,9 @@
 //   2026-10-16: version 5, Warm and Warmed (the persistent helper) and
 //               their rejections.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: Warm's Mic Mode bundle and Warmed's Mic Mode answer, and
+//               their rejections.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1305,7 +1308,61 @@ private slots:
         const QByteArray rec = encodeWarm();
         QCOMPARE(quint8(rec[4]), quint8(kVersion));
         QCOMPARE(quint8(rec[5]), quint8(RecordType::Warm));
-        QCOMPARE(payloadOf(rec), QByteArray("{}"));
+        QCOMPARE(payloadOf(rec), QByteArray(R"({"micModeBundle":""})"));
+        const auto decoded = decodeWarm(payloadOf(rec));
+        QVERIFY(decoded);
+        QVERIFY(decoded->micModeBundle.isEmpty());
+    }
+
+    void warmNamesTheMicModeBundle()
+    {
+        Warm warm;
+        warm.micModeBundle = QStringLiteral("com.example.Window-2");
+        const QByteArray rec = encodeWarm(warm);
+        QCOMPARE(payloadOf(rec), QByteArray(R"({"micModeBundle":"com.example.Window-2"})"));
+        const auto decoded = decodeWarm(payloadOf(rec));
+        QVERIFY(decoded);
+        QCOMPARE(decoded->micModeBundle, warm.micModeBundle);
+        // The longest bundle id carried.
+        warm.micModeBundle = QString(kMaxBundleIdChars, QLatin1Char('a'));
+        QVERIFY(decodeWarm(payloadOf(encodeWarm(warm))));
+    }
+
+    void warmRejections()
+    {
+        // No longer the empty object: the key is always there.
+        QVERIFY(!decodeWarm(QByteArray("{}")));
+        QVERIFY(!decodeWarm(QByteArray(R"({"micModeBundle":"a","x":1})")));
+        QVERIFY(!decodeWarm(QByteArray(R"({"micModeBundle":1})")));
+        QVERIFY(!decodeWarm(QByteArray(R"({"micModeBundle":null})")));
+        QVERIFY(!decodeWarm(QByteArray("not json")));
+        // Only a bundle id: letters, digits, hyphen and period.
+        for (const char* bad : {"com.example window", "com/example", "com.example\u00e9",
+                                "com.example_window", "com.example;rm", "-\n"}) {
+            const QByteArray json = QByteArray(R"({"micModeBundle":")") + bad + "\"}";
+            QVERIFY2(!decodeWarm(json), json.constData());
+        }
+        Warm tooLong;
+        tooLong.micModeBundle = QString(kMaxBundleIdChars + 1, QLatin1Char('a'));
+        QVERIFY(encodeWarm(tooLong).isEmpty());
+        QVERIFY(!decodeWarm(QByteArray(R"({"micModeBundle":")")
+                            + QByteArray(kMaxBundleIdChars + 1, 'a') + "\"}"));
+        Warm spaced;
+        spaced.micModeBundle = QStringLiteral("com.example window");
+        QVERIFY(encodeWarm(spaced).isEmpty());
+    }
+
+    void bundleIds()
+    {
+        QVERIFY(isBundleId(QStringLiteral("com.boydsoftprez.NereusSDR")));
+        QVERIFY(isBundleId(QStringLiteral("a")));
+        QVERIFY(isBundleId(QStringLiteral("A-9.z")));
+        QVERIFY(!isBundleId(QString()));
+        QVERIFY(!isBundleId(QStringLiteral("com.example window")));
+        QVERIFY(!isBundleId(QStringLiteral("com.example_window")));
+        QVERIFY(!isBundleId(QString::fromUtf8("com.exampl\u00e9")));
+        QVERIFY(isBundleId(QString(kMaxBundleIdChars, QLatin1Char('a'))));
+        QVERIFY(!isBundleId(QString(kMaxBundleIdChars + 1, QLatin1Char('a'))));
     }
 
     void warmedRoundTrip_data()
@@ -1336,36 +1393,86 @@ private slots:
         QCOMPARE(quint8(rec[5]), quint8(RecordType::Warmed));
         // The times are decimal strings, so the 64-bit values are exact.
         const QJsonObject obj = objectOf(rec);
-        QCOMPARE(obj.size(), 3);
+        QCOMPARE(obj.size(), 5);
         QCOMPARE(obj.value("inputs").toInt(), inputs);
         QCOMPARE(obj.value("startNs").toString(), QString::number(startNs));
         QCOMPARE(obj.value("listedNs").toString(), QString::number(listedNs));
+        QCOMPARE(obj.value("micMode").toString(), QStringLiteral("not-asked"));
+        QCOMPARE(obj.value("micModeBefore").toInt(), -1);
         const auto decoded = decodeWarmed(payloadOf(rec));
         QVERIFY(decoded);
         QCOMPARE(decoded->inputs, inputs);
         QCOMPARE(qint64(decoded->startNs), startNs);
         QCOMPARE(qint64(decoded->listedNs), listedNs);
+        QVERIFY(!decoded->micMode);
+    }
+
+    void warmedMicModeRoundTrip_data()
+    {
+        QTest::addColumn<int>("outcome");
+        QTest::addColumn<int>("before");
+        QTest::addColumn<QString>("wire");
+        QTest::newRow("standard") << int(MicModeOutcome::AlreadyStandard) << 0
+                                  << QStringLiteral("standard");
+        QTest::newRow("voice isolation made standard")
+            << int(MicModeOutcome::MadeStandard) << 2 << QStringLiteral("made-standard");
+        QTest::newRow("wide spectrum made standard")
+            << int(MicModeOutcome::MadeStandard) << 1 << QStringLiteral("made-standard");
+        QTest::newRow("largest mode") << int(MicModeOutcome::MadeStandard)
+                                      << int(kMaxWarmedMicMode) << QStringLiteral("made-standard");
+        QTest::newRow("refused") << int(MicModeOutcome::Refused) << 2 << QStringLiteral("refused");
+        QTest::newRow("read failed") << int(MicModeOutcome::Refused) << -1
+                                     << QStringLiteral("refused");
+        QTest::newRow("unavailable") << int(MicModeOutcome::Unavailable) << -1
+                                     << QStringLiteral("unavailable");
+    }
+
+    void warmedMicModeRoundTrip()
+    {
+        QFETCH(int, outcome);
+        QFETCH(int, before);
+        QFETCH(QString, wire);
+        Warmed warmed;
+        warmed.inputs = 2;
+        warmed.startNs = 10;
+        warmed.listedNs = 12;
+        warmed.micMode = MicModeResult{MicModeOutcome(outcome), long(before)};
+        const QByteArray rec = encodeWarmed(warmed);
+        QVERIFY(!rec.isEmpty());
+        const QJsonObject obj = objectOf(rec);
+        QCOMPARE(obj.value("micMode").toString(), wire);
+        QCOMPARE(obj.value("micModeBefore").toInt(), before);
+        const auto decoded = decodeWarmed(payloadOf(rec));
+        QVERIFY(decoded);
+        QVERIFY(decoded->micMode);
+        QCOMPARE(decoded->micMode->outcome, MicModeOutcome(outcome));
+        QCOMPARE(decoded->micMode->before, long(before));
     }
 
     void warmedRejections()
     {
-        QVERIFY(decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12"})")));
+        // The fields after "inputs", "startNs" and "listedNs" in every case.
+        const QByteArray asked = R"(,"micMode":"not-asked","micModeBefore":-1})";
+        const auto warmedJson = [&asked](const char* head) { return QByteArray(head) + asked; };
+        QVERIFY(decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"10","listedNs":"12")")));
         // Out of range: inputs, a start at or before 0, a list before the start.
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":-2,"startNs":"10","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":1025,"startNs":"10","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2.5,"startNs":"10","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"0","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"-5","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"12","listedNs":"10"})")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":-2,"startNs":"10","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":1025,"startNs":"10","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2.5,"startNs":"10","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"0","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"-5","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"12","listedNs":"10")")));
         // Only the canonical decimal strings.
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":10,"listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"010","listedNs":"12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"+12"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"9223372036854775808"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":"2","startNs":"10","listedNs":"12"})")));
-        // The exact key set.
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10"})")));
-        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12","x":1})")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":10,"listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"010","listedNs":"12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"10","listedNs":"+12")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"10","listedNs":"9223372036854775808")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":"2","startNs":"10","listedNs":"12")")));
+        // The exact key set: the version-5 record before the Mic Mode no
+        // longer decodes.
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"10")")));
+        QVERIFY(!decodeWarmed(warmedJson(R"({"inputs":2,"startNs":"10","listedNs":"12","x":1)")));
         QVERIFY(!decodeWarmed(QByteArray(R"({})")));
         QVERIFY(!decodeWarmed(QByteArray("not json")));
         QVERIFY(!decodeWarmed(QByteArray(kMaxJsonBytes + 1, ' ')));
@@ -1374,6 +1481,46 @@ private slots:
         bad.inputs = 2;
         bad.startNs = 12;
         bad.listedNs = 10;
+        QVERIFY(encodeWarmed(bad).isEmpty());
+    }
+
+    // The Mic Mode answer: a known word, and a mode read before that fits it.
+    void warmedMicModeRejections()
+    {
+        const auto json = [](const char* micMode, const char* before) {
+            return QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12","micMode":)") + micMode
+                   + R"(,"micModeBefore":)" + before + "}";
+        };
+        QVERIFY(decodeWarmed(json(R"("made-standard")", "2")));
+        QVERIFY(!decodeWarmed(json(R"("no-bundle")", "-1")));
+        QVERIFY(!decodeWarmed(json(R"("Standard")", "0")));
+        QVERIFY(!decodeWarmed(json(R"("")", "-1")));
+        QVERIFY(!decodeWarmed(json("0", "0")));
+        QVERIFY(!decodeWarmed(json(R"("made-standard")", "\"2\"")));
+        QVERIFY(!decodeWarmed(json(R"("made-standard")", "2.5")));
+        // Out of range.
+        QVERIFY(!decodeWarmed(json(R"("refused")", "-2")));
+        QVERIFY(!decodeWarmed(json(R"("refused")", "1025")));
+        // A mode before that the outcome does not allow.
+        QVERIFY(!decodeWarmed(json(R"("not-asked")", "0")));
+        QVERIFY(!decodeWarmed(json(R"("not-asked")", "2")));
+        QVERIFY(!decodeWarmed(json(R"("standard")", "2")));
+        QVERIFY(!decodeWarmed(json(R"("standard")", "-1")));
+        QVERIFY(!decodeWarmed(json(R"("made-standard")", "0")));
+        QVERIFY(!decodeWarmed(json(R"("made-standard")", "-1")));
+        QVERIFY(!decodeWarmed(json(R"("refused")", "0")));      // Standard is never refused
+        QVERIFY(!decodeWarmed(json(R"("unavailable")", "2")));
+        // The encoder refuses NoBundle, which never goes on the wire, and a
+        // mode before that does not fit.
+        Warmed bad;
+        bad.inputs = 2;
+        bad.startNs = 10;
+        bad.listedNs = 12;
+        bad.micMode = MicModeResult{MicModeOutcome::NoBundle, kMicModeNotRead};
+        QVERIFY(encodeWarmed(bad).isEmpty());
+        bad.micMode = MicModeResult{MicModeOutcome::MadeStandard, kMicModeStandard};
+        QVERIFY(encodeWarmed(bad).isEmpty());
+        bad.micMode = MicModeResult{MicModeOutcome::Refused, kMaxWarmedMicMode + 1};
         QVERIFY(encodeWarmed(bad).isEmpty());
     }
 

@@ -19,6 +19,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 : setDeviceListInBackground(): the window's catalog lists
+//                 in the background, so nothing waits for this computer's
+//                 first device list (the window held its open up to 3 s
+//                 for it); the stream supervisor waits for it instead.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1593,6 +1599,17 @@ void AudioEngine::setDelayProbeRequestedAtStart(bool requested)
     delayProbeRequestedAtStart().store(requested, std::memory_order_release);
 }
 
+std::atomic<bool>& AudioEngine::deviceListInBackground()
+{
+    static std::atomic<bool> inBackground{false};
+    return inBackground;
+}
+
+void AudioEngine::setDeviceListInBackground(bool inBackground)
+{
+    deviceListInBackground().store(inBackground, std::memory_order_release);
+}
+
 // V-HW-8: the lease opens the helper; the supervisor tells it to listen
 // once it is Ready. Off: the helper is told first, then the lease goes.
 void AudioEngine::setDelayProbeEnabled(bool enabled)
@@ -1806,7 +1823,9 @@ bool AudioEngine::ensureCatalogue()
     if (savedChoicesNeedOlderDrivers()) {
         m_catalogue->wantOlderDrivers();
     }
-    m_catalogue->start();
+    m_catalogue->start(deviceListInBackground().load(std::memory_order_acquire)
+                           ? AudioDeviceCatalog::FirstList::InBackground
+                           : AudioDeviceCatalog::FirstList::Wait);
     // R-AUD-06 (round 3): the catalogue answers its rescans in the order
     // they were asked, one answer each, so each answer finishes the
     // Rescan that asked for it.  An answer that comes after its Rescan
@@ -1997,7 +2016,10 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     // Every choice is known: the supervisor starts now, so the outputs are
     // open when this returns, as the direct paths left them.  For MicOnly
     // the mic role starts alone; the outputs wait for start() or an output
-    // setting (the posted start then does nothing).
+    // setting (the posted start then does nothing).  Before the catalog's
+    // first list (the window lists in the background) the start waits for
+    // it, no longer than the catalog's start would have
+    // (IAudioDeviceCatalog::firstListWaitLeftMs()).
     if (start == DeviceStart::MicOnly) {
         m_streamSupervisor->startMicOnly();
     }

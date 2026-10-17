@@ -27,6 +27,10 @@
 //               default that is the chosen device plays as the chosen
 //               device, with no retry.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: a start before the catalog's first list waits for it, for
+//               what the catalog has left of its start's wait, and not at
+//               all once that is gone (R-AUD-03).  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -136,6 +140,19 @@ public:
     }
 
     void rescanOlderDrivers() override {}
+    bool hasListed() const override { return listedFirst; }
+    int firstListWaitLeftMs() const override { return listedFirst ? 0 : waitLeftMs; }
+
+    // As the window's catalog, which lists in the background: false until
+    // listFirst().  waitLeftMs: what is left of its start's wait for it.
+    bool listedFirst = true;
+    int waitLeftMs = 3000;
+    void listFirst()
+    {
+        listedFirst = true;
+        emit devicesChanged();
+        emit firstListed();
+    }
 
     void add(const AudioDeviceInfo& info) { list(info.direction).append(info); }
     void remove(AudioDeviceDirection direction, const QString& id)
@@ -971,6 +988,95 @@ private slots:
         QCOMPARE(changed.size(), 0);
         QCOMPARE(rig.st(AudioRole::Speakers), speakers);
         QCOMPARE(rig.st(AudioRole::TxInput), mic);
+    }
+
+    // R-AUD-03 (2026-10-16): a start asked before the catalog's first list
+    // waits for it, and the chosen devices open on that list at once:
+    // never "not connected" on the empty list, never on a retry.
+    void startBeforeTheFirstListWaitsForIt()
+    {
+        Rig rig;
+        rig.catalogue.listedFirst = false;
+        QSignalSpy changed(rig.sup.get(), &AudioStreamSupervisor::statusChanged);
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.sup->setChoice(AudioRole::TxInput, chosen(kMicUsbId, kMicUsbName));
+        rig.start();
+        QVERIFY(rig.host.opens.isEmpty());
+        QCOMPARE(changed.size(), 0);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Off);
+
+        addStandardOutputs(rig.catalogue);
+        addStandardInputs(rig.catalogue);
+        rig.catalogue.listFirst();
+        QCOMPARE(rig.host.opensFor(AudioRole::TxInput).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).last().device->id, kUsbId);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.sup->retryDelayMsForTest(AudioRole::Speakers), -1);
+        for (const QList<QVariant>& args : changed) {
+            QVERIFY(args.at(1).value<AudioRoleStatus>().reason != AudioRoleReason::NotConnected);
+        }
+    }
+
+    // startMicOnly() before the first list: the mic opens on the list and
+    // the outputs still wait for startOutputs() (the posted start adds
+    // nothing).
+    void micOnlyStartBeforeTheFirstListOpensTheMicOnTheList()
+    {
+        Rig rig;
+        rig.catalogue.listedFirst = false;
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.sup->setChoice(AudioRole::TxInput, chosen(kMicUsbId, kMicUsbName));
+        rig.sup->startMicOnly();
+        rig.start();                 // the posted start: nothing more
+        QVERIFY(rig.host.opens.isEmpty());
+
+        addStandardOutputs(rig.catalogue);
+        addStandardInputs(rig.catalogue);
+        rig.catalogue.listFirst();
+        QCOMPARE(rig.host.opens.size(), 1);
+        QCOMPARE(rig.host.opens.first().role, AudioRole::TxInput);
+        QVERIFY(!rig.sup->outputsStarted());
+
+        rig.sup->startOutputs();
+        QVERIFY(rig.sup->outputsStarted());
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).last().device->id, kUsbId);
+    }
+
+    // A first list that does not come within the catalog's wait: the roles
+    // start without it, as after a catalog start that gave up waiting, and
+    // a chosen device listed later opens on its retry.
+    void startWithoutTheFirstListAfterTheWait()
+    {
+        Rig rig;
+        rig.catalogue.listedFirst = false;
+        rig.sup->setRetryScaleForTest(0.1);   // the wait: 300 ms of the 3000 left
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.start();
+        QVERIFY(rig.host.opens.isEmpty());
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Off);
+        QTRY_COMPARE(rig.st(AudioRole::Speakers).reason, AudioRoleReason::NotConnected);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Silent);
+
+        rig.sup->setRetryScaleForTest(1000.0);
+        addStandardOutputs(rig.catalogue);
+        rig.catalogue.listFirst();
+        QCOMPARE(rig.sup->retryDelayMsForTest(AudioRole::Speakers), 250);
+    }
+
+    // The catalog's start has already waited for its first list (nereusd,
+    // whose start gave up, or a window whose list is that late): a start
+    // does not wait for it a second time.
+    void startAfterTheCatalogsWaitDoesNotWaitAgain()
+    {
+        Rig rig;
+        rig.catalogue.listedFirst = false;
+        rig.catalogue.waitLeftMs = 0;
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.start();
+        QCOMPARE(rig.st(AudioRole::Speakers).reason, AudioRoleReason::NotConnected);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Silent);
     }
 
     // A format change or reset reopens the same device.
