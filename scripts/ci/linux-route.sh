@@ -75,14 +75,22 @@ if [ -z "${RUNNER_STATUS_TOKEN:-}" ]; then
     decide box "the self-hosted runners (not checked)."
 fi
 
-if ! runners="$(curl -fsS --retry 3 --max-time 20 \
+# The reply's status and GitHub's message are printed when the check
+# fails, so a token without the permission says so in the log.
+body="$(mktemp)"
+if ! status="$(curl -sS --retry 3 --max-time 20 -o "$body" -w '%{http_code}' \
         -H "Authorization: Bearer $RUNNER_STATUS_TOKEN" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners?per_page=100")"; then
-    echo "::warning::Could not list the repository's runners; building Linux on GitHub's hosted runners."
+        "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners?per_page=100")" \
+        || [ "$status" != "200" ]; then
+    reason="$(jq -r '.message // empty' "$body" 2>/dev/null)"
+    echo "::warning::Could not list the repository's runners (HTTP ${status:-none}${reason:+: $reason}); building Linux on GitHub's hosted runners."
+    rm -f "$body"
     decide hosted "the runner check failed."
 fi
+runners="$(cat "$body")"
+rm -f "$body"
 
 if ! online="$(jq --arg label "$label" \
         '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == $label))] | length' \
