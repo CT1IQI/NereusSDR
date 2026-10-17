@@ -1067,7 +1067,10 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // Thetis modes are held (Minus20 is HPSDR_MINUS20).
             // Thetis leaves RX1EnableAtt off at the unkey; so does this.
             // Issue #434: Thetis's two HdwMOXChanged calls always take turns
-            // because its MOX change runs in one call.  MoxController emits
+            // because its MOX change runs in one call: the key's
+            // HdwMOXChanged at console.cs:29633 and the unkey's at
+            // console.cs:29675 [v2.10.3.15], with the Thread.Sleep delays
+            // between them, in the same pass.  MoxController emits
             // hardwareFlipped(false) only after its unkey timers, and a key
             // inside that wait stops them, so a second key can arrive with
             // the preamp already forced Off.  Save only on the first key.

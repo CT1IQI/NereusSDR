@@ -77,6 +77,8 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 
+#include <memory>
+
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
 #include "core/RadioConnection.h"
@@ -922,7 +924,7 @@ private slots:
     // save the TX value as the RX one.
     void rekeyBeforeTheUnkeyFlip_keepsTheRxAttenuation()
     {
-        auto* ctrl = makeStdCtrl(/*txAtt20m=*/20);
+        const std::unique_ptr<StepAttenuatorController> ctrl(makeStdCtrl(/*txAtt20m=*/20));
         ctrl->setAttenuation(5, 0);       // the operator's RX S-ATT
 
         ctrl->onMoxHardwareFlipped(true);
@@ -933,21 +935,20 @@ private slots:
         ctrl->onMoxHardwareFlipped(false);
         QCOMPARE(ctrl->attenuatorDb(), 5);    // not stuck on 31
 
-        delete ctrl;
     }
 
     // The same through the real MoxController: unkey, then key again before
     // the unkey's timers run.
     void rekeyDuringTheUnkeyWait_keepsTheRxAttenuation()
     {
-        auto* ctrl = makeStdCtrl(/*txAtt20m=*/20);
+        const std::unique_ptr<StepAttenuatorController> ctrl(makeStdCtrl(/*txAtt20m=*/20));
         ctrl->setAttenuation(5, 0);
 
         MoxController mox;
         mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
         QList<bool> flips;
-        connect(&mox, &MoxController::hardwareFlipped, ctrl,
-                [&flips, ctrl](bool isTx) {
+        connect(&mox, &MoxController::hardwareFlipped, ctrl.get(),
+                [&flips, &ctrl](bool isTx) {
                     flips.append(isTx);
                     ctrl->onMoxHardwareFlipped(isTx);
                 });
@@ -966,7 +967,6 @@ private slots:
         QCOMPARE(flips.last(), false);
         QCOMPARE(ctrl->attenuatorDb(), 5);
 
-        delete ctrl;
     }
 
     // HPSDR boards save the RX preamp mode at the key instead; a second key

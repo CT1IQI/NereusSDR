@@ -28,6 +28,10 @@
 //      Connecting and Probing, refuses a key there, and lifts on Connected.
 //   9. Fix round 2: the operator's disconnect made after such a retire, when
 //      there is no connection left to tear down, still clears the lock.
+//  10. Issue #434 follow-up: keyed, a link loss or the operator's disconnect
+//      still ends with hardwareFlipped(false), with instant and with real
+//      walk timers, so what the hardware key saved (StepAttenuatorController's
+//      RX S-ATT and preamp) is put back and cleared before the next key.
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
@@ -469,6 +473,46 @@ private slots:
         QVERIFY(rig.model.transmitLockReasonAlongside(QString()) != reason);
         QVERIFY(rig.model.moxController()->transmitBlockReason() != reason);
         QVERIFY(!rig.model.moxController()->isRadioLinkDown());
+    }
+
+    void keyedLinkLossOrDisconnectEndsWithTheUnkeyFlip_data()
+    {
+        QTest::addColumn<bool>("realTimers");
+        QTest::addColumn<bool>("operatorDisconnect");
+        QTest::newRow("instant timers, link loss") << false << false;
+        QTest::newRow("instant timers, disconnect") << false << true;
+        QTest::newRow("real timers, link loss") << true << false;
+        QTest::newRow("real timers, disconnect") << true << true;
+    }
+
+    void keyedLinkLossOrDisconnectEndsWithTheUnkeyFlip()
+    {
+        QFETCH(bool, realTimers);
+        QFETCH(bool, operatorDisconnect);
+        Rig rig;
+        MoxController* mox = rig.model.moxController();
+        if (realTimers) {
+            mox->setTimerIntervals(30, 10, 0, 10, 20, 0);
+        }
+        QList<bool> flips;
+        connect(mox, &MoxController::hardwareFlipped, this,
+                [&flips](bool isTx) { flips.append(isTx); });
+
+        mox->setMox(true);
+        QTRY_VERIFY(rig.model.mox());
+        QCOMPARE(flips, (QList<bool>{true}));
+
+        if (operatorDisconnect) {
+            rig.model.disconnectFromRadio();
+        } else {
+            rig.conn.setStateForTest(ConnectionState::LinkLost);
+            rig.model.onConnectionStateChangedForTest(ConnectionState::LinkLost);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(flips.size(), 2, 5000);
+        QCOMPARE(flips.last(), false);
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        pump();
+        QCOMPARE(flips.size(), 2);
     }
 };
 
