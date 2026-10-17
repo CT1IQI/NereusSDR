@@ -496,7 +496,7 @@ private slots:
         one.connection.cachedAddresses = {one.manualAddresses.first()};
 
         QVERIFY(store.upsert(one));
-        QVERIFY(store.rememberCoreAddresses(one.id, one.connection.identityFingerprint, QStringLiteral("[\"[2001:db8::1]:41000\"]")));
+        QVERIFY(store.rememberCoreAddresses(one.id, one.connection.identityFingerprint, QStringLiteral("[\"[2001:db8::1]:41000\"]"), {}));
         CoresSetupPage page(&store);
         page.show();
         addresses(page);
