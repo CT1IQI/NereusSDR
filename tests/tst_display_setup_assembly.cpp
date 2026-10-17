@@ -30,6 +30,7 @@
 #include "core/ControlRanges.h"
 #include "gui/SetupDialog.h"
 #include "gui/SetupPage.h"
+#include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/setup/DisplaySetupPages.h"
 #include "models/RadioModel.h"
@@ -494,6 +495,50 @@ private slots:
             dialog.selectPage(alias.first);
             QCOMPARE(tree->currentItem()->text(0), alias.second);
             QCOMPARE(dialog.findChild<QStackedWidget*>()->currentWidget(), canonical);
+        }
+    }
+
+    // Each Display pill tab's "Setup defaults" link opens the Setup page
+    // that holds that tab's defaults. FFT's sizing, size, window, Hz/bin
+    // and frame rate are on FFT & Engine, not on Spectrum.
+    void pillSetupDefaultsOpensTheTabsSetupPage() {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        QTreeWidget* tree = dialog.findChild<QTreeWidget*>();
+        QVERIFY(tree);
+        SpectrumWidget pan;
+        pan.resize(900, 600);
+        pan.loadSettings();
+        auto* panel = new SpectrumOverlayPanel(&pan);
+        connect(panel, &SpectrumOverlayPanel::openSetupRequested,
+                &dialog, &SetupDialog::selectPage);
+        using Tab = SpectrumOverlayPanel::DisplayPillTab;
+        const struct {
+            Tab tab;
+            const char* pillPage;
+            const char* setupPage;
+            const char* control;
+        } tabs[] = {
+            {Tab::Spectrum, "displayPageSpectrum", "Spectrum", "display.spectrumDefaults.detector"},
+            {Tab::Levels, "displayPageLevels", "Levels", "display.gridScales.dbMax"},
+            {Tab::Fft, "displayPageFft", "FFT & Engine", "display.spectrumDefaults.fftSize"},
+            {Tab::Waterfall, "displayPageWaterfall", "Waterfall",
+             "display.waterfallDefaults.colorScheme"},
+            {Tab::View3D, "displayPage3D", "View", "display.threeD.gain"},
+        };
+        for (const auto& tab : tabs) {
+            // Start on another Display page, so the click has to move.
+            dialog.selectPage(QStringLiteral("Multimeter"));
+            QCOMPARE(tree->currentItem()->text(0), QStringLiteral("Multimeter"));
+            panel->setDisplayPillTab(tab.tab);
+            QWidget* page = pan.findChild<QWidget*>(QString::fromLatin1(tab.pillPage));
+            QVERIFY2(page, tab.pillPage);
+            auto* link = page->findChild<QPushButton*>(QStringLiteral("pillSetupDefaults"));
+            QVERIFY2(link, tab.pillPage);
+            link->click();
+            QCOMPARE(tree->currentItem()->text(0), QString::fromLatin1(tab.setupPage));
+            QWidget* shown = dialog.findChild<QStackedWidget*>()->currentWidget();
+            QVERIFY2(byId(shown, QString::fromLatin1(tab.control)), tab.control);
         }
     }
 

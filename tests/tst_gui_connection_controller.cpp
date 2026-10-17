@@ -4,6 +4,8 @@
 //
 // no-port-check: NereusSDR-original. R-R3-38 controller presentation and
 // session-switch acceptance coverage.
+// 2026-10-17: run as three ctest entries (TestFunctionGroups). J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -29,6 +31,7 @@
 #include <chrono>
 
 #include "OperatorWording.h"
+#include "TestFunctionGroups.h"
 #include "core/AppSettings.h"
 #include "core/station/StationHandover.h"
 #include "core/security/PairingWindow.h"
@@ -1174,6 +1177,36 @@ void TestGuiConnectionController::acceptingCodeDialogAfterShutdownDoesNotStartPa
     QVERIFY(persisted.targets().isEmpty());
 }
 
-QTEST_MAIN(TestGuiConnectionController)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestGuiConnectionController test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 88 s by itself on a hosted CI runner, and past ctest's 120 s with
+    // every case still passing when the runner ran four tests at once (CI
+    // run 38999633360). Two groups run as their own ctest entries,
+    // tst_gui_connection_controller_selector and _reconnect
+    // (tests/CMakeLists.txt); the rest, with the pairing dialog cases, as
+    // tst_gui_connection_controller. The limit is not raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_GUI_CONNECTION_CONTROLLER_GROUP",
+        {{QStringLiteral("selector"),
+          {QStringLiteral("managedConnectActionOpensSelectorForEmptyLocalProfile"),
+           QStringLiteral("selectingAndCancellingEditLeaveLiveAAndDoNotDialB"),
+           QStringLiteral("explicitConnectToSavedBReplacesWholeLiveA"),
+           QStringLiteral("localRadioSuccessDismissesOnlyItsRequestedConnection"),
+           QStringLiteral("automaticLocalStartupDoesNotOpenSelector"),
+           QStringLiteral("staleAttemptCannotDismissSelector"),
+           QStringLiteral("pendingAndTransportFailureKeepSelectorOpen")}},
+         {QStringLiteral("reconnect"),
+          {QStringLiteral("closingAndReopeningDuringPendingConnectionKeepsSelectorOpen"),
+           QStringLiteral("disconnectCancelsRetryWithoutUsingHighlightedB"),
+           QStringLiteral("connectionsDisconnectReopensConnectionsOnceWithoutDialling"),
+           QStringLiteral("aManualReconnectReadsTheStoresLastAddresses"),
+           QStringLiteral("savedRowShowsLastAuthenticatedAddress"),
+           QStringLiteral("verifiedPathWinnerIsKeptWithoutAnotherSnapshot")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 
 #include "tst_gui_connection_controller.moc"

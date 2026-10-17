@@ -1,9 +1,11 @@
 name: "CodeQL"
 
+# Every push to main and once a week, not on pull requests (CI speed round,
+# 2026-10-16, approved by J.J. Boyd): CodeQL is not a required check, and on
+# every pull request it took a full Linux build's worth of runner time
+# beside the build jobs that are.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     - cron: "0 6 * * 1"

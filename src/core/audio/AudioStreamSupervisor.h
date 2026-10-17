@@ -20,11 +20,13 @@
 //   listed; leaving the list stops the retries and coming back starts the
 //   schedule again from 250 ms.
 // - Outputs on "(platform default)" follow the system default output at
-//   once (R-AUD-12).  The mic on "(platform default)" follows the default
-//   input, never while transmitting (the change applies at unkey) and
-//   never to a Bluetooth mic (R-AUD-13); a Bluetooth default at start
-//   opens the built-in input, else another input that is not Bluetooth,
-//   else nothing.  The mic is always opened on an explicit device, never
+//   once (R-AUD-12); a default change that names the device they play on
+//   (the first list of a run reports its default so) reopens nothing.
+//   The mic on "(platform default)" follows the default input, never
+//   while transmitting (the change applies at unkey) and never to a
+//   Bluetooth mic (R-AUD-13); a Bluetooth default at start opens the
+//   built-in input, else another input that is not Bluetooth, else
+//   nothing.  The mic is always opened on an explicit device, never
 //   on "whatever the engine's default is", so the engine cannot pick a
 //   Bluetooth mic by itself (D6).
 // - VAX 1 to 4 on an empty device never open anything (never the system
@@ -38,7 +40,10 @@
 // every setChoice() made in the same turn is known before anything opens
 // and the mic is opened before the outputs.  startMicOnly() starts the mic
 // role alone (a capture demand before the radio starts); the outputs then
-// wait, their choices kept, until startOutputs().
+// wait, their choices kept, until startOutputs().  A start asked before
+// the catalog's first device list waits for it, no longer than the
+// catalog's firstListWaitLeftMs() (R-AUD-03): on the empty list a chosen
+// device would read as not connected and open only on its retry.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
@@ -53,6 +58,14 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: an output on the system default is not reopened by a
+//               default change that names the device it opened on
+//               (playsOnCurrentDefault).  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-16: a start before the catalog's first list waits for it, as
+//               long as the catalog's start would have (R-AUD-03), now
+//               that the window lists in the background.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -101,8 +114,9 @@ public:
     bool outputsStarted() const { return m_started && !m_outputsDeferred; }
     AudioRoleStatus status(AudioRole role) const;
 
-    // Scales every retry and the Bluetooth mic wait (0.01: a hundred times
-    // faster).  Applies to timers armed after the call.
+    // Scales every retry, the Bluetooth mic wait and the first-list wait
+    // (0.01: a hundred times faster).  Applies to timers armed after the
+    // call.
     void setRetryScaleForTest(double scale);
     // The armed retry's unscaled delay (250, 500, ...), -1 when none is armed.
     int retryDelayMsForTest(AudioRole role) const;
@@ -129,6 +143,10 @@ private:
         bool open = false;
         bool onDefault = false;
         std::optional<AudioDeviceInfo> openDevice;
+        // onDefault: the system default's ID when it opened (empty if the
+        // list named none), so a default change that names it again is no
+        // move.
+        QString openDefaultId;
 
         // A Pending open (the mic): the device it was asked for.
         bool pending = false;
@@ -167,6 +185,8 @@ private:
     std::optional<AudioDeviceInfo> resolvePlatformMic() const;
 
     void start();
+    bool waitsForFirstList();
+    void endFirstListWait();
     void evaluate(AudioRole role, bool defaultMoved);
     void evaluateOff(AudioRole role);
     void evaluateChosen(AudioRole role, bool defaultMoved);
@@ -176,6 +196,7 @@ private:
     void attemptTarget(AudioRole role);
     void applyTargetResult(AudioRole role, AudioOpenResult result, const AudioDeviceInfo& device);
     bool openSystemDefault(AudioRole role);
+    bool playsOnCurrentDefault(AudioRole role) const;
     void ensureFallback(AudioRole role, bool defaultMoved);
     void closeIfOpen(AudioRole role);
     void markTrouble(AudioRole role, AudioRoleReason reason);
@@ -196,6 +217,10 @@ private:
     bool m_outputsHeld = false;
     bool m_outputsDeferred = false;   // startMicOnly(): the outputs wait for startOutputs()
     QTimer m_bluetoothWait;
+    QTimer m_firstListWait;                // R-AUD-03: a start asked before the first list
+    bool m_firstListWaitOver = false;      // listed, or waited what the catalog had left
+    bool m_micAskedBeforeList = false;     // startMicOnly() during the wait
+    bool m_outputsAskedBeforeList = false; // start() or startOutputs() during the wait
     double m_retryScale = 1.0;
 };
 

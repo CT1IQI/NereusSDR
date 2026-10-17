@@ -21,9 +21,20 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : makeBus() sets a stream event sink before the open;
+//                 makeStreamEventSink() takes the bus's generation, and
+//                 m_lastBusGeneration hands each one out once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-17 : pullVaxTxMicKeepingBacklog() comment: what the Mac guard
 //                 keeps, and that only the Mac has it. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 : openRemoteSpeakers() and speakersAwaitDeviceList(): a
+//                 remote window opens its speakers at window start, and
+//                 says when they wait for this computer's first device
+//                 list. beginRemotePlayback() says why it refused
+//                 (RemotePlaybackRefusal). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-16 : pullVaxTxMicKeepingBacklog() for a remote window's
 //                 uplink. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -307,6 +318,13 @@
 //               bus's clock matcher (MatcherPacketTiming), where it said
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setSharedCaptureSupervisor(): on the Mac every engine
+//               uses the application's capture supervisor and its
+//               standing helper (CaptureStandby) instead of its own.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setDeviceListInBackground(): the window's catalog lists
+//               in the background. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -353,6 +371,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <array>
@@ -402,6 +421,11 @@ struct AsioStatus {
 // plays on. The speakers carry master volume and mute; the headphones
 // carry neither (VAX design 6.3).
 enum class RemotePlaybackOutput : int { Speakers = 0, Headphones = 1 };
+
+// 2026-10-16: why beginRemotePlayback() refused. Format lasts until the
+// device or its format changes, so asking again cannot help; Unavailable
+// may clear by itself (the device comes back, the device list comes in).
+enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 };
 
 // R-R3-45: where the transmit monitor (MON) plays, chosen by the operator
 // beside the MON button. Independent of the receivers' own routes: MON is
@@ -678,8 +702,10 @@ public:
     // headphones output open (the Enabled box, or a remote window's start,
     // opens it) and fails in plain words when none is. A context on one
     // output never touches the other.
+    // `refusal`, when given, says why begin failed (None when it began).
     bool beginRemotePlayback(QString* error = nullptr,
-                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
+                             RemotePlaybackRefusal* refusal = nullptr);
     void endRemotePlayback(RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<AudioFormat> remotePlaybackFormat(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
@@ -911,6 +937,24 @@ public:
     // --audio-delay-probe: every later start() turns the probe on after it
     // has started. Process-wide; set before the engine starts.
     static void setDelayProbeRequestedAtStart(bool requested);
+    // 2026-10-16: the window: the device catalog lists in the background,
+    // so nothing that builds it (catalogue(), the device layer's start)
+    // waits for this computer's first device list; the device layer's
+    // roles wait for it instead, no longer than the catalog's start would
+    // have (IAudioDeviceCatalog::firstListWaitLeftMs()).
+    // Process-wide; set before the first catalogue() call.  Off (nereusd
+    // and the tests): the start waits for the first list up to
+    // AudioDeviceCatalog::kStartWaitMs.
+    static void setDeviceListInBackground(bool inBackground);
+
+    // 2026-10-16: engines built from now on use this capture supervisor,
+    // the application's (CaptureStandby), instead of creating their own;
+    // nullptr goes back to their own.  An engine leaves a shared supervisor
+    // running when it goes, so its standing helper serves the next engine.
+    // One engine at a time uses it (a window replaces the last).  Set it
+    // before the first engine and clear it after the last, before the
+    // supervisor goes.  GUI thread only.
+    static void setSharedCaptureSupervisor(CaptureSupervisor* supervisor);
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
     // eagerly by start() with the platform-native virtual bus
@@ -1044,6 +1088,20 @@ public:
     // setVaxBusFactoryForTest() supplies. Owner thread.
     void openVaxOutputs();
 
+    // 2026-10-16: a remote window opens its speakers at window start, as
+    // start() opens a local radio's before the radio streams, so remote
+    // playback finds them open, or the device layer opens them the moment
+    // this computer's device list comes in (speakersConfigChanged). Opened
+    // only at the Core's first audio, they failed whenever the list was
+    // still out. Does nothing while the engine runs. Owner thread.
+    void openRemoteSpeakers();
+
+    // 2026-10-16: the speakers wait for this computer's first device list:
+    // the device layer started without it (the list took longer than
+    // AudioDeviceCatalog::kStartWaitMs) and opens them when it comes in.
+    // Owner thread.
+    bool speakersAwaitDeviceList() const;
+
     // 2026-10-15: whether the VAX transmit device (what apps write to
     // "NereusSDR TX") is open: a remote window sends it as its microphone
     // when VAX is the transmit source. Owner thread.
@@ -1117,6 +1175,14 @@ public:
     // Test seam — inject a fake IAudioBus into the speakers slot so unit
     // tests can verify speakers tee without opening a PortAudio device.
     void setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus);
+
+    // Test seam (2026-10-16): what speakersAwaitDeviceList() answers, for a
+    // window test whose speakers are an injected bus; nullopt (the
+    // default) answers from the device layer.
+    void setSpeakersAwaitDeviceListForTest(std::optional<bool> waiting)
+    {
+        m_speakersAwaitDeviceListForTest = waiting;
+    }
 
     // Test seam — inject a fake IAudioBus into the headphones slot.
     void setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus);
@@ -1645,10 +1711,13 @@ private:
     // because another program holds the device (R-AUD-11).
     // `role`, when given, is the role the output plays (an ASIO use names
     // it to the helper, Task 17).
+    // `eventSink`, when given, is the bus's stream event sink, set before
+    // it opens.
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
                                        bool capture,
                                        bool* inUse = nullptr,
-                                       std::optional<AudioRole> role = std::nullopt);
+                                       std::optional<AudioRole> role = std::nullopt,
+                                       std::function<void(const AudioStreamEvent&)> eventSink = {});
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
@@ -1682,6 +1751,10 @@ private:
     // R-R3-36: (re)creates m_captureSupervisor from options, forwards its
     // status and applies m_txInputConfig. Never opens capture by itself.
     void installCaptureSupervisor(CaptureSupervisor::Options options);
+    // 2026-10-16: makes supervisor this engine's (its own or the shared
+    // one): the signal links, a held ASIO demand and m_txInputConfig.
+    void attachCaptureSupervisor(CaptureSupervisor* supervisor);
+    static QPointer<CaptureSupervisor>& sharedCaptureSupervisor();
 
     // ── Native audio plan Task 7: the device layer ──────────────────────
     // True once the catalogue and the stream supervisor run; builds them
@@ -1705,9 +1778,11 @@ private:
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
     AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
-    // The bus's stream events, posted to this thread; dropped once the
-    // role's bus has been replaced or closed.
-    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role);
+    // The stream events of the bus given `generation`, posted to this
+    // thread; dropped unless the role's generation is still that one (the
+    // bus opened and has not been replaced or closed).
+    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role,
+                                                                     quint64 generation);
     AudioOpenResult openMicRole(AudioEngineKind engine,
                                 const std::optional<AudioDeviceInfo>& device,
                                 const AudioDeviceConfig& config);
@@ -1768,7 +1843,7 @@ private:
     // m_headphonesBusMutex, as m_remotePlayback is by the speakers'.
     bool m_remoteHeadphonesPlayback{false};
     AudioFormat m_remoteHeadphonesFormat;
-    bool beginRemoteHeadphonesPlayback(QString* error);
+    bool beginRemoteHeadphonesPlayback(QString* error, RemotePlaybackRefusal* refusal);
     // Test-injected TX input only (setTxInputBusForTest); production reads
     // the capture supervisor's reader. R-R3-36.
     std::unique_ptr<IAudioBus> m_txInputBus;
@@ -1777,8 +1852,12 @@ private:
     // the capture helper. Created in the constructor; lives until the
     // engine is destroyed, so its reader pointer stays valid for the TX
     // worker across start()/stop().
+    // 2026-10-16: m_captureSupervisor is the engine's own
+    // (m_ownedCaptureSupervisor) or the application's shared one, which
+    // outlives the engine.
     AudioDeviceConfig m_txInputConfig;
-    std::unique_ptr<CaptureSupervisor> m_captureSupervisor;
+    std::unique_ptr<CaptureSupervisor> m_ownedCaptureSupervisor;
+    QPointer<CaptureSupervisor> m_captureSupervisor;
 
     // Native audio plan Task 7: the device layer (main thread).  The
     // supervisor refers to the catalogue and to this engine, so it is
@@ -1789,9 +1868,13 @@ private:
     AudioEngineKind m_defaultEngine{AudioEngineKind::PortAudio};
     std::unique_ptr<AudioDeviceCatalog> m_catalogue;
     std::unique_ptr<AudioStreamSupervisor> m_streamSupervisor;
-    // Per role: bumped on every open and close, so a late stream event
-    // from a replaced bus is dropped; the engine of the open bus.
+    // Per role: a new generation on every open and close, so a late
+    // stream event from a replaced bus is dropped; the engine of the open
+    // bus.  Every generation comes from m_lastBusGeneration, so none is
+    // given twice: a bus has its own before it opens, and the role takes
+    // it once the bus has opened.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
+    quint64 m_lastBusGeneration{0};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
     // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
     void noteSpeakersWorkgroup(const IAudioBus* bus);
@@ -1868,6 +1951,8 @@ private:
     // V-HW-8: the audio delay probe (setDelayProbeEnabled).
     void onDelayProbeHit(qint64 captureNs);    // main thread
     static std::atomic<bool>& delayProbeRequestedAtStart();
+    // setDeviceListInBackground.
+    static std::atomic<bool>& deviceListInBackground();
     std::atomic<bool> m_delayProbeEnabled{false};
     bool m_delayProbeOnLastBlock{false};               // DSP thread only
     AudioDelayProbeClicker m_delayProbeClicker;        // DSP thread only
@@ -1918,6 +2003,7 @@ private:
 #ifdef NEREUS_BUILD_TESTS
     std::function<std::unique_ptr<IAudioBus>(int)> m_vaxBusFactoryForTest;
     DeviceBusFactory m_deviceBusFactoryForTest;
+    std::optional<bool> m_speakersAwaitDeviceListForTest;
 #endif
     MasterMixer m_masterMix;
 
