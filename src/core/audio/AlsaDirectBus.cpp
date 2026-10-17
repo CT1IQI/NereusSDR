@@ -21,6 +21,11 @@
 //               waited, for the matcher's clock fit and its
 //               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: the writer marks a lost stream closed under the sink's
+//               lock, with the loss kept or taken for the sink, so a
+//               stream that reads closed never has its loss still to come
+//               when a sink is set (R-AUD-07, CI flake). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectBus.h"
@@ -154,15 +159,21 @@ struct AlsaDirectBus::Impl {
     QString error;
     bool inUse = false;
 
-    void post(AudioStreamEvent::Kind kind, const QString& detail)
+    void postLoss(const QString& detail)
     {
         // The writer's exit path only, never while it plays.
         AudioStreamEvent event;
-        event.kind = kind;
+        event.kind = AudioStreamEvent::Kind::DeviceLost;
         event.detail = detail;
         std::function<void(const AudioStreamEvent&)> s;
         {
             std::lock_guard<std::mutex> lock(sinkMutex);
+            // No writer plays any more: the stream is not open (open()
+            // reads `writerLost` after it marks the stream open).  Marked
+            // here, with the loss kept or taken for the sink, so one that
+            // reads closed and then sets its sink is sent the loss there.
+            writerLost.store(true);
+            open.store(false);
             s = sink;
             if (!s) {
                 // The engine sets its sink after open() returns; a loss in
@@ -249,11 +260,7 @@ struct AlsaDirectBus::Impl {
         if (!startedSet) {
             signalStarted(false);
         } else if (lost) {
-            // No writer plays any more: the stream is not open (open()
-            // reads `writerLost` after it marks the stream open).
-            writerLost.store(true);
-            open.store(false);
-            post(AudioStreamEvent::Kind::DeviceLost, QStringLiteral("The sound card went away"));
+            postLoss(QStringLiteral("The sound card went away"));
         }
         leaveAudioThreadPriority(priority);
     }

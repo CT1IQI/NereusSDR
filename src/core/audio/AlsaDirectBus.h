@@ -25,7 +25,7 @@
 // (suspend) resumes, else prepares; -ENODEV (the card was unplugged), or
 // an error snd_pcm_prepare cannot clear, ends the thread, marks the
 // stream not open and posts DeviceLost once (kept until a sink is set when
-// none is yet).  close() drops the PCM, which wakes a blocked write, and
+// none is yet; a stream that reads closed has its loss kept already).  close() drops the PCM, which wakes a blocked write, and
 // joins the thread.
 //
 // The PCM sits behind IAlsaPcm and AlsaPcmOpener, so the stream's open,
@@ -48,6 +48,9 @@
 //               place in the stream), where it said only whether it had
 //               waited, for the matcher's clock fit and its
 //               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: a lost stream reads closed only once its loss is kept or
+//               taken for the sink (R-AUD-07). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 

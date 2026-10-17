@@ -20,6 +20,10 @@
 //               changes and refused nodes, multichannel cards, a lost
 //               stream, and the catalogue case without a wall-clock bound.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-17: lossBeforeTheSinkIsKept says what it rests on: a stream
+//               that reads closed has its loss kept already (a CI run
+//               found the writer marking it closed first). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1100,7 +1104,9 @@ private slots:
     }
 
     // A loss before the engine sets its sink (it does so after open()
-    // returns) is kept and sent when the sink is set, once.
+    // returns) is kept and sent when the sink is set, once.  The writer
+    // marks the stream closed and keeps the loss under one lock, so the
+    // sink set once it reads closed is sent the loss inside the call.
     void lossBeforeTheSinkIsKept()
     {
         FakeOpener opener;
