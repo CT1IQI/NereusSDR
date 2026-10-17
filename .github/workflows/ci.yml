@@ -489,6 +489,7 @@ jobs:
       heavy: ${{ steps.scope.outputs.heavy }}
       route: ${{ steps.route.outputs.route }}
       legs: ${{ steps.route.outputs.legs }}
+      test_parts: ${{ steps.split.outputs.test_parts }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -535,6 +536,41 @@ jobs:
               {"os": "windows-latest", "name": "Windows x64", "cache": "Windows"}
             ]
         run: scripts/ci/linux-route.sh
+
+      # The linux-box jobs' tests, split by the times main's last run
+      # measured (the box-test-times job saves them) so the two parts take
+      # about as long. Every job gets this one split, as "<test> <part>"
+      # lines (tests/CMakeLists.txt, NEREUS_TEST_SHARD_FILE). With no times
+      # (none saved yet, or the cache expired) the output is empty and the
+      # jobs fall back to the name-hash shards. CI speed round, 2026-10-17.
+      - name: Restore the self-hosted test times
+        if: steps.route.outputs.route == 'box'
+        uses: actions/cache/restore@v4
+        with:
+          path: .box-test-times
+          key: box-test-times-${{ github.sha }}
+          restore-keys: box-test-times-
+
+      - name: Split the self-hosted tests by time
+        id: split
+        if: steps.route.outputs.route == 'box'
+        run: |
+          shopt -s nullglob
+          files=(.box-test-times/*.txt)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No saved test times; the self-hosted tests split by name hash."
+            exit 0
+          fi
+          if ! python3 scripts/ci/test-split.py split 2 "${files[@]}" > test-parts.txt; then
+            echo "::warning::The test split failed; the self-hosted tests split by name hash."
+            exit 0
+          fi
+          echo "$(wc -l < test-parts.txt) test executables split by time."
+          {
+            echo "test_parts<<EOF_TEST_PARTS"
+            cat test-parts.txt
+            echo "EOF_TEST_PARTS"
+          } >> "$GITHUB_OUTPUT"
 
   # --------------------------------------------------------------------
   # Per-platform build + C++ test gate.
@@ -1341,15 +1377,17 @@ jobs:
   # job takes at most 10 processors, 16 GB of memory, 10 build jobs and 8
   # tests at once.
   #
-  # The ordinary tests are halved by the same name-hash shards the hosted
-  # legs use (about 6 minutes of tests each at 8 at a time, from the hosted
-  # run 38980390590's test times). The realtime tests (572 s, one at a
+  # The ordinary tests are halved by the times main's last run measured
+  # (the changes job's "Split the self-hosted tests by time"): on main run
+  # 39036605879 the name-hash shards the hosted legs use gave one part 661
+  # s of tests and the other 346 s. A test with no time yet, or every test
+  # when no times are saved, still goes by name hash. The realtime tests (572 s, one at a
   # time) do not run here: other runs' jobs share this machine, so they run
   # in linux-realtime on an idle GitHub-hosted runner, as on the hosted
   # path. Every test runs exactly once, as on the hosted legs.
   #
-  # Time to green on this path, estimated with warm caches: about 11
-  # minutes for these two jobs (a 3 to 5 minute build and 6 of tests) and
+  # Time to green on this path, estimated with warm caches: about 13
+  # minutes for these two jobs (a 4 minute build and 8 to 9 of tests) and
   # about 18 for linux-realtime (setup, a 4-core build, 10 minutes of
   # realtime tests), so about 18 in all, set by linux-realtime.
   # --------------------------------------------------------------------
@@ -1379,6 +1417,18 @@ jobs:
       - name: Container image
         run: scripts/ci/box-run.sh image
 
+      - name: Test split
+        env:
+          TEST_PARTS: ${{ needs.changes.outputs.test_parts }}
+        run: |
+          rm -f .box-test-shards.txt
+          if [ -n "$TEST_PARTS" ]; then
+            printf '%s\n' "$TEST_PARTS" > .box-test-shards.txt
+            echo "$(wc -l < .box-test-shards.txt) test executables placed by measured time."
+          else
+            echo "No measured split; the tests go by name hash."
+          fi
+
       - name: Configure
         run: scripts/ci/box-run.sh run "$BOX configure"
 
@@ -1388,6 +1438,25 @@ jobs:
 
       - name: Test
         run: scripts/ci/box-run.sh run "$BOX test"
+
+      # This part's test times, for the next run's split. Only main's are
+      # kept (the box-test-times job); the upload on every run is a day's
+      # artifact of a few kilobytes.
+      - name: Test times
+        id: times
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: scripts/ci/box-run.sh run "$BOX times"
+
+      - name: Upload test times
+        if: ${{ !cancelled() && steps.times.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: box-test-times-${{ matrix.shard }}
+          path: box-test-times-${{ matrix.shard }}.txt
+          retention-days: 1
+          if-no-files-found: error
+          # A rerun of a failed part replaces its earlier upload.
+          overwrite: true
 
       - name: Upload PR build artifact
         if: ${{ !cancelled() && matrix.artifact && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
@@ -1411,8 +1480,32 @@ jobs:
         if: always()
         run: |
           scripts/ci/box-run.sh cleanup
-          rm -rf build .box-home
+          rm -rf build .box-home .box-test-shards.txt box-test-times-*.txt
           df -h . | tail -1
+
+  # Saves main's self-hosted test times (both parts) for the changes job to
+  # split the next run's tests by. Only from a run whose tests all passed,
+  # so a hung or failed test does not skew the split. The prune-caches job
+  # keeps the newest. CI speed round, 2026-10-17.
+  box-test-times:
+    needs: [changes, linux-box]
+    if: ${{ !cancelled() && needs.linux-box.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    name: Save the self-hosted test times
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: box-test-times-*
+          path: .box-test-times
+          merge-multiple: true
+
+      - name: Check both parts
+        run: wc -l .box-test-times/box-test-times-0.txt .box-test-times/box-test-times-1.txt
+
+      - uses: actions/cache/save@v4
+        with:
+          path: .box-test-times
+          key: box-test-times-${{ github.sha }}
 
   # The realtime tests when Linux runs on the self-hosted runners.
   #
@@ -1728,24 +1821,27 @@ jobs:
   # own after seven days unused. CI speed round, 2026-10-16.
   # --------------------------------------------------------------------
   prune-caches:
-    needs: [build, build-notests, linux-realtime]
+    needs: [build, build-notests, linux-realtime, box-test-times]
     if: ${{ !cancelled() && github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     name: Prune old compiler caches
     permissions:
       actions: write
     steps:
+      # The self-hosted test times (box-test-times) the same way.
       - name: Delete all but the newest compiler cache per leg
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh cache list --ref refs/heads/main --key ccache-v2- --limit 1000 \
-              --json id,key,createdAt \
-            | jq -r 'group_by(.key | sub("-[0-9a-f]{40}$"; ""))
-                     | map(sort_by(.createdAt) | reverse | .[1:][])
-                     | .[] | "\(.id) \(.key)"' \
-            | while read -r id key; do
-                echo "Deleting $key"
-                gh cache delete "$id"
-              done
+          for prefix in ccache-v2- box-test-times-; do
+            gh cache list --ref refs/heads/main --key "$prefix" --limit 1000 \
+                --json id,key,createdAt \
+              | jq -r 'group_by(.key | sub("-[0-9a-f]{40}$"; ""))
+                       | map(sort_by(.createdAt) | reverse | .[1:][])
+                       | .[] | "\(.id) \(.key)"' \
+              | while read -r id key; do
+                  echo "Deleting $key"
+                  gh cache delete "$id"
+                done
+          done
