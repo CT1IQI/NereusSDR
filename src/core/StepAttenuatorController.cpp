@@ -7,6 +7,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434 follow-up: a save while keyed (a disconnect
+//                 while keyed) stores the RX S-ATT and preamp the key saved.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16 — Issue #434: a second hardware key with no unkey between
+//                 (a key again inside MoxController's unkey wait) no longer
+//                 saves the TX S-ATT or forced-off preamp as the RX value.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -1062,11 +1069,23 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // Level Cal: PreampMode::Off is HPSDR_OFF now that the ten
             // Thetis modes are held (Minus20 is HPSDR_MINUS20).
             // Thetis leaves RX1EnableAtt off at the unkey; so does this.
-            saveRxPreampMode();
+            // Issue #434: in Thetis each MOX change, its Thread.Sleep delays
+            // included, runs to its end in one call, so the key's
+            // HdwMOXChanged (console.cs:29633) and the unkey's
+            // (console.cs:29675) [v2.10.3.15] always take turns.  MoxController emits
+            // hardwareFlipped(false) only after its unkey timers, and a key
+            // inside that wait stops them, so a second key can arrive with
+            // the preamp already forced Off.  Save only on the first key.
+            if (!m_savedRxPreampValid) {
+                saveRxPreampMode();
+                if (rx2PreampPresent()) {
+                    m_savedRx2PreampMode = m_rx2PreampMode;
+                }
+                m_savedRxPreampValid = true;
+            }
             setStepAttEnabled(false);
             setPreampMode(PreampMode::Off);			// set to -20dB
             if (rx2PreampPresent()) {
-                m_savedRx2PreampMode = m_rx2PreampMode;
                 setRx2PreampMode(PreampMode::Off);
             }
         } else {
@@ -1106,8 +1125,15 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // actually populated the stash.  Without the flag, the restore
             // ran unconditionally and clobbered the user's RX att value
             // with the default-zero stash whenever ATT-on-TX was OFF.
-            m_savedRxAttDbForTx = m_attDb;
-            m_savedRxAttDbValid = true;
+            //
+            // Issue #434: a second key with no unkey between (a key again
+            // inside MoxController's unkey wait, which skips its
+            // hardwareFlipped(false)) finds the TX value in m_attDb; the
+            // valid stash already holds the RX one, so keep it.
+            if (!m_savedRxAttDbValid) {
+                m_savedRxAttDbForTx = m_attDb;
+                m_savedRxAttDbValid = true;
+            }
             if (m_attDb != txAtt) {
                 m_attDb = txAtt;
                 emit attenuationChanged(txAtt);
@@ -1150,6 +1176,8 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
                     setRx2PreampMode(m_savedRx2PreampMode);
                 }
             }
+            // Issue #434: the next key saves afresh.
+            m_savedRxPreampValid = false;
         } else {
             // Standard board: clear TX ATT back to 0 + restore the saved RX
             // att so the S-ATT spinbox tracks the un-keyed value.
@@ -2372,11 +2400,29 @@ bool StepAttenuatorController::storeSettings(const QString& mac)
 
     auto& s = AppSettings::instance();
 
+    // Issue #434 follow-up: a save while keyed stores the RX values the
+    // hardware key saved, not the TX ones it put in their place.  A
+    // disconnect while keyed saves here (RadioModel::teardownConnection)
+    // before MoxController's unkey walk reaches hardwareFlipped(false),
+    // which comes on its timers after that call returns; the controller is
+    // marked unloaded right after, so the unkey's restore is never saved
+    // and the next connect would load the TX value.  Thetis does not meet
+    // this: its HdwMOXChanged(false) runs inside the same MOX change
+    // (console.cs:29675 [v2.10.3.15]), before anything can save.
+    // RX1EnableAtt is not swapped: the unkey leaves it off, as Thetis does.
+    const int rxAttDb = (m_isMox && m_savedRxAttDbValid)
+        ? m_savedRxAttDbForTx : m_attDb;
+    const PreampMode rxPreampMode = (m_isMox && m_savedRxPreampValid)
+        ? m_savedPreampMode : m_preampMode;
+    const PreampMode rx2PreampMode =
+        (m_isMox && m_savedRxPreampValid && rx2PreampPresent())
+        ? m_savedRx2PreampMode : m_rx2PreampMode;
+
     // Step attenuator global config.
     s.setHardwareValue(mac, QStringLiteral("options/stepAtt/rx1Enabled"),
                        m_stepAttEnabled ? QStringLiteral("True") : QStringLiteral("False"));
     s.setHardwareValue(mac, QStringLiteral("options/stepAtt/rx1Value"),
-                       QString::number(m_attDb));
+                       QString::number(rxAttDb));
 
     // Auto-att config.
     s.setHardwareValue(mac, QStringLiteral("options/autoAtt/rx1Enabled"),
@@ -2411,10 +2457,10 @@ bool StepAttenuatorController::storeSettings(const QString& mac)
         QString key = bandKeyName(m_currentBand);
         s.setHardwareValue(mac,
             QStringLiteral("options/stepAtt/rx1Band/") + key,
-            QString::number(m_attDb));
+            QString::number(rxAttDb));
         s.setHardwareValue(mac,
             QStringLiteral("options/preamp/rx1Band/") + key,
-            QString::number(static_cast<int>(m_preampMode)));
+            QString::number(static_cast<int>(rxPreampMode)));
     }
 
     // R-R3-46 / R-R3-11: the other ADC's own value and band memory
@@ -2447,7 +2493,7 @@ bool StepAttenuatorController::storeSettings(const QString& mac)
     // rx2_preamp_by_band, saved at console.cs:3062-3065 [v2.10.3.15]), in
     // the ten-mode numbering from the start.
     s.setHardwareValue(mac, QStringLiteral("options/preamp/rx2Mode"),
-                       QString::number(static_cast<int>(m_rx2PreampMode)));
+                       QString::number(static_cast<int>(rx2PreampMode)));
     for (const auto& [b, mode] : m_rx2BandPreamp) {
         if (b < 0 || b >= static_cast<int>(Band::SwlFirst)) {
             continue;
@@ -2459,7 +2505,7 @@ bool StepAttenuatorController::storeSettings(const QString& mac)
     if (static_cast<int>(m_rx2Band) < static_cast<int>(Band::SwlFirst)) {
         s.setHardwareValue(mac,
             QStringLiteral("options/preamp/rx2Band/") + bandKeyName(m_rx2Band),
-            QString::number(static_cast<int>(m_rx2PreampMode)));
+            QString::number(static_cast<int>(rx2PreampMode)));
     }
 
     // Adaptive floor.
