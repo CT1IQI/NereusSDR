@@ -35,6 +35,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 // 2026-10-02: Separate manual listener retention and current-target leases.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+// 2026-10-16: A Core's explicit empty address list clears its saved Core
+// addresses, and a Core-named address a new list drops leaves the reached
+// ones too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/CoreTargetStore.h"
 
@@ -978,8 +981,21 @@ std::optional<QStringList> CoreTargetStore::parseCoreAddressUpdate(const QString
     return result;
 }
 
+namespace {
+
+// Two spellings of one Core listener, as a connected URL and a saved one.
+bool sameStationUrl(const QString& left, const QString& right)
+{
+    if (left.isEmpty() || right.isEmpty()) { return false; }
+    constexpr auto kForm = QUrl::StripTrailingSlash | QUrl::NormalizePathSegments;
+    return QUrl(left).adjusted(kForm) == QUrl(right).adjusted(kForm);
+}
+
+} // namespace
+
 bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray& identity,
-                                           const QString& text, QString* error)
+                                           const QString& text, const QString& inUseUrl,
+                                           QString* error)
 {
     const auto found = target(id);
     if (!found || identity.size() != kIdentityBytes || found->connection.identityFingerprint != identity) {
@@ -992,8 +1008,33 @@ bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray&
         clearError(error);
         return true;
     }
+    // A Core-named address the new list drops also leaves the addresses this
+    // window reached the Core at, so no reconnect dials it again. The one
+    // this session is on stays, and stays listed as Core-named, so the next
+    // accepted list from another session drops it then. It is dialed either
+    // way while it is in cachedAddresses, so keeping it listed adds nothing.
+    QStringList coreAddresses = *addresses;
+    QStringList cachedAddresses = found->connection.cachedAddresses;
+    for (const QString& named : found->connection.coreAddresses) {
+        if (addresses->contains(named)) { continue; }
+        if (sameStationUrl(named, inUseUrl)) {
+            if (coreAddresses.size() < CoreAddresses::kMaxAddresses) { coreAddresses.append(named); }
+            continue;
+        }
+        cachedAddresses.erase(std::remove_if(cachedAddresses.begin(), cachedAddresses.end(),
+                                             [&named](const QString& cached) {
+                                                 return sameStationUrl(cached, named);
+                                             }),
+                              cachedAddresses.end());
+    }
+    if (coreAddresses == found->connection.coreAddresses
+        && cachedAddresses == found->connection.cachedAddresses) {
+        clearError(error);
+        return true;
+    }
     SavedCoreTarget updated = *found;
-    updated.connection.coreAddresses = *addresses;
+    updated.connection.coreAddresses = coreAddresses;
+    updated.connection.cachedAddresses = cachedAddresses;
     return upsert(updated, error);
 }
 

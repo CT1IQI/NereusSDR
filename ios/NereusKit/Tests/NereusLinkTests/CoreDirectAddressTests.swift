@@ -348,6 +348,72 @@ import Testing
         #expect(try store.recordCoreAddresses(identityKey: Data([1]), []) == nil)
     }
 
+    /// A Core-named address the phone reached the Core at is also in
+    /// `endpoints`, and first as `lastGood`. When the Core stops naming it,
+    /// it leaves those too, so no connect dials it first again.
+    @Test func anAddressTheCoreStopsNamingLeavesTheReachedOnes() {
+        let lan = StationEndpoint(host: Self.lan, port: 50055)
+        let end1 = StationEndpoint(host: Self.end1, port: 50055)
+        let wlan0 = StationEndpoint(host: Self.wlan0, port: 50055)
+        var station = Self.rock()
+        station.keepCoreAddresses([end1])
+        station.reached(end1, by: .direct)
+        #expect(station.endpoints == [end1, lan])
+        #expect(station.isLastGood(end1))
+
+        // Connected on the LAN address, the Core names none.
+        var cleared = station
+        cleared.keepCoreAddresses([], inUse: lan)
+        #expect(cleared.endpoints == [lan])
+        #expect(cleared.lastGood == nil)
+        #expect(cleared.directAddresses.isEmpty)
+        #expect(cleared.coreListed.isEmpty)
+        #expect(cleared.dialOrder == [lan])
+
+        // Renumbered: the old one goes, the new one comes.
+        var renumbered = station
+        renumbered.keepCoreAddresses([wlan0], inUse: lan)
+        #expect(renumbered.endpoints == [lan])
+        #expect(renumbered.lastGood == nil)
+        #expect(renumbered.directAddresses == [wlan0])
+
+        // Never the last address the phone reached the Core at.
+        var only = Self.rock()
+        only.endpoints = [end1]
+        only.keepCoreAddresses([end1])
+        only.reached(end1, by: .direct)
+        only.keepCoreAddresses([])
+        #expect(only.endpoints == [end1])
+        #expect(only.lastGood == nil)
+        #expect(only.directAddresses.isEmpty)
+    }
+
+    /// The address this session is on is never taken from under it: it
+    /// stays, listed as the Core's, until a list a session elsewhere brings
+    /// drops it.
+    @Test func theAddressInUseStaysUntilAListFromElsewhere() {
+        let lan = StationEndpoint(host: Self.lan, port: 50055)
+        let end1 = StationEndpoint(host: Self.end1, port: 50055)
+        var station = Self.rock()
+        station.keepCoreAddresses([end1])
+        station.reached(end1, by: .direct)
+        station.keepCoreAddresses([], inUse: end1)
+        #expect(station.endpoints == [end1, lan])
+        #expect(station.isLastGood(end1))
+        #expect(station.directAddresses == [end1])
+        #expect(station.coreListed == [end1])
+        // The same answer on the same session changes nothing more.
+        var same = station
+        same.keepCoreAddresses([], inUse: end1)
+        #expect(same == station)
+        // The next session, on the LAN address, gets the same empty list.
+        station.keepCoreAddresses([], inUse: lan)
+        #expect(station.endpoints == [lan])
+        #expect(station.lastGood == nil)
+        #expect(station.directAddresses.isEmpty)
+        #expect(station.coreListed.isEmpty)
+    }
+
     // MARK: Seen in an introduction through the service
 
     /// An answer from the Core as the service passes it on: host candidates

@@ -10,6 +10,9 @@
 // token sign-in and is saved with its identity from then on.
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+// 2026-10-16: The Core's explicit empty address list clears its saved Core
+// addresses, and the reached ones it no longer names, but for the one in
+// use. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/GuiConnectionController.h"
 #include "core/security/StationLabel.h"
@@ -1080,13 +1083,16 @@ void GuiConnectionController::rememberAuthenticatedRadio()
     // Link 7.1: only this authenticated paired identity, after negotiated
     // minor/capability support. The Core's explicit empty list clears the
     // saved Core addresses, so the merge below stops offering them; absent
-    // or malformed lists, or ones whose every entry is unusable, retain.
+    // or malformed lists, or ones whose every entry is unusable, retain. A
+    // Core-named address an accepted list drops also leaves the reached
+    // addresses (cachedAddresses), but never the one this session is on.
     if (client->agreedMinor() >= 11 && caps.coreAddressesVersion >= 1
         && client->signedInWithDeviceKey()
         && !target->connection.identityFingerprint.isEmpty()) {
         QString error;
         if (!m_store.rememberCoreAddresses(target->id, client->stationIdentityFingerprint(),
-                                          client->remoteDevices()->coreInfo().coreAddresses, &error)) {
+                                          client->remoteDevices()->coreInfo().coreAddresses,
+                                          client->connectedUrl().toString(), &error)) {
             m_selector->setNotice(error);
         }
         target = m_store.target(target->id);
