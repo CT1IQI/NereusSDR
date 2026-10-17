@@ -8846,6 +8846,11 @@ nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
+# 79 s by itself, nearly every case a window of its own, and past the 120 s
+# limit in a loaded run; three entries of the same binary (the limit is not
+# raised; groups in the test's main()).
+nereus_split_test(tst_gui_session_coordinator
+    ENV NEREUS_GUI_SESSION_COORDINATOR_GROUP GROUPS startup replacement)
 # The headless Core (nereusd) and the desktop Core serve the same things,
 # except for the differences the test lists with their reasons.
 nereus_add_test(tst_core_parity fakes/LoopbackTransport.cpp EXTRA_LABELS session)
@@ -8944,6 +8949,10 @@ nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp fakes/
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# 88 s by itself and past the 120 s limit in a loaded run; three entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_gui_connection_controller
+    ENV NEREUS_GUI_CONNECTION_CONTROLLER_GROUP GROUPS selector reconnect)
 # iPhone app Task 18 (R-IOS-08): the desktop pairs with a Core. Its own
 # device key, one tap and the code against a real StationServer over the
 # loopback (IPv4 and IPv6), every refusal, then a sign-in by key.
