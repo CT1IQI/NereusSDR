@@ -89,7 +89,9 @@ jobs:
           app=true
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             if files=$(git diff --name-only HEAD^1 HEAD); then
-              if ! printf '%s\n' "$files" | grep -qE '^(ios/|tests/data/link/|\.github/workflows/ios\.yml$)'; then
+              # A here-string, not a pipe: under pipefail, grep -q quitting
+              # early kills printf on a long list and would read as no match.
+              if ! grep -qE '^(ios/|tests/data/link/|\.github/workflows/ios\.yml$)' <<<"$files"; then
                 app=false
               fi
             else
