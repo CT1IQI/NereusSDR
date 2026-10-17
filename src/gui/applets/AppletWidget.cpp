@@ -39,6 +39,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QBoxLayout>
+#include <QEvent>
 #include <QLabel>
 
 namespace NereusSDR {
@@ -63,6 +64,7 @@ void AppletWidget::setUnavailableReason(const QString& reason)
     if (reason == m_unavailableReason) {
         return;
     }
+    const bool wasUnavailable = !m_unavailableReason.isEmpty();
     m_unavailableReason = reason;
     const bool unavailable = !reason.isEmpty();
     if (unavailable && !m_unavailableLabel) {
@@ -71,17 +73,26 @@ void AppletWidget::setUnavailableReason(const QString& reason)
         m_unavailableLabel->setWordWrap(true);
         m_unavailableLabel->setTextFormat(Qt::PlainText);
         m_unavailableLabel->setStyleSheet(QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
-        if (auto* box = qobject_cast<QBoxLayout*>(layout())) {
-            // Under the title bar when the applet has one in its layout.
-            const int bar = m_titleBar ? box->indexOf(m_titleBar) : -1;
-            box->insertWidget(bar + 1, m_unavailableLabel);
-        }
     }
     if (m_unavailableLabel) {
         m_unavailableLabel->setText(reason);
+        placeUnavailableLabel();
         m_unavailableLabel->setVisible(unavailable);
     }
-    setToolTip(reason);
+    // The reason is the tooltip while it lasts; the applet's own comes back
+    // after (unless the applet set a new one meanwhile).
+    if (unavailable && !wasUnavailable) {
+        m_ownToolTip = toolTip();
+    }
+    if (unavailable) {
+        setToolTip(reason);
+    } else if (wasUnavailable) {
+        if (toolTip() == m_reasonToolTip) {
+            setToolTip(m_ownToolTip);
+        }
+        m_ownToolTip.clear();
+    }
+    m_reasonToolTip = reason;
     // Gray only what this grayed: an applet its owner disabled stays so.
     if (unavailable && !m_grayedUnavailable && !testAttribute(Qt::WA_ForceDisabled)) {
         setEnabled(false);
@@ -90,6 +101,51 @@ void AppletWidget::setUnavailableReason(const QString& reason)
         m_grayedUnavailable = false;
         setEnabled(true);
     }
+}
+
+void AppletWidget::placeUnavailableLabel()
+{
+    QLayout* own = layout();
+    if (own && own->indexOf(m_unavailableLabel) >= 0) {
+        return;
+    }
+    if (auto* box = qobject_cast<QBoxLayout*>(own)) {
+        // Under the title bar when the applet has one in its layout.
+        const int bar = m_titleBar ? box->indexOf(m_titleBar) : -1;
+        box->insertWidget(bar + 1, m_unavailableLabel);
+    } else if (own) {
+        // Any other layout places it where it adds a widget (a grid's next
+        // row, a form's last row).
+        own->addWidget(m_unavailableLabel);
+    } else {
+        // No layout: a line across the top, kept as wide as the applet.
+        if (!m_unavailableTracker) {
+            m_unavailableTracker = std::make_unique<UnavailableLabelTracker>(this, m_unavailableLabel);
+            installEventFilter(m_unavailableTracker.get());
+        }
+        m_unavailableTracker->fit();
+        m_unavailableLabel->raise();
+    }
+}
+
+AppletWidget::UnavailableLabelTracker::UnavailableLabelTracker(QWidget* applet, QLabel* label)
+    : m_applet(applet), m_label(label)
+{
+}
+
+bool AppletWidget::UnavailableLabelTracker::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_applet && event->type() == QEvent::Resize) {
+        fit();
+    }
+    return false;
+}
+
+void AppletWidget::UnavailableLabelTracker::fit()
+{
+    const int width = m_applet->width();
+    const int height = m_label->hasHeightForWidth() ? m_label->heightForWidth(width) : m_label->sizeHint().height();
+    m_label->setGeometry(0, 0, width, height);
 }
 
 QWidget* AppletWidget::appletTitleBar(const QString& text)

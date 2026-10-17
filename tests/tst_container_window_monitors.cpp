@@ -21,6 +21,7 @@
 #include <QtTest>
 #include <QApplication>
 #include <QLoggingCategory>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <memory>
@@ -962,6 +963,45 @@ private slots:
         QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
         rig.manager->screensChanged();
         QCOMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+    }
+
+    // A monitor that changes resolution or work area (its geometryChanged
+    // or availableGeometryChanged) brings back a window left where its
+    // header cannot be reached, as a screen that came or went does.
+    void aScreenGeometrySignalBringsAWindowBack_data()
+    {
+        QTest::addColumn<bool>("available");
+        QTest::newRow("geometry changed") << false;
+        QTest::newRow("available geometry changed") << true;
+    }
+    void aScreenGeometrySignalBringsAWindowBack()
+    {
+        QFETCH(bool, available);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("signal.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        rig.manager->container(QStringLiteral("rotor"))->window()->move(kBelowLaptop);
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen != nullptr);
+        // The platform's own signal, as macOS sends it for a display change.
+        if (available) {
+            emit screen->availableGeometryChanged(screen->availableGeometry());
+        } else {
+            emit screen->geometryChanged(screen->geometry());
+        }
+        // Queued: nothing moves inside the signal.
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        QTRY_COMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
     }
 
     // Containers > Applets ticked: the window holding the applet is put

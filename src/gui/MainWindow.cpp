@@ -11295,6 +11295,12 @@ void MainWindow::populateDefaultMeter()
     // header can be reached (bench fix 2026-10-16).
     connect(m_appletVis, &AppletVisibilityController::bringOnScreenRequested,
             m_containerManager, &ContainerManager::bringAppletOnScreen);
+    // The ticks read a container's transmit or receive flag as it shows.
+    m_appletVis->setTransmitting(m_radioModel && m_radioModel->isTransmitting());
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::transmittingChanged,
+                m_appletVis, &AppletVisibilityController::setTransmitting);
+    }
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
     m_appletsById[QStringLiteral("Display")]    = m_displayApplet;

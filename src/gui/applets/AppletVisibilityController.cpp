@@ -28,17 +28,24 @@ namespace NereusSDR {
 
 namespace {
 
-// The container's own flags that take it off the screen on receive.
-bool containerShown(const ContainerDocument& c)
+// The container's own flags that take it off the screen, read as
+// ContainerManager::effectiveVisible reads them: showOnTx while
+// transmitting, showOnRx on receive.
+QString shownNowKey(bool transmitting)
+{
+    return transmitting ? QStringLiteral("showOnTx") : QStringLiteral("showOnRx");
+}
+bool containerShown(const ContainerDocument& c, bool transmitting)
 {
     return c.visible && c.config.value(QStringLiteral("enabled")).toBool(true)
         && !c.config.value(QStringLiteral("hiddenByMacro")).toBool(false)
-        && c.config.value(QStringLiteral("showOnRx")).toBool(true);
+        && c.config.value(shownNowKey(transmitting)).toBool(true);
 }
 
 // Clears those flags; true when any was set. Only a flag that hides the
-// container is written, so a shown container keeps its exact bytes.
-bool showContainer(ContainerDocument& c)
+// container is written, so a shown container keeps its exact bytes. Only
+// the flag for the current state is cleared (as Containers > Hidden does).
+bool showContainer(ContainerDocument& c, bool transmitting)
 {
     bool changed = false;
     if (!c.visible) { c.visible = true; changed = true; }
@@ -48,8 +55,8 @@ bool showContainer(ContainerDocument& c)
     if (c.config.value(QStringLiteral("hiddenByMacro")).toBool(false)) {
         c.config[QStringLiteral("hiddenByMacro")] = false; changed = true;
     }
-    if (!c.config.value(QStringLiteral("showOnRx")).toBool(true)) {
-        c.config[QStringLiteral("showOnRx")] = true; changed = true;
+    if (const QString key = shownNowKey(transmitting); !c.config.value(key).toBool(true)) {
+        c.config[key] = true; changed = true;
     }
     return changed;
 }
@@ -90,7 +97,7 @@ void AppletVisibilityController::syncWorkspace()
                 found = true; Entry& entry = m_entries[id];
                 // Bench fix: on only while its container is on the screen
                 // too, so a tick never claims an applet nobody can see.
-                const bool shown = content.visible && containerShown(c);
+                const bool shown = content.visible && containerShown(c, m_transmitting);
                 if (entry.visible != shown) {
                     const bool wasEffective = entry.visible && entry.available;
                     entry.visible = shown;
@@ -102,6 +109,14 @@ void AppletVisibilityController::syncWorkspace()
             if (found) { break; }
         }
     }
+}
+void AppletVisibilityController::setTransmitting(bool transmitting)
+{
+    if (m_transmitting == transmitting) { return; }
+    m_transmitting = transmitting;
+    // A container shown only on receive (or only on transmit) changes what
+    // the ticks read.
+    syncWorkspace();
 }
 QString AppletVisibilityController::settingsKey(const QString& id)
 {
@@ -210,7 +225,7 @@ void AppletVisibilityController::setVisible(const QString& id, bool visible)
         // Bench fix 2026-10-16: ticked on, the applet is shown, so is the
         // container holding it. Unticking leaves the container alone.
         if (visible) {
-            if (ContainerDocument* holder = containerHolding(document, type); holder && showContainer(*holder)) {
+            if (ContainerDocument* holder = containerHolding(document, type); holder && showContainer(*holder, m_transmitting)) {
                 changed = true;
             }
         }

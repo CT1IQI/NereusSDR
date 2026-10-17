@@ -139,15 +139,32 @@ void presentAvailability(QWidget* view, const ContainerContentRegistry& registry
         return;
     }
     static const char* const kGrayed = "containerGrayedUnavailable";
+    // The view's own tooltip, kept while the reason stands in for it.
+    static const char* const kOwnToolTip = "containerOwnToolTip";
+    static const char* const kReasonToolTip = "containerReasonToolTip";
     if (!available) {
-        view->setToolTip(registry.unavailableReason(typeId));
+        const QString reason = registry.unavailableReason(typeId);
+        if (!view->property(kReasonToolTip).isValid()) {
+            view->setProperty(kOwnToolTip, view->toolTip());
+        }
+        view->setToolTip(reason);
+        view->setProperty(kReasonToolTip, reason);
         if (!view->property(kGrayed).toBool() && !view->testAttribute(Qt::WA_ForceDisabled)) {
             view->setEnabled(false);
             view->setProperty(kGrayed, true);
         }
-    } else if (view->property(kGrayed).toBool()) {
+        return;
+    }
+    if (const QVariant reason = view->property(kReasonToolTip); reason.isValid()) {
+        // Unless the view set a new one meanwhile.
+        if (view->toolTip() == reason.toString()) {
+            view->setToolTip(view->property(kOwnToolTip).toString());
+        }
+        view->setProperty(kReasonToolTip, QVariant());
+        view->setProperty(kOwnToolTip, QVariant());
+    }
+    if (view->property(kGrayed).toBool()) {
         view->setProperty(kGrayed, false);
-        view->setToolTip(QString());
         view->setEnabled(true);
     }
 }

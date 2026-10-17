@@ -9,6 +9,7 @@
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include <QTemporaryDir>
+#include <algorithm>
 
 using namespace NereusSDR;
 
@@ -111,6 +112,8 @@ private slots:
     void ticking_applet_shows_its_hidden_container();
     void unticking_applet_leaves_its_container_alone();
     void unavailable_reason_reaches_the_registry();
+    void ticking_during_transmit_shows_a_receive_only_container();
+    void ticking_a_transmit_only_container_on_receive_and_transmit();
 };
 
 void TstAppletVisibilityController::default_visible_when_no_settings_key()
@@ -401,6 +404,86 @@ void TstAppletVisibilityController::unavailable_reason_reaches_the_registry()
     QCOMPARE(registry.unavailableReason(QStringLiteral("applet:amp")), reason);
     c.setAvailable(QStringLiteral("Amp"), true);
     QVERIFY(registry.isAvailable(QStringLiteral("applet:amp")));
+}
+
+// While transmitting, the tick reads a container's showOnTx, as the
+// containers themselves do (ContainerManager::effectiveVisible), and
+// ticking clears that flag only; showOnRx stays as it is.
+void TstAppletVisibilityController::ticking_during_transmit_shows_a_receive_only_container()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+    WorkspaceDocument doc = workspaceWithoutRotor();
+    doc.containers[1].contents.append(applet(QStringLiteral("applet:rotor"), true));
+    doc.containers[1].config[QStringLiteral("showOnTx")] = false;
+    saveWorkspace(settings, doc);
+    ContainerWorkspaceStore store(settings);
+    ContainerContentRegistry registry;
+    AppletVisibilityController c;
+    c.setWorkspaceAdapter(&store, &registry);
+    registerStationApplets(c);
+    QVERIFY2(c.isVisible(QStringLiteral("Rotor")), "on receive the container shows");
+
+    QSignalSpy changed(&c, &AppletVisibilityController::visibilityChanged);
+    c.setTransmitting(true);
+    QVERIFY2(!c.isVisible(QStringLiteral("Rotor")), "while transmitting its container is hidden");
+    // Every applet in that container reads off, the Rotor once.
+    const auto rotorChanges = std::count_if(changed.cbegin(), changed.cend(), [](const QList<QVariant>& args) {
+        return args.at(0).toString() == QStringLiteral("Rotor") && !args.at(1).toBool();
+    });
+    QCOMPARE(static_cast<int>(rotorChanges), 1);
+
+    QSignalSpy bring(&c, &AppletVisibilityController::bringOnScreenRequested);
+    c.setVisible(QStringLiteral("Rotor"), true);
+    const ContainerDocument* shown = findContainer(store.snapshot(), QStringLiteral("panel"));
+    QVERIFY(shown != nullptr);
+    QVERIFY(shown->config.value(QStringLiteral("showOnTx")).toBool(true));
+    QVERIFY(!shown->config.contains(QStringLiteral("showOnRx")));
+    QVERIFY(c.isVisible(QStringLiteral("Rotor")));
+    QCOMPARE(bring.count(), 1);
+
+    c.setTransmitting(false);
+    QVERIFY(c.isVisible(QStringLiteral("Rotor")));
+}
+
+// A container shown only while transmitting: the tick reads off on
+// receive and on while transmitting. Ticked on receive, it is shown on
+// receive too; ticked while transmitting, nothing about it changes.
+void TstAppletVisibilityController::ticking_a_transmit_only_container_on_receive_and_transmit()
+{
+    for (const bool transmitting : {false, true}) {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+        WorkspaceDocument doc = workspaceWithoutRotor();
+        doc.containers[1].contents.append(applet(QStringLiteral("applet:rotor"), true));
+        doc.containers[1].config[QStringLiteral("showOnRx")] = false;
+        doc.containers[1].config[QStringLiteral("showOnTx")] = true;
+        saveWorkspace(settings, doc);
+        ContainerWorkspaceStore store(settings);
+        ContainerContentRegistry registry;
+        AppletVisibilityController c;
+        c.setWorkspaceAdapter(&store, &registry);
+        registerStationApplets(c);
+        c.setTransmitting(transmitting);
+        QCOMPARE(c.isVisible(QStringLiteral("Rotor")), transmitting);
+        const WorkspaceDocument before = store.snapshot();
+
+        QSignalSpy bring(&c, &AppletVisibilityController::bringOnScreenRequested);
+        c.setVisible(QStringLiteral("Rotor"), true);
+        const ContainerDocument* after = findContainer(store.snapshot(), QStringLiteral("panel"));
+        QVERIFY(after != nullptr);
+        QVERIFY(after->config.value(QStringLiteral("showOnTx")).toBool(true));
+        if (transmitting) {
+            QCOMPARE(store.snapshot().revision, before.revision);
+            QVERIFY(!after->config.value(QStringLiteral("showOnRx")).toBool(true));
+        } else {
+            QVERIFY(after->config.value(QStringLiteral("showOnRx")).toBool(true));
+        }
+        QVERIFY(c.isVisible(QStringLiteral("Rotor")));
+        QCOMPARE(bring.count(), 1);
+    }
 }
 
 QTEST_MAIN(TstAppletVisibilityController)

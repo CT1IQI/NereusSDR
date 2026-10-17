@@ -13,7 +13,8 @@
 //   2026-10-16 - Bench fix: isVisible() is on only while the applet's
 //                 container is shown; setVisible(true) shows that container
 //                 and emits bringOnScreenRequested; setAvailable carries a
-//                 reason. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 reason; setTransmitting picks the transmit or receive
+//                 flag, as the containers do. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-10-08 — Bench fix: a registered applet missing from a loaded
 //                 workspace is added to it, and setVisible() on a missing
@@ -55,8 +56,9 @@ public:
                         bool defaultVisible);
 
     // User preference. With a workspace: on in its container, and that
-    // container not hidden by its own flags (hidden, disabled, hidden on
-    // receive or by a macro), so a tick never claims an applet nobody sees.
+    // container not hidden by its own flags (hidden, disabled, hidden by a
+    // macro, hidden on receive, or on transmit while transmitting), so a
+    // tick never claims an applet nobody sees.
     bool isVisible(const QString& id) const;
     bool isAvailable(const QString& id) const;        // capability gate
     bool isEffectivelyVisible(const QString& id) const; // visible && available
@@ -68,9 +70,14 @@ public:
 public slots:
     // User preference - persisted to AppSettings, or to the workspace.
     // With a workspace, true also shows the container holding the applet
-    // (clears its hidden, disabled, receive and macro flags) and emits
+    // (clears its hidden, disabled and macro flags, and its receive flag,
+    // or its transmit flag while transmitting) and emits
     // bringOnScreenRequested; false touches only the applet's entry.
     void setVisible(const QString& id, bool visible);
+
+    // The radio's transmit state, as ContainerManager::setTransmitting
+    // has it: which of a container's showOnRx and showOnTx counts.
+    void setTransmitting(bool transmitting);
 
     // Capability gate - NOT persisted. Lets the controller gray an
     // applet with its reason (and gray its menu entry; disabled, never
@@ -112,6 +119,7 @@ private:
     QPointer<ContainerWorkspaceStore> m_store;
     QPointer<ContainerContentRegistry> m_registry;
     QString m_storageError;
+    bool m_transmitting = false;
     static QString settingsKey(const QString& id);  // "AppletRxVisible" etc.
 
     struct Entry {

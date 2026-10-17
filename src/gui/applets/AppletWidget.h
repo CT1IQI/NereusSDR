@@ -36,6 +36,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <memory>
+
 class QSlider;
 class QPushButton;
 class QFrame;
@@ -93,6 +95,20 @@ private:
     QLabel* m_unavailableLabel = nullptr;
     QWidget* m_titleBar = nullptr;   // the last appletTitleBar() made
     bool m_grayedUnavailable = false; // setEnabled(false) came from here
+    QString m_ownToolTip;            // the applet's tooltip before the reason
+    QString m_reasonToolTip;         // the reason last set as the tooltip
+    // Keeps the reason line across the top of an applet with no layout.
+    class UnavailableLabelTracker : public QObject {
+    public:
+        UnavailableLabelTracker(QWidget* applet, QLabel* label);
+        bool eventFilter(QObject* watched, QEvent* event) override;
+        void fit();
+    private:
+        QWidget* m_applet;
+        QLabel* m_label;
+    };
+    std::unique_ptr<UnavailableLabelTracker> m_unavailableTracker;
+    void placeUnavailableLabel();
 };
 
 } // namespace NereusSDR

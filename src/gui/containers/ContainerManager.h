@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 - bringAppletOnScreen, hiddenByOwnFlags, keepWindowReachable
+//                 and keepWindowsReachable: a floating window is shown where
+//                 its header can be reached, and Containers > Hidden lists
+//                 every container its own flags hide. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - followContentHeight, refreshWindowSizeLimits and
 //                 watchScreen. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.

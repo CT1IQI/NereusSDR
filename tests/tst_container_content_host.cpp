@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QLabel>
 #include <QPushButton>
+#include <QGridLayout>
 #include <limits>
 #include "gui/meters/MeterItem.h"
 #include "core/AppSettings.h"
@@ -46,6 +47,27 @@ public:
     }
     QString appletId() const override { return QStringLiteral("probe"); }
     QString appletTitle() const override { return QStringLiteral("Probe"); }
+    void syncFromModel() override {}
+};
+// An applet with a title bar over a box layout, a grid layout, or none.
+class LayoutApplet : public AppletWidget {
+public:
+    LayoutApplet(const QString& kind, QWidget* parent) : AppletWidget(nullptr, parent)
+    {
+        if (kind == QStringLiteral("box")) {
+            auto* root = new QVBoxLayout(this);
+            root->addWidget(appletTitleBar(QStringLiteral("Layout")));
+            root->addWidget(new QPushButton(QStringLiteral("Operate"), this));
+        } else if (kind == QStringLiteral("grid")) {
+            auto* root = new QGridLayout(this);
+            root->addWidget(new QPushButton(QStringLiteral("Operate"), this), 0, 0);
+            root->addWidget(new QPushButton(QStringLiteral("Tune"), this), 0, 1);
+        } else {
+            (new QPushButton(QStringLiteral("Operate"), this))->setGeometry(0, 40, 80, 22);
+        }
+    }
+    QString appletId() const override { return QStringLiteral("layout"); }
+    QString appletTitle() const override { return QStringLiteral("Layout"); }
     void syncFromModel() override {}
 };
 } // namespace
@@ -428,6 +450,83 @@ private slots:
         d.contents[0].visible = false;
         host.reconcile(d);
         QVERIFY2(!shown(), "an entry the operator hid stays hidden");
+    }
+    // The reason stands in for a grayed view's tooltip only while it is
+    // grayed: available again, the view's own tooltip comes back.
+    void grayingKeepsTheViewsOwnToolTip_data()
+    {
+        QTest::addColumn<bool>("isApplet");
+        QTest::newRow("applet") << true;
+        QTest::newRow("plain view") << false;
+    }
+    void grayingKeepsTheViewsOwnToolTip()
+    {
+        QFETCH(bool, isApplet);
+        ContainerContentRegistry registry;
+        QWidget owner;
+        QWidget* view = isApplet ? static_cast<QWidget*>(new ProbeApplet(&owner)) : new QWidget(&owner);
+        view->setToolTip(QStringLiteral("Its own tip"));
+        registry.attachSingleton("applet:amp", view);
+        ContainerContentHost host(registry);
+        host.resize(400, 400);
+        host.show();
+        ContainerDocument d; d.id = "main"; d.layout = ContentLayout::VerticalStack;
+        auto entry = registry.makeEntry("applet:amp"); entry.id = "amp";
+        d.contents = {entry};
+        const QString reason = QStringLiteral("Turn on 4O3A in Setup to use the Power Genius.");
+        registry.setAvailable("applet:amp", false, reason);
+        host.reconcile(d);
+        QVERIFY(!view->isEnabled());
+        QCOMPARE(view->toolTip(), reason);
+        // Reconciled again while unavailable, its own tip is still kept.
+        host.reconcile(d);
+        QCOMPARE(view->toolTip(), reason);
+
+        registry.setAvailable("applet:amp", true);
+        host.reconcile(d);
+        QVERIFY(view->isEnabled());
+        QCOMPARE(view->toolTip(), QStringLiteral("Its own tip"));
+    }
+    // The reason line is placed whatever layout the applet has: under its
+    // title bar in a box layout, in a grid's next row, and across the top
+    // (kept as wide as the applet) with no layout at all.
+    void reasonLineIsPlacedWhateverTheLayout_data()
+    {
+        QTest::addColumn<QString>("kind");
+        QTest::newRow("box") << QStringLiteral("box");
+        QTest::newRow("grid") << QStringLiteral("grid");
+        QTest::newRow("none") << QStringLiteral("none");
+    }
+    void reasonLineIsPlacedWhateverTheLayout()
+    {
+        QFETCH(QString, kind);
+        QWidget owner;
+        auto* applet = new LayoutApplet(kind, &owner);
+        applet->resize(300, 160);
+        owner.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&owner));
+        applet->setUnavailableReason(QStringLiteral("Switch the active slice to a RADE mode to use RADE."));
+        auto* label = applet->findChild<QLabel*>(QStringLiteral("appletUnavailableReason"));
+        QVERIFY(label != nullptr);
+        QVERIFY(label->isVisibleTo(applet));
+        if (kind == QStringLiteral("none")) {
+            QVERIFY(applet->layout() == nullptr);
+            QCOMPARE(label->geometry().topLeft(), QPoint(0, 0));
+            QCOMPARE(label->width(), applet->width());
+            QVERIFY(label->height() > 0);
+            applet->resize(420, 160);
+            QCOMPARE(label->width(), 420);
+        } else {
+            const int index = applet->layout()->indexOf(label);
+            QVERIFY2(index >= 0, "the reason line is in the applet's layout");
+            if (kind == QStringLiteral("box")) {
+                QCOMPARE(index, 1);
+            }
+            QTRY_VERIFY(label->width() > 0);
+            QVERIFY(label->geometry().top() > 0 || kind == QStringLiteral("grid"));
+        }
+        applet->setUnavailableReason(QString());
+        QVERIFY(!label->isVisibleTo(applet));
     }
     // Containers > Hidden lists every container that is off the screen for
     // its own flags, as effectiveVisible judges them: hidden on receive
