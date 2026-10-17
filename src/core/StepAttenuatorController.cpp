@@ -705,7 +705,11 @@ bool StepAttenuatorController::rxAttHeldForTx() const noexcept
 bool StepAttenuatorController::rxPreampHeldForTx() const noexcept
 {
     // The unkey restores the saved modes only with ATT on TX on
-    // (onMoxHardwareFlipped), so they stand in only then.
+    // (onMoxHardwareFlipped), so they stand in only then.  On the HPSDR,
+    // ATT on TX switched off mid-key followed by a band change stores the
+    // forced Off for the band left (and a save stores the live Off): the
+    // unkey then leaves the preamp Off, as Thetis restores it only
+    // `if (m_bATTonTX)` (console.cs:29686-29693 [v2.10.3.15]).
     return m_isMox && m_savedRxPreampValid && m_attOnTxEnabled;
 }
 

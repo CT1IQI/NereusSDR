@@ -32,8 +32,9 @@
 //   2026-09-30: Level Cal 2 re-review: a stored RX2 value above 31 loads
 //               and restores as 31. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
-//   2026-10-16: Issue #434 follow-up: a band change while keyed sends
-//               the band entered's RX value on the fall. J.J. Boyd
+//   2026-10-16: Issue #434 follow-up: a band change while keyed (with
+//               ATT on TX on or off) sends the band entered's RX value on
+//               the fall. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
 // =================================================================
@@ -127,6 +128,17 @@ void loadController(StepAttenuatorController& ctrl, const QString& mac)
     ctrl.setMinAttenuation(0);
     ctrl.setMaxAttenuation(31);
     ctrl.loadSettings(mac);
+}
+
+// The last value sent to `adc`, or -1 if none was.
+int lastSendToAdc(const Sends& sends, int adc)
+{
+    for (auto it = sends.crbegin(); it != sends.crend(); ++it) {
+        if (it->first == adc) {
+            return it->second;
+        }
+    }
+    return -1;
 }
 
 // Thetis BUFLEN, the CmdHighPriority packet length.
@@ -1088,7 +1100,41 @@ private slots:
 
         ctrl.onMoxHardwareFlipped(false);
         QCOMPARE(ctrl.attenuatorDb(), 9);
-        QVERIFY(radio.sends.contains(QPair<int, int>(0, 9)));
+        QCOMPARE(lastSendToAdc(radio.sends, 0), 9);
+        ctrl.setRadioConnection(nullptr);
+    }
+
+    // With ATT on TX off the key leaves the S-ATT alone, so the band
+    // entered's RX value shows at once; it still reaches the radio only on
+    // the fall, with its preamp drive.
+    void bandChangeWhileKeyedWithoutAttOnTxSendsOnTheFall()
+    {
+        StepAttenuatorController ctrl;
+        ctrl.setBand(Band::Band20m);
+        loadController(ctrl, QStringLiteral("02:00:00:00:ad:37"));
+        RecordingConnection radio;
+        ctrl.setRadioConnection(&radio);
+        ctrl.setBandRestoreToRadio(true);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(false);
+        ctrl.setAttenuation(5);
+        ctrl.setBand(Band::Band40m);
+        ctrl.setAttenuation(9);
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.attenuatorDb(), 5);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.attenuatorDb(), 5);
+        radio.sends.clear();
+        radio.preamp.clear();
+        ctrl.setBand(Band::Band40m);
+        QCOMPARE(ctrl.attenuatorDb(), 9);
+        QCOMPARE(radio.sends, Sends{});
+        QVERIFY(radio.preamp.isEmpty());
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(lastSendToAdc(radio.sends, 0), 9);
+        QVERIFY(!radio.preamp.isEmpty());
         ctrl.setRadioConnection(nullptr);
     }
 };
