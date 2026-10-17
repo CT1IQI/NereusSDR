@@ -13,6 +13,11 @@
 //      raw mmap from the test side reads back the same bytes.
 //   3. Consumer round-trip — test writes known samples to /nereussdr-vax-tx;
 //      CoreAudioHalBus(TxInput)::pull() returns them.
+//   3b. A reader on a timer: a writer like WSJT-X's against a 10 ms
+//      reader, in simulated time: pull()'s low-latency guard loses audio,
+//      pullKeepingBacklog() loses none; a deep backlog read keeps only the
+//      newest frames; a backlog given in an odd number of samples still
+//      starts the read on a left-channel sample.
 //   4. Role policing — push() returns -1 on TxInput; pull() returns -1 on
 //      Vax1..4.
 //   5. Format validation — open() rejects non-48k/non-stereo/non-float32.
@@ -311,6 +316,40 @@ private slots:
         QCOMPARE(got, qint64(kKeep) * 2 * qint64(sizeof(float)));
         QCOMPARE(read[0], float(kWaiting - kKeep));
         QCOMPARE(read[2 * (kKeep - 1)], float(kWaiting - 1));
+
+        ::munmap(plugin, sizeof(VaxShmBlock));
+        ::close(fd);
+        bus.close();
+    }
+
+    void anOddBacklogStillStartsOnALeftSample()
+    {
+        CoreAudioHalBus bus(CoreAudioHalBus::Role::TxInput);
+        AudioFormat fmt;
+        QVERIFY2(bus.open(fmt), qPrintable(bus.errorString()));
+        const int fd = ::shm_open(kTxInputPath, O_RDWR, 0666);
+        QVERIFY(fd >= 0);
+        void* ptr = ::mmap(nullptr, sizeof(VaxShmBlock), PROT_READ | PROT_WRITE,
+                           MAP_SHARED, fd, 0);
+        QVERIFY(ptr != MAP_FAILED);
+        auto* plugin = static_cast<VaxShmBlock*>(ptr);
+
+        // Left holds the frame number, right its negative less one, so a
+        // read that starts on a right sample shows.
+        constexpr uint32_t kWaiting = 14'400;
+        constexpr uint32_t kKeep = 5'760;
+        for (uint32_t f = 0; f < kWaiting; ++f) {
+            plugin->ringBuffer[2 * f] = float(f);
+            plugin->ringBuffer[2 * f + 1] = -float(f) - 1.0f;
+        }
+        plugin->writePos.store(2 * kWaiting, std::memory_order_release);
+        std::vector<float> read(2 * kWaiting, 0.0f);
+        const qint64 got = bus.pullKeepingBacklog(reinterpret_cast<char*>(read.data()),
+                                                  qint64(read.size() * sizeof(float)),
+                                                  (qint64(kKeep) * 2 + 1) * qint64(sizeof(float)));
+        QCOMPARE(got, qint64(kKeep) * 2 * qint64(sizeof(float)));
+        QCOMPARE(read[0], float(kWaiting - kKeep));
+        QCOMPARE(read[1], -float(kWaiting - kKeep) - 1.0f);
 
         ::munmap(plugin, sizeof(VaxShmBlock));
         ::close(fd);
