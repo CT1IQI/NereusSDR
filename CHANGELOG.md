@@ -633,6 +633,12 @@ Advanced, and each control appears on one page only.
 - In a remote window, a pan whose span the Core narrowed no longer asks for a
   larger FFT as if you had zoomed in. It sizes the FFT from the span it asked
   for, the same span it sends.
+- A remote window's VAX receive audio has fewer repeat dropouts. After a gap
+  it keeps a larger reserve, up to a quarter second, so the next short pauses
+  in the network link are not heard, and its pitch holds steady through them.
+  Before, each pause was a gap a program such as WSJT-X heard, and the pitch
+  could move by up to about 25 Hz, enough to cost FT8 decodes. The larger
+  reserve moves WSJT-X's DT by up to about 0.12 s.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
 - On Linux, a window closed while maximized or full screen comes back with
