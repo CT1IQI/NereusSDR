@@ -24,8 +24,9 @@
 //   2026-10-17: the writer marks a lost stream closed under the sink's
 //               lock, with the loss kept or taken for the sink, so a
 //               stream that reads closed never has its loss still to come
-//               when a sink is set (R-AUD-07, CI flake). J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               when a sink is set (R-AUD-07, CI flake); a test's hook at
+//               that mark.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectBus.h"
@@ -154,6 +155,7 @@ struct AlsaDirectBus::Impl {
     std::function<void(const AudioStreamEvent&)> sink;
     // A loss posted before a sink was set, sent when one is (under sinkMutex).
     std::optional<AudioStreamEvent> pendingEvent;
+    std::function<void()> lossMarkedHook;   // setLossMarkedHookForTest()
 
     AudioFormat format;
     QString error;
@@ -174,6 +176,9 @@ struct AlsaDirectBus::Impl {
             // reads closed and then sets its sink is sent the loss there.
             writerLost.store(true);
             open.store(false);
+            if (lossMarkedHook) {
+                lossMarkedHook();
+            }
             s = sink;
             if (!s) {
                 // The engine sets its sink after open() returns; a loss in
@@ -541,6 +546,11 @@ std::optional<AlsaPcmSetup> AlsaDirectBus::pcmSetup() const
 std::int64_t AlsaDirectBus::deviceLatencyNs() const
 {
     return m_impl->pcm ? m_impl->latencyNs.load() : -1;
+}
+
+void AlsaDirectBus::setLossMarkedHookForTest(std::function<void()> hook)
+{
+    m_impl->lossMarkedHook = std::move(hook);
 }
 
 // ---------------------------------------------------------------------------

@@ -25,8 +25,9 @@
 // (suspend) resumes, else prepares; -ENODEV (the card was unplugged), or
 // an error snd_pcm_prepare cannot clear, ends the thread, marks the
 // stream not open and posts DeviceLost once (kept until a sink is set when
-// none is yet; a stream that reads closed has its loss kept already).  close() drops the PCM, which wakes a blocked write, and
-// joins the thread.
+// none is yet).  A stream that reads closed has its loss kept already, or
+// taken for the sink set then.  close() drops the PCM, which wakes a
+// blocked write, and joins the thread.
 //
 // The PCM sits behind IAlsaPcm and AlsaPcmOpener, so the stream's open,
 // writer and error handling are tested with a fake PCM; the real opener
@@ -50,8 +51,8 @@
 //               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-17: a lost stream reads closed only once its loss is kept or
-//               taken for the sink (R-AUD-07). J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               taken for the sink (R-AUD-07); setLossMarkedHookForTest().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -184,6 +185,10 @@ public:
     std::optional<AlsaPcmSetup> pcmSetup() const;
     // The device latency read at open, in ns; -1 while closed.
     std::int64_t deviceLatencyNs() const;
+    // Called on the writer's thread the moment a lost stream is marked
+    // closed, before its loss is kept or sent, under the sink's lock (so
+    // it must not set a sink itself).  Set before open().
+    void setLossMarkedHookForTest(std::function<void()> hook);
 
 private:
     struct Impl;
