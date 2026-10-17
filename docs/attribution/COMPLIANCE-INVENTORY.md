@@ -39,7 +39,7 @@ inventory and per-component provenance docs.
 
 # Compliance Inventory
 
-Total tracked files: **7390**
+Total tracked files: **7392**
 
 ## aethersdr-port (86)
 
@@ -790,7 +790,7 @@ Total tracked files: **7390**
 - `third_party/fftw3/lib/libfftw3f-3.a`
 - `third_party/fftw3/lib/libfftw3f-3.def`
 
-## nereussdr-original (4107)
+## nereussdr-original (4109)
 
 - `.claude/commands/triage.md`
 - `.gitattributes`
@@ -2573,6 +2573,7 @@ Total tracked files: **7390**
 - `ios/NereusKit/Sources/NereusLink/MediaTunnelContext.swift`
 - `ios/NereusKit/Sources/NereusLink/MicrophoneStart.swift`
 - `ios/NereusKit/Sources/NereusLink/NetworkRelaySocket.swift`
+- `ios/NereusKit/Sources/NereusLink/OpeningDeadlineClock.swift`
 - `ios/NereusKit/Sources/NereusLink/P256Wire.swift`
 - `ios/NereusKit/Sources/NereusLink/PairedStation.swift`
 - `ios/NereusKit/Sources/NereusLink/PairedStationStore.swift`
@@ -3319,6 +3320,7 @@ Total tracked files: **7390**
 - `scripts/ci/change-scope.sh`
 - `scripts/ci/linux-route.sh`
 - `scripts/ci/macos-openssl.sh`
+- `scripts/ci/test-split.py`
 - `scripts/collect-crate-notices.py`
 - `scripts/collect-source-notices.py`
 - `scripts/compliance-inventory.py`

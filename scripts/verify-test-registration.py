@@ -3,10 +3,11 @@
 
 PR #327's first CI run (2026-09-27, run 36327470069): all four Linux shards
 failed to configure. nereus_add_test() registers a test only in its own
-shard (NEREUS_TEST_SHARDS / NEREUS_TEST_SHARD, hashed on the name) and in
-every other shard makes a stub object library and returns without calling
-add_test(). A set_tests_properties() written straight after it then names a
-test that does not exist in three shards out of four, and CMake stops with
+shard (NEREUS_TEST_SHARDS / NEREUS_TEST_SHARD, hashed on the name or read
+from NEREUS_TEST_SHARD_FILE's measured split) and in every other shard
+makes a stub object library and returns without calling add_test(). A
+set_tests_properties() written straight after it then names a test that
+does not exist in three shards out of four, and CMake stops with
 "set_tests_properties Can not find test to add properties to". A developer
 configure is unsharded, so the mistake only shows in CI.
 

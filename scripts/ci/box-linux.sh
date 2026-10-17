@@ -9,11 +9,14 @@
 #   scripts/ci/box-linux.sh test        run this job's tests (not the
 #                                       realtime tests: linux-realtime in
 #                                       ci.yml runs those on an idle runner)
+#   scripts/ci/box-linux.sh times       write this job's test times to
+#                                       box-test-times-$SHARD.txt
 #   scripts/ci/box-linux.sh stats       this job's compiler cache hits
 #
-# From the environment: SHARDS and SHARD (the name-hash test shards, as on
-# the hosted legs; SHARDS=0 for none) and TARGET (the test target to build,
-# all_tests).
+# From the environment: SHARDS and SHARD (the test shards; SHARDS=0 for
+# none) and TARGET (the test target to build, all_tests). The tests go to
+# shards by name hash, as on the hosted legs, unless the checkout holds a
+# .box-test-shards.txt from the workflow (scripts/ci/test-split.py).
 set -euo pipefail
 
 : "${SHARDS:?}" "${SHARD:?}" "${TARGET:?}"
@@ -30,7 +33,13 @@ case "${1:-}" in
               -P cmake/FetchDependencyArchives.cmake
         git config --global --add include.path "$mirrors"
         # The hosted Linux legs' configure (Configure (Linux) in ci.yml),
-        # with this job's shards.
+        # with this job's shards: by measured time when the changes job
+        # split them (the workflow writes its split to this file), by name
+        # hash otherwise.
+        shard_file=()
+        if [ -s .box-test-shards.txt ]; then
+            shard_file=(-DNEREUS_TEST_SHARD_FILE=/src/.box-test-shards.txt)
+        fi
         cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
@@ -44,7 +53,8 @@ case "${1:-}" in
             -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_TEST_SHARDS="$SHARDS" \
-            -DNEREUS_TEST_SHARD="$SHARD"
+            -DNEREUS_TEST_SHARD="$SHARD" \
+            "${shard_file[@]}"
         # ctest starts the longest tests first from these times.
         mkdir -p build/Testing/Temporary
         cp "$cost_data" build/Testing/Temporary/CTestCostData.txt 2>/dev/null || true
@@ -69,6 +79,13 @@ case "${1:-}" in
         exit "$status"
         ;;
 
+    times)
+        # This job's measured time per test executable, for the next run's
+        # split (scripts/ci/test-split.py).
+        python3 scripts/ci/test-split.py times build > "box-test-times-$SHARD.txt"
+        echo "Times for $(wc -l < "box-test-times-$SHARD.txt") test executables."
+        ;;
+
     stats)
         # This job's hits and misses (the cache is shared, so its own
         # counters cover every job on the machine).
@@ -78,7 +95,7 @@ case "${1:-}" in
         ;;
 
     *)
-        echo "usage: $0 configure | build | test | stats" >&2
+        echo "usage: $0 configure | build | test | times | stats" >&2
         exit 2
         ;;
 esac

@@ -17,6 +17,15 @@
 # Default (NEREUS_TEST_SHARDS unset or 0): sharding disabled, every
 # nereus_add_test() registers normally.  Local developer builds keep
 # the full suite.
+#
+# Measured shards (CI speed round, 2026-10-17): -DNEREUS_TEST_SHARD_FILE
+# names a file of "<test> <shard>" lines, written by
+# scripts/ci/test-split.py from the times earlier runs measured, and a
+# test listed there goes to that shard instead of its name-hash bucket.
+# A test the file does not list (a new one) keeps its hash bucket. Every
+# shard of a run must be given the same file, or a test could land in two
+# shards or in none; the self-hosted Linux jobs in
+# .github/workflows/ci.yml get theirs from the changes job.
 
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
@@ -43,6 +52,33 @@ if(NEREUS_TEST_SHARDS GREATER 0)
     message(STATUS
         "Test sharding enabled — building shard "
         "${NEREUS_TEST_SHARD} of ${NEREUS_TEST_SHARDS}")
+
+    set(NEREUS_TEST_SHARD_FILE "" CACHE FILEPATH
+        "Optional \"<test> <shard>\" lines that override the name-hash shard")
+    if(NEREUS_TEST_SHARD_FILE)
+        if(NOT EXISTS "${NEREUS_TEST_SHARD_FILE}")
+            message(FATAL_ERROR
+                "NEREUS_TEST_SHARD_FILE=${NEREUS_TEST_SHARD_FILE} does not exist.")
+        endif()
+        file(STRINGS "${NEREUS_TEST_SHARD_FILE}" _shard_lines)
+        set(_shard_listed 0)
+        foreach(_line IN LISTS _shard_lines)
+            if(NOT _line MATCHES "^([A-Za-z0-9_]+) ([0-9]+)$")
+                message(FATAL_ERROR
+                    "NEREUS_TEST_SHARD_FILE: bad line \"${_line}\".")
+            endif()
+            if(CMAKE_MATCH_2 GREATER_EQUAL NEREUS_TEST_SHARDS)
+                message(FATAL_ERROR
+                    "NEREUS_TEST_SHARD_FILE puts ${CMAKE_MATCH_1} in shard "
+                    "${CMAKE_MATCH_2}, out of range [0, ${NEREUS_TEST_SHARDS}).")
+            endif()
+            # Read by nereus_add_test() below.
+            set(_nereus_test_shard_${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+            math(EXPR _shard_listed "${_shard_listed} + 1")
+        endforeach()
+        message(STATUS "Test shards: ${_shard_listed} tests placed by "
+            "${NEREUS_TEST_SHARD_FILE}, the rest by name hash")
+    endif()
 
     # One-line stub source shared by every sharded-out test target. The
     # stub OBJECT library never enters the build graph (EXCLUDE_FROM_ALL
@@ -218,12 +254,17 @@ function(nereus_add_test name)
     # scripts/verify-test-registration.py checks it in the pre-commit hook
     # and the CI compliance job.
     if(NEREUS_TEST_SHARDS GREATER 0)
-        string(MD5 _hash "${name}")
-        # Take the first 4 hex chars (16-bit) — plenty of entropy for
-        # a handful of buckets, and well within math(EXPR)'s 64-bit
-        # signed range.
-        string(SUBSTRING "${_hash}" 0 4 _hash_prefix)
-        math(EXPR _bucket "0x${_hash_prefix} % ${NEREUS_TEST_SHARDS}")
+        if(DEFINED _nereus_test_shard_${name})
+            # Placed by NEREUS_TEST_SHARD_FILE (see the top of this file).
+            set(_bucket ${_nereus_test_shard_${name}})
+        else()
+            string(MD5 _hash "${name}")
+            # Take the first 4 hex chars (16-bit) — plenty of entropy for
+            # a handful of buckets, and well within math(EXPR)'s 64-bit
+            # signed range.
+            string(SUBSTRING "${_hash}" 0 4 _hash_prefix)
+            math(EXPR _bucket "0x${_hash_prefix} % ${NEREUS_TEST_SHARDS}")
+        endif()
         if(NOT _bucket EQUAL ${NEREUS_TEST_SHARD})
             add_library(${name} OBJECT EXCLUDE_FROM_ALL "${NEREUS_TEST_STUB_CPP}")
             return()

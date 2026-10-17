@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 - teardownConnection stops the TX worker before the audio
+//                engine, which destroys the TX input and VAX TX buses the
+//                worker reads. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-15 - catchUpTransmitCut does not stop a second time when all
 //                that is left is a release already under way. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -27429,12 +27433,14 @@ void RadioModel::teardownConnection()
         m_dspThread = nullptr;
     }
 
-    // Stop audio output
-    m_audioEngine->stop();
-
     // 3M-1c TX pump architecture redesign — TxWorkerThread teardown.
     //
     // ORDER MATTERS:
+    //   0. The TX worker stops BEFORE the audio engine below.  Until
+    //      stopPump() returns, the worker reads the TX input and the VAX
+    //      TX bus (pullTxMic / pullVaxTxMic), and AudioEngine::stop()
+    //      destroys both; stopping audio first left the worker inside
+    //      bus->pull() on a freed bus (main CI crash at 4066a86b6).
     //   1. stopPump() — quits the worker's event loop and waits for
     //      its QTimer/onPumpTick to finish.  Any in-flight tick
     //      completes before exit.
@@ -27466,6 +27472,11 @@ void RadioModel::teardownConnection()
         }
         m_txWorker.reset();
     }
+
+    // Stop audio output.  After the TX worker (step 0 above): nothing
+    // reads the buses stop() destroys any more.
+    m_audioEngine->stop();
+
     // R-R3-36: the TX worker has stopped reading the capture reader, so
     // the local session's capture demand can go now.
     m_pcCaptureSessionActive = false;

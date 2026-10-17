@@ -128,6 +128,8 @@ jobs:
             arch: aarch64
             use_aqt: false
     runs-on: ${{ matrix.runner }}
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
         with:
@@ -174,6 +176,40 @@ jobs:
 
       - name: Set up DeepFilterNet3 library
         run: bash setup-deepfilter.sh
+
+      # ------------------------------------------------------------------
+      # Dependency downloads (cmake/NereusDependencyArchives.cmake)
+      # ------------------------------------------------------------------
+      # As in ci.yml's build job: every source archive and git repository
+      # the configure and build download, taken from the dependency cache
+      # main's CI keeps (a tag's run can read the default branch's caches),
+      # with anything missing fetched by cmake/FetchDependencyArchives.cmake
+      # with retries. It keeps an archive only when its SHA-256 matches the
+      # pin and a git mirror only when its pinned ref resolves to the pinned
+      # commit, and the git repositories are redirected (url.insteadOf) to
+      # those verified mirrors; the configure still checks URL_HASH on each
+      # archive. On a cache hit no dependency download reaches the network,
+      # so an upstream host that is down (gitlab.xiph.org, rnnoise's home,
+      # on 2026-10-17) cannot fail a release. Nothing is saved here: a
+      # cache a tag's run writes serves only that tag.
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -394,6 +430,8 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
         with:
@@ -406,6 +444,25 @@ jobs:
             qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
             libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
+      # The pinned dependency downloads (see "Dependency downloads" above
+      # build-linux).
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
       - name: Configure and build headless station
         run: |
           cmake -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -475,6 +532,18 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
           persist-credentials: false
+      # The pinned dependency downloads (see "Dependency downloads" above
+      # build-linux), restored into the checkout here. The fetch and the
+      # git redirects run in the build container
+      # (packaging/station-image/build-trixie-deb.sh), so the mirrors'
+      # paths are the container's.
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
       - name: Build and verify Debian 13 arm64 Core package
         shell: bash
         env:
@@ -488,6 +557,7 @@ jobs:
           printf '%s\n' "$builder" > station-builder-image.txt
           docker run --rm --platform linux/arm64 \
             -e NEREUS_VERSION \
+            -e NEREUS_DEPENDENCY_ARCHIVE_DIR=/workspace/.nereus-deps \
             -v "$PWD:/workspace" -w /workspace \
             "$builder" /bin/bash packaging/station-image/build-trixie-deb.sh
           package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
@@ -603,6 +673,8 @@ jobs:
     # env is populated after secrets are available.
     env:
       HAS_APPLE_DEVELOPER_ID: ${{ !inputs.verify_only && secrets.APPLE_DEVELOPER_ID != '' }}
+      # Read by every configure in the job, the HAL plug-in's too.
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
         with:
@@ -787,6 +859,27 @@ jobs:
           # would build aarch64 DFNR and the link step would fail.
           NEREUS_TARGET_ARCH: ${{ matrix.arch }}
         run: bash setup-deepfilter.sh
+
+      # The pinned dependency downloads (see "Dependency downloads" above
+      # build-linux).
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -1181,10 +1274,33 @@ jobs:
   build-windows:
     needs: prepare
     runs-on: windows-latest
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+
+      # The pinned dependency downloads (see "Dependency downloads" above
+      # build-linux).
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -1222,7 +1338,9 @@ jobs:
         run: |
           $fftw_dir = "third_party/fftw3"
           New-Item -ItemType Directory -Force -Path "$fftw_dir/include", "$fftw_dir/lib", "$fftw_dir/bin"
-          Invoke-WebRequest -Uri "https://fftw.org/pub/fftw/fftw-3.3.5-dll64.zip" -OutFile fftw.zip
+          # The zip from the dependency downloads above, already checked
+          # against its pinned SHA-256 (as ci.yml's Windows leg takes it).
+          Copy-Item "$env:NEREUS_DEPENDENCY_ARCHIVE_DIR/fftw-3.3.5-dll64.zip" fftw.zip
           Expand-Archive -Path fftw.zip -DestinationPath fftw-tmp
           Copy-Item fftw-tmp/fftw3.h "$fftw_dir/include/"
           Copy-Item fftw-tmp/libfftw3-3.dll "$fftw_dir/bin/"

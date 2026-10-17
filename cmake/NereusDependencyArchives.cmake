@@ -26,7 +26,8 @@
 # was: the upstream URL and its hash.
 #
 # The git repositories are declared with GIT_REPOSITORY/GIT_TAG where they
-# are used (CMakeLists.txt, third_party/rnnoise, third_party/libspecbleach).
+# are used (CMakeLists.txt, third_party/rnnoise, third_party/libspecbleach,
+# hal-plugin).
 # They are listed here only for the fetch script, which checks that each
 # declaring file still names the URL and ref recorded here, so the two
 # cannot drift apart silently.
@@ -36,6 +37,11 @@
 #               downloads failed two Linux CI jobs (run 36866003880).
 #               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 #               Anthropic Claude Code.
+#   2026-10-17: libASPL added for the macOS release's HAL plug-in, when
+#               the release builds started taking their dependencies
+#               from here (gitlab.xiph.org was down and failed CodeQL's
+#               rnnoise clone). J.J. Boyd (KG4VCF), with AI-assisted
+#               implementation via Anthropic Claude Code.
 # =================================================================
 
 include_guard(GLOBAL)
@@ -128,9 +134,9 @@ set(NEREUS_DEPENDENCY_ARCHIVE_fftw_win64_PLATFORMS Windows)
 # <name>_COMMIT      the commit that ref must resolve to
 # <name>_DECLARED_IN the file holding the declaration, from the source root
 # <name>_PLATFORMS   which hosts' CI jobs fetch it
-# libASPL (hal-plugin/CMakeLists.txt) is left out: the HAL plug-in is off
-# unless NEREUSSDR_BUILD_HAL_PLUGIN is set, and no CI job sets it.
-set(NEREUS_DEPENDENCY_GIT_REPOS portaudio rnnoise libspecbleach zlib)
+# libASPL (hal-plugin/CMakeLists.txt) is the HAL plug-in's, which only the
+# macOS release builds (release.yml's "Build HAL plugin").
+set(NEREUS_DEPENDENCY_GIT_REPOS portaudio rnnoise libspecbleach zlib libASPL)
 
 set(NEREUS_DEPENDENCY_GIT_portaudio_URL         https://github.com/PortAudio/portaudio.git)
 set(NEREUS_DEPENDENCY_GIT_portaudio_REF         v19.7.0)
@@ -155,6 +161,14 @@ set(NEREUS_DEPENDENCY_GIT_zlib_REF         v1.3.1)
 set(NEREUS_DEPENDENCY_GIT_zlib_COMMIT      51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf)
 set(NEREUS_DEPENDENCY_GIT_zlib_DECLARED_IN CMakeLists.txt)
 set(NEREUS_DEPENDENCY_GIT_zlib_PLATFORMS   Windows)
+
+# The commit is what github.com/gavv/libASPL's tag v3.1.2 names
+# (git ls-remote, 2026-10-17); the fetch script checks the tag still does.
+set(NEREUS_DEPENDENCY_GIT_libASPL_URL         https://github.com/gavv/libASPL.git)
+set(NEREUS_DEPENDENCY_GIT_libASPL_REF         v3.1.2)
+set(NEREUS_DEPENDENCY_GIT_libASPL_COMMIT      47f688ed6bb637ab8b7f4b36864734b2b1f69b6b)
+set(NEREUS_DEPENDENCY_GIT_libASPL_DECLARED_IN hal-plugin/CMakeLists.txt)
+set(NEREUS_DEPENDENCY_GIT_libASPL_PLATFORMS   macOS)
 
 # ── Where the local copies are ───────────────────────────────────────────
 # A configure takes the directory from -DNEREUS_DEPENDENCY_ARCHIVE_DIR or,
