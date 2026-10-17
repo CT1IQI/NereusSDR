@@ -40,6 +40,18 @@
 // 2026-10-14: align the tall-pan geometry and wheel assertions with the
 // contained scrolling Display pill used by short docked pans. J.J. Boyd
 // (KG4VCF), AI-assisted via OpenAI Codex.
+//
+// 2026-10-15: carry two checks from Combined K (55ce07963, 49ce1a80d)
+// onto the contained-scroller rule: each marker pill's text fits its
+// styled content rectangle, not only its outer width, and every tab's
+// pill stays inside the pan. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
+// 2026-10-15: whenPeakValueWrapsTheKeyedSpectrumTabStillFits steps the
+// letter spacing up from 1.5 px, at most 13 steps, until the four marker
+// pills overflow their line, as Combined K (fe27683af) does; a fixed
+// 1.5 px did not force the wrap on every platform font. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -61,6 +73,7 @@
 #include <QScrollBar>
 #include <QSlider>
 #include <QStyle>
+#include <QStyleOptionButton>
 #include <QStyleOptionSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -183,6 +196,18 @@ private:
         int columnSpan = 0;
         grid->getItemPosition(index, &row, &column, &rowSpan, &columnSpan);
         return row;
+    }
+
+    // The rectangle a styled push button leaves for its text, inside the
+    // style's padding.
+    static QRect pushButtonContents(const QPushButton* button) {
+        QStyleOptionButton option;
+        option.initFrom(button);
+        option.text = button->text();
+        option.icon = button->icon();
+        option.iconSize = button->iconSize();
+        return button->style()->subElementRect(
+            QStyle::SE_PushButtonContents, &option, button);
     }
 
     // Every setting the Spectrum and 3D View tabs show, away from its
@@ -1516,7 +1541,7 @@ private slots:
         } pages[] = {
             {"displayPageSpectrum", "Trace", ""},
             {"displayPageLevels", "Spectrum scale", ""},
-            {"displayPageFft", "FFT", "STATION"},
+            {"displayPageFft", "FFT", "CORE"},
             {"displayPageWaterfall", "Drawing", ""},
             {"displayPage3D", "View", ""},
         };
@@ -1595,6 +1620,14 @@ private slots:
             QVERIFY(pill->x() >= right);
             QVERIFY2(pill->width() >= pill->sizeHint().width(), name);
             QVERIFY2(pill->width() >= pill->fontMetrics().horizontalAdvance(pill->text()) + 2, name);
+            // The text fits inside the style's padding, not only the
+            // button's outer width.
+            const int textWidth = pill->fontMetrics().horizontalAdvance(pill->text());
+            const int contentWidth = pushButtonContents(pill).width();
+            QVERIFY2(contentWidth >= textWidth,
+                     qPrintable(QStringLiteral("%1: %2 px content width, %3 px needed (%4)")
+                         .arg(pill->text()).arg(contentWidth).arg(textWidth)
+                         .arg(pill->objectName())));
             right = pill->x() + pill->width();
             QVERIFY(right <= 250);
             lastRow = row;
@@ -1606,14 +1639,50 @@ private slots:
     // toggles' size, and the Spectrum tab still fits the pill's 480 px
     // with the pan keyed (the keyed note is two lines) and nothing cut off.
     // The font here is the application's with its letters spaced out, so
-    // every pill is wider than this computer's font makes it.
+    // every pill is wider than this computer's font makes it. Measure the
+    // styled pills before choosing the extra letter spacing: 1.5 px alone
+    // does not force a wrap with every platform's default font. The
+    // stepping is bounded at 13 steps (1.5 px to 4.5 px).
     void whenPeakValueWrapsTheKeyedSpectrumTabStillFits() {
         struct FontRestore {
             QFont saved{QApplication::font()};
             ~FontRestore() { QApplication::setFont(saved); }
         } restore;
         QFont wide = restore.saved;
-        wide.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
+        constexpr int kMarkerRoom = 268 - 2 - 2 * 8;
+        constexpr int kMinimumGap = 2;
+        constexpr int kMaxSpacingSteps = 13;
+        int firstThreeWidth = 0;
+        int allFourWidth = 0;
+        for (int step = 0; step < kMaxSpacingSteps; ++step) {
+            wide.setLetterSpacing(QFont::AbsoluteSpacing, 1.5 + step * 0.25);
+            QApplication::setFont(wide);
+            PillHarness probe;
+            firstThreeWidth = 2 * kMinimumGap;
+            const char* names[] = {"pillDisplayShowNoiseFloor", "pillDisplayShowBinWidth",
+                                   "pillDisplayShowCursorFreq", "pillDisplayShowPeakValueOverlay"};
+            for (int index = 0; index < 4; ++index) {
+                QPushButton* button = probe.toggle(names[index]);
+                QVERIFY(button);
+                QString style = button->styleSheet();
+                style.replace(QRegularExpression(QStringLiteral("padding: 0 [0-9]+px;")),
+                              QStringLiteral("padding: 0 1px;"));
+                button->setStyleSheet(style);
+                button->ensurePolished();
+                if (index < 3) {
+                    firstThreeWidth += button->sizeHint().width();
+                } else {
+                    allFourWidth = firstThreeWidth + kMinimumGap + button->sizeHint().width();
+                }
+            }
+            qInfo("marker wrap fixture: spacing=%.2f three=%d four=%d room=%d",
+                  wide.letterSpacing(), firstThreeWidth, allFourWidth, kMarkerRoom);
+            if (allFourWidth > kMarkerRoom) { break; }
+        }
+        QVERIFY2(allFourWidth > kMarkerRoom,
+                 "The fixture font must make four marker pills exceed even the tightest line");
+        QVERIFY2(firstThreeWidth <= kMarkerRoom,
+                 "The fixture font must still let the first three marker pills share a line");
         QApplication::setFont(wide);
         PillHarness h;
         h.panel->openDisplayPill();
@@ -2650,6 +2719,7 @@ private slots:
         QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
         QVERIFY(h.scroll());
         QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
+        QVERIFY(h.pan.rect().contains(pill->geometry()));
         qInfo() << "Spectrum tab height" << pill->height();
 
         for (const Tab tab : {Tab::Levels, Tab::Fft, Tab::Waterfall, Tab::View3D}) {
@@ -2657,6 +2727,7 @@ private slots:
             QCOMPARE(pill->width(), 268);
             QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
             QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
+            QVERIFY(h.pan.rect().contains(pill->geometry()));
             QVERIFY2(pill->layout()->minimumSize().width() <= 268,
                      qPrintable(QString::number(pill->layout()->minimumSize().width())));
         }
@@ -2893,7 +2964,7 @@ private slots:
         // The header says whose these are.
         auto* scope = page->findChild<QLabel*>(QStringLiteral("pillHeaderScope"));
         QVERIFY(scope);
-        QCOMPARE(scope->text(), QStringLiteral("STATION"));
+        QCOMPARE(scope->text(), QStringLiteral("CORE"));
     }
 
     void schemeListsAllEightAndShowsThePans() {
