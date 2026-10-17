@@ -2,6 +2,7 @@
 
 #include "core/LogCategories.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/NativeAudioFirstCall.h"
 #include <QCoreApplication>
 #include <QLoggingCategory>
 #include <QThread>
@@ -47,6 +48,9 @@ void requestMicrophonePermission()
 {
     const auto started = PermissionClock::now();
     logPermissionStage("gui-launch", "status-enter", started, started);
+    // 2026-10-16: the query may reach the audio services, so it counts for
+    // the first native audio call (NativeAudioFirstCall.h).
+    markNativeAudioCall("microphone permission query");
     AVAuthorizationStatus status =
         [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
     const auto statusReturned = PermissionClock::now();

@@ -58,7 +58,8 @@
 //   2026-10-16: the persistent helper: one standing helper serves every
 //               generation, and a stuck one is still killed and replaced;
 //               an open waits out the helper's warm-up (its own bound), a
-//               helper that never starts is replaced once only, and
+//               helper that never starts is replaced once only, one that
+//               warms and ends no more than three times a minute, and
 //               CaptureStandby holds work until the helper has warmed or
 //               its bound.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -1618,6 +1619,26 @@ private slots:
         QCOMPARE(supervisor.lastHelperProcessId(), second);
         QCOMPARE(supervisor.fireDeadlinesNowForTest(CaptureSupervisor::HelloDeadline), 0);
         QCOMPARE(warmed.size(), 0);
+        QCOMPARE(supervisor.status().state, State::Closed);     // no microphone was asked for
+    }
+
+    // A standing helper that warms and then ends is replaced, and each
+    // replacement that warms earns another, but no more than three within a
+    // minute: the fourth helper to end is not replaced.
+    void standbyHelperThatWarmsAndEndsIsReplacedThreeTimesAMinute()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("exit-after-warm")));
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 4, 2 * kHelperStartMs);
+        const qint64 fourth = warmed.at(3).at(0).toLongLong();
+        QVERIFY(fourth > 0);
+        QVERIFY(waitProcessGone(fourth, 3000));
+
+        QTest::qWait(2000);                                     // room for a fifth start
+        QCOMPARE(warmed.size(), 4);
+        QCOMPARE(supervisor.helperProcessId(), qint64(0));
+        QCOMPARE(supervisor.lastHelperProcessId(), fourth);
         QCOMPARE(supervisor.status().state, State::Closed);     // no microphone was asked for
     }
 

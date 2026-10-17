@@ -233,7 +233,11 @@ persistent helper"). Requirement R-R3-36, unchanged in its protections.
   10-second open deadline killed it, and the next one stalled the same way:
   the microphone reached Ready 45 to 110 seconds after launch.
 - The helper has no bundle id. macOS logs that voice isolation is unavailable
-  for a client without one, and the helper never reads the Mic Mode.
+  for a client without one, and the helper never reads the Mic Mode. That
+  holds for a helper the application starts, although macOS counts the
+  application as the helper's responsible app: in one day of logs, 79 helpers
+  the application started each logged that voice isolation was unavailable to
+  it, and no helper read a Mic Mode.
 - Picking Standard for NereusSDR in Control Center did not change the stored
   mode in the operator's test, so asking users to change it is not a fix.
   Writing the stored mode ourselves (a private setter) and an opt-out made
@@ -253,7 +257,7 @@ persistent helper"). Requirement R-R3-36, unchanged in its protections.
   the same helper. Windows, Linux, nereusd and the tests hold no standby and
   run as before.
 - **The start is ordered, not raced.** The first session (and with it the
-  window, its device catalogue, its speakers and the launch's microphone
+  window, its device catalog, its speakers and the launch's microphone
   permission query) starts from the event loop once the helper has answered
   Warmed, or after 3 seconds (`CaptureStandby::kWarmWaitMs`), whichever comes
   first. Nothing blocks meanwhile: the GUI thread runs its event loop, and
@@ -289,18 +293,21 @@ persistent helper"). Requirement R-R3-36, unchanged in its protections.
 - **Replacement.** When a helper that standby holds ends (killed at a
   deadline, crashed, or exited), one fresh helper starts at once and warms,
   with no microphone open. Another replacement is allowed only after that
-  helper has answered Warmed, so a helper that cannot start does not loop.
-  A fresh helper is never started for an open while one is running.
+  helper has answered Warmed, so a helper that cannot start does not loop,
+  and no more than three times within a minute, so a helper that warms and
+  then ends does not loop either; past that, no helper stands by until a
+  microphone demand starts one. A fresh helper is never started for an open
+  while one is running.
 - **No microphone while idle.** Warm opens no input, so macOS shows no
   microphone indicator until a demand opens one, and the helper still never
   reads the Mic Mode.
 - **Measurement.** Each process marks its first native audio call
   (`NativeAudioFirstCall`, fed by the traced Core Audio queries, the Core
-  Audio stream opens, the VAX device watch, the real-time workgroup lookups
-  and the PortAudio start) and logs it once. On Warmed the supervisor logs
-  how long the helper took to list its devices and whether that ended before
-  or after the window's first native audio call. The mark is a measurement:
-  nothing waits on it.
+  Audio stream opens, the VAX device watch, the real-time workgroup lookups,
+  the launch's microphone permission query and the PortAudio start) and logs
+  it once. On Warmed the supervisor logs how long the helper took to list its
+  devices and whether that ended before or after the window's first native
+  audio call. The mark is a measurement: nothing waits on it.
 
 ### Boundaries
 
@@ -310,5 +317,6 @@ persistent helper"). Requirement R-R3-36, unchanged in its protections.
   up to its 120-second deadline, and an open waits with it, Opening. The log
   lines above show which came first.
 - The launch-time hold delays the first window by up to 3 seconds; how long it
-  is in practice, and whether the microphone is Ready within seconds with
-  Voice Isolation stored, are still to be measured on a bench launch.
+  is in practice, whether the microphone is Ready within seconds with Voice
+  Isolation stored, and that the standing helper reads no Mic Mode at that
+  launch are still to be measured on a bench launch.

@@ -91,6 +91,9 @@
 //                         as in the real helper.  With
 //                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it creates the
 //                         empty file <dir>/<its pid> once it holds Warm.
+//   exit-after-warm       As ready until Warm; answers it with Warmed, then
+//                         exits with code 3, as a helper that warms and
+//                         then crashes.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
 // Every scenario answers AsioDescribe with one driver, "Fake ASIO" (4
 // outputs, 2 inputs), AsioOpen with running (256 frames, 48 kHz) or, with
@@ -129,7 +132,7 @@
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-16: Warm is answered with Warmed (the persistent helper);
-//               hang-warm and warm-while-marked.
+//               hang-warm, warm-while-marked and exit-after-warm.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 

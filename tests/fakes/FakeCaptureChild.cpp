@@ -37,8 +37,9 @@
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-16: Warm is answered with Warmed (the persistent helper);
-//               the hang-warm and warm-while-marked scenarios.  J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               the hang-warm, warm-while-marked and exit-after-warm
+//               scenarios.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -88,7 +89,7 @@ enum class Scenario {
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
     PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
     Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing,
-    PermissionWhileMarked, HangWarm, WarmWhileMarked
+    PermissionWhileMarked, HangWarm, WarmWhileMarked, ExitAfterWarm
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -128,6 +129,7 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     }
     if (name == QLatin1String("hang-warm")) { return Scenario::HangWarm; }
     if (name == QLatin1String("warm-while-marked")) { return Scenario::WarmWhileMarked; }
+    if (name == QLatin1String("exit-after-warm")) { return Scenario::ExitAfterWarm; }
     return std::nullopt;
 }
 
@@ -434,6 +436,9 @@ private:
                 break;
             }
             sendWarmed();
+            if (m_scenario == Scenario::ExitAfterWarm) {
+                std::_Exit(3);
+            }
             break;
         case P::RecordType::Stop:
             if (command.generation == m_generation && m_scenario != Scenario::IgnoreStop) {

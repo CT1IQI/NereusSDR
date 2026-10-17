@@ -48,9 +48,10 @@
 //               Warmed, logged against the window's first native audio
 //               call); every generation reuses it.  A standing helper that
 //               ends is replaced by one fresh helper, and by another only
-//               after that one answered Warmed.  An open asked for during
-//               the warm-up waits for it (no open deadline until Warmed);
-//               the warm-up has its own bound, warmTimeoutMs.
+//               after that one answered Warmed, and no more than three
+//               times a minute.  An open asked for during the warm-up waits
+//               for it (no open deadline until Warmed); the warm-up has its
+//               own bound, warmTimeoutMs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -80,6 +81,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -112,6 +114,12 @@ constexpr int kShutdownBoundSlackMs = 500;     // shutdown() total bound beyond 
 // replacement answers Warmed (which renews the count), so a helper that
 // cannot start is not restarted without end.
 constexpr int kStandbyRespawnsPerWarm = 1;
+// And no more often than this within kStandbyRespawnWindow, however often
+// the replacements warm, so a helper that warms and then ends is not
+// restarted without end either.  A later microphone demand still starts
+// one.
+constexpr int kStandbyRespawnsPerWindow = 3;
+constexpr std::chrono::milliseconds kStandbyRespawnWindow{60'000};
 
 // No helper can be started from this program path: unset, or an absolute
 // path to nothing.  A relative name is left to QProcess.
@@ -1492,10 +1500,34 @@ private:
         // 2026-10-16: the standing helper ended (killed past a deadline,
         // exited or failed): one fresh helper stands by in its place.
         if (m_standby && m_standbyRespawns > 0) {
+            if (!takeStandbyRespawn()) {
+                qCWarning(lcAudio) << "capture: the standing helper was replaced"
+                                   << kStandbyRespawnsPerWindow << "times within"
+                                   << kStandbyRespawnWindow.count()
+                                   << "ms and has ended again; no fresh helper stands by until "
+                                      "the microphone is asked for";
+                return;
+            }
             --m_standbyRespawns;
             qCInfo(lcAudio) << "capture: starting a fresh helper to stand by";
             spawn();
         }
+    }
+
+    // A standing helper's replacement is allowed now: fewer than
+    // kStandbyRespawnsPerWindow in the last kStandbyRespawnWindow.
+    bool takeStandbyRespawn()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        while (!m_standbyRespawnTimes.empty()
+               && now - m_standbyRespawnTimes.front() >= kStandbyRespawnWindow) {
+            m_standbyRespawnTimes.pop_front();
+        }
+        if (static_cast<int>(m_standbyRespawnTimes.size()) >= kStandbyRespawnsPerWindow) {
+            return false;
+        }
+        m_standbyRespawnTimes.push_back(now);
+        return true;
     }
 
     void publish(State state, Reason reason)
@@ -1551,6 +1583,7 @@ private:
     // The standing helper (2026-10-16).
     bool m_standby = false;
     int m_standbyRespawns = 0;                // replacements left before a Warmed
+    std::deque<std::chrono::steady_clock::time_point> m_standbyRespawnTimes; // within the window
 
     // Child process.
     QProcess* m_process = nullptr;            // Qt parent ownership; deleteLater on exit

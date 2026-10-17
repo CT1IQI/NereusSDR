@@ -44,8 +44,9 @@ namespace NereusSDR {
 // outlives a window and serves the next one after a Core switch.
 //
 // whenWarm() holds work, the start of the first window, until the helper
-// has warmed or warmWaitMs have passed, whichever comes first.  It never
-// waits in the call: the work runs later from the event loop.  The bound
+// has warmed or warmWaitMs have passed, whichever comes first, and logs how
+// long it held it.  It never waits in the call: the work runs later from
+// the event loop.  The bound
 // only stops the holding; the helper keeps its own deadlines.  When no
 // helper can be started (none installed) nothing is held.
 //
@@ -82,6 +83,7 @@ private:
     CaptureSupervisor::Lease m_standby;
     QTimer* m_bound;                       // Qt parent ownership
     std::int64_t m_startNs = 0;            // audioProbeNowNs() at construction
+    std::int64_t m_heldSinceNs = 0;        // audioProbeNowNs() when work was first held
     bool m_warmed = false;
     bool m_released = false;
     std::vector<std::pair<QPointer<QObject>, std::function<void()>>> m_held;

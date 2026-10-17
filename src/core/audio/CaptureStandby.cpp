@@ -61,6 +61,9 @@ void CaptureStandby::whenWarm(QObject* context, std::function<void()> work)
         QMetaObject::invokeMethod(context, std::move(work), Qt::QueuedConnection);
         return;
     }
+    if (m_held.empty()) {
+        m_heldSinceNs = audioProbeNowNs();
+    }
     m_held.emplace_back(QPointer<QObject>(context), std::move(work));
 }
 
@@ -71,11 +74,17 @@ void CaptureStandby::release(const QString& why)
     }
     m_released = true;
     m_bound->stop();
-    const double heldMs = double(audioProbeNowNs() - m_startNs) / 1e6;
+    const std::int64_t nowNs = audioProbeNowNs();
+    const auto ms = [](std::int64_t ns) { return QString::number(double(ns) / 1e6, 'f', 1); };
+    // The hold is what the start of the first window waited (whenWarm()).
+    const QString hold = m_held.empty()
+                             ? QStringLiteral("no work was waiting")
+                             : QStringLiteral("work held for it waited %1 ms")
+                                   .arg(ms(nowNs - m_heldSinceNs));
     qCInfo(lcAudio).noquote()
         << QStringLiteral("capture: the application's audio starts %1 ms after the standing "
-                          "helper was asked for, %2")
-               .arg(QString::number(heldMs, 'f', 1), why);
+                          "helper was asked for, %2; %3")
+               .arg(ms(nowNs - m_startNs), why, hold);
     std::vector<std::pair<QPointer<QObject>, std::function<void()>>> held;
     held.swap(m_held);
     for (auto& [context, work] : held) {
