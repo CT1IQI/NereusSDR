@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434: a second hardware key with no unkey between
+//                 (a key again inside MoxController's unkey wait) no longer
+//                 saves the TX S-ATT or forced-off preamp as the RX value.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -864,6 +868,11 @@ private:
     // Classic mode undo path and serves a different purpose).
     PreampMode m_savedPreampMode{PreampMode::Off};
 
+    // Issue #434: true from the HPSDR key that saved m_savedPreampMode (and
+    // m_savedRx2PreampMode) until the matching unkey, so a second key with
+    // no unkey between does not save the forced Off as the RX mode.
+    bool m_savedRxPreampValid{false};
+
     // Saved RX att for restore on TX→RX (#175 follow-up bench, 2026-05-04).
     //
     // Stashed by onMoxHardwareFlipped(true) before swapping m_attDb to txAtt;
@@ -924,6 +933,9 @@ private:
     int m_rx2AttDb{0};
     // A routing or band change while keyed, sent on the fall.
     bool m_adcSendsHeldForMox{false};
+    // Issue #434 follow-up: RX1's band restore while keyed (with
+    // setBandRestoreToRadio), sent on the fall.
+    bool m_bandRestoreHeldForMox{false};
     // Thetis rx2_step_attenuator_by_band: the other ADC's band memory.
     std::unordered_map<int, int> m_rx2BandAttDb;
     // What each receive ADC holds: in use, and its attenuation.
@@ -1007,6 +1019,13 @@ private:
     bool rx2PreampPresent() const noexcept;
     // Send RX2's mode drive (the RX2PreampMode setter's sends).
     void applyRx2PreampDrive();
+    // Issue #434 follow-up: while keyed, the RX values the hardware key
+    // saved stand in for the live ones it replaced with TX values, until
+    // the unkey puts them back.  True when the saved RX1 attenuation (a
+    // standard board) or the saved preamp modes (the HPSDR, which the
+    // unkey restores only with ATT on TX on) are the RX ones.
+    bool rxAttHeldForTx() const noexcept;
+    bool rxPreampHeldForTx() const noexcept;
 
     // --- Helpers ---
     void applyClassicAutoAtt(int adc);

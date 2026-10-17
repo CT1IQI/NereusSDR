@@ -13,9 +13,15 @@
 //                 off its screen; and a window the system moved, which an
 //                 unrelated save leaves alone. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 - Bench bug: JJ's Rotor window was created at (0,1337) on
+//                 a 1512 x 982 laptop screen. A window shown again, a
+//                 screen change and a ticked applet each bring a window
+//                 whose header cannot be reached back onto a screen.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLoggingCategory>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <memory>
@@ -53,6 +59,15 @@ ScreenInfo screenA()
     // A menu bar's worth less than the whole screen.
     return {QStringLiteral("A"), QString(), kScreenARect, kScreenARect.adjusted(0, 25, 0, 0)};
 }
+
+// JJ's only screen on 2026-10-16: a 1512 x 982 laptop with its menu bar.
+ScreenInfo laptop()
+{
+    return {QStringLiteral("Built-in Retina Display"), QString(), QRect(0, 0, 1512, 982), QRect(0, 25, 1512, 957)};
+}
+constexpr QRect kOnLaptop(200, 200, 328, 144);
+// Where the window log said his Rotor window was created.
+constexpr QPoint kBelowLaptop(0, 1337);
 
 ScreenInfo screenB()
 {
@@ -847,6 +862,175 @@ private slots:
         QVERIFY(rig.settleCapture());
         rig.manager->saveState();
         QCOMPARE(stored(store, QStringLiteral("a")).geometry, after.geometry);
+    }
+
+    // Every time a floating window is shown, enough of it is on a screen to
+    // take hold of: back at its own place when that is on a screen.
+    void aWindowShownOffEveryScreenIsBroughtBack_data()
+    {
+        QTest::addColumn<bool>("byTransmit");
+        QTest::newRow("shown again") << false;
+        QTest::newRow("receive after transmit") << true;
+    }
+    void aWindowShownOffEveryScreenIsBroughtBack()
+    {
+        QFETCH(bool, byTransmit);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("shown.settings")));
+        ContainerWorkspaceStore store(settings);
+        ContainerDocument rotor = floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()));
+        rotor.config[QStringLiteral("showOnTx")] = false;
+        QCOMPARE(store.commit(workspace({rotor}), 0).status, CommitStatus::Saved);
+        const QByteArray before = ContainerDocumentCodec::encode(store.snapshot());
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QCOMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+
+        QWidget* form = rig.manager->container(QStringLiteral("rotor"))->window();
+        if (byTransmit) {
+            rig.manager->setTransmitting(true);
+        } else {
+            form->hide();
+        }
+        QVERIFY(form->isHidden());
+        // Moved while hidden, as nothing the operator did.
+        form->move(kBelowLaptop);
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        if (byTransmit) {
+            rig.manager->setTransmitting(false);
+        } else {
+            form->show();
+        }
+        QVERIFY(form->isVisible());
+        qInfo() << "shown at:" << rig.window(QStringLiteral("rotor"));
+        QCOMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+        // The app's own move: nothing is saved for it.
+        QVERIFY(rig.settleCapture());
+        rig.manager->saveState();
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+    }
+
+    // A window whose own place is off every screen too is shown on the main
+    // window's screen.
+    void aWindowShownWithItsPlaceOffEveryScreenGoesToTheMainScreen()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("nowhere.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QWidget* form = rig.manager->container(QStringLiteral("rotor"))->window();
+        form->hide();
+        // The laptop now runs at a resolution its own place is off.
+        const ScreenInfo smaller{laptop().name, QString(), QRect(0, 0, 1024, 140), QRect(0, 25, 1024, 115)};
+        screens.list = {smaller};
+        form->move(kBelowLaptop);
+        form->show();
+        const QRect shown = rig.window(QStringLiteral("rotor"));
+        qInfo() << "shown at:" << shown;
+        QVERIFY2(smaller.available.contains(shown.topLeft()), "its header is on the screen");
+        QVERIFY(smaller.available.intersected(QRect(shown.topLeft(), QSize(shown.width(), 22))).width() >= 48);
+    }
+
+    // A screen changed while the window was showing somewhere it cannot be
+    // reached (the system moved it): it comes back to its own place.
+    void aWindowOffTheScreensAtAScreenChangeIsBroughtBack()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("changed.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        rig.manager->container(QStringLiteral("rotor"))->window()->move(kBelowLaptop);
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        rig.manager->screensChanged();
+        QCOMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+    }
+
+    // A monitor that changes resolution or work area (its geometryChanged
+    // or availableGeometryChanged) brings back a window left where its
+    // header cannot be reached, as a screen that came or went does.
+    void aScreenGeometrySignalBringsAWindowBack_data()
+    {
+        QTest::addColumn<bool>("available");
+        QTest::newRow("geometry changed") << false;
+        QTest::newRow("available geometry changed") << true;
+    }
+    void aScreenGeometrySignalBringsAWindowBack()
+    {
+        QFETCH(bool, available);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("signal.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        rig.manager->container(QStringLiteral("rotor"))->window()->move(kBelowLaptop);
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen != nullptr);
+        // The platform's own signal, as macOS sends it for a display change.
+        if (available) {
+            emit screen->availableGeometryChanged(screen->availableGeometry());
+        } else {
+            emit screen->geometryChanged(screen->geometry());
+        }
+        // Queued: nothing moves inside the signal.
+        QCOMPARE(rig.window(QStringLiteral("rotor")).topLeft(), kBelowLaptop);
+        QTRY_COMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+    }
+
+    // Containers > Applets ticked: the window holding the applet is put
+    // where it can be reached even while it was already showing.
+    void tickingAnAppletBringsItsWindowOnScreen()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("tick.settings")));
+        ContainerWorkspaceStore store(settings);
+        ContainerDocument rotor = floatingContainer(QStringLiteral("rotor"), kOnLaptop, savedScreenOf(laptop()));
+        ContentEntry applet;
+        applet.id = QStringLiteral("rotor-applet");
+        applet.typeId = QStringLiteral("applet:rotor");
+        applet.name = QStringLiteral("Rotor");
+        rotor.contents = {applet};
+        ContainerDocument other = floatingContainer(QStringLiteral("other"), QRect(700, 300, 328, 144), savedScreenOf(laptop()));
+        QCOMPARE(store.commit(workspace({other, rotor}), 0).status, CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {laptop()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        rig.manager->container(QStringLiteral("rotor"))->window()->move(kBelowLaptop);
+        rig.manager->container(QStringLiteral("other"))->window()->move(kBelowLaptop + QPoint(400, 0));
+        rig.manager->bringAppletOnScreen(QStringLiteral("applet:rotor"));
+        QCOMPARE(rig.window(QStringLiteral("rotor")), kOnLaptop);
+        // Only the window holding that applet.
+        QCOMPARE(rig.window(QStringLiteral("other")).topLeft(), kBelowLaptop + QPoint(400, 0));
     }
 };
 

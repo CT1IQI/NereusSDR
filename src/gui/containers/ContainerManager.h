@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 - bringAppletOnScreen, hiddenByOwnFlags, keepWindowReachable
+//                 and keepWindowsReachable: a floating window is shown where
+//                 its header can be reached, and Containers > Hidden lists
+//                 every container its own flags hide. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - followContentHeight, refreshWindowSizeLimits and
 //                 watchScreen. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -327,6 +332,10 @@ public:
     // Test seam: the screens every placement here consults (the
     // application's own when null). Not owned.
     void setScreenSourceForTest(ScreenSource* source);
+    // Containers > Applets ticked an applet on: the floating container
+    // holding `typeId`, when it is showing, is given a place where its
+    // header can be reached and raised. Display only: nothing is committed.
+    void bringAppletOnScreen(const QString& typeId);
     // A screen came or went. A floating window whose monitor is absent is
     // shown on the main window's screen; one whose monitor is back returns
     // to its remembered place. Display only: nothing is committed.
@@ -368,11 +377,14 @@ public:
         QString entryId;
         QString label;
     };
-    // Every hidden container (its saved visibility off, or disabled) and
-    // every hidden entry, in document order. Empty with no store.
+    // Every hidden container (its saved visibility off, disabled, hidden
+    // by a macro, or hidden on receive, or on transmit while transmitting)
+    // and every hidden entry, in document order. Empty with no store.
     QVector<HiddenItem> hiddenItems() const;
-    // Shows a hidden container where it was (visible and enabled; its
-    // placement and geometry are kept). Returns true when saved.
+    // Shows a hidden container where it was (visible and enabled, not
+    // hidden by a macro, shown on receive, or on transmit while
+    // transmitting; its placement and geometry are kept). Returns true
+    // when saved.
     bool showHiddenContainer(const QString& id);
     // Shows a hidden entry, and its container with it, where it was.
     bool showHiddenEntry(const QString& entryId);
@@ -487,6 +499,16 @@ private:
     bool m_reconciling = false;
     bool m_transmitting = false;
     bool effectiveVisible(const ContainerDocument& document) const;
+    // True when the container's own flags take it off the screen: hidden,
+    // disabled, hidden by a macro, or hidden on receive (on transmit while
+    // transmitting). Containers > Hidden lists exactly these.
+    bool hiddenByOwnFlags(const ContainerDocument& document) const;
+    // Bench fix 2026-10-16: a showing floating window whose header cannot
+    // be reached is put back at its remembered place when that is on a
+    // screen, else where displacedWindowRect says. Display only; nothing
+    // is remembered or committed. Nothing during a drag or with no screen.
+    void keepWindowReachable(const QString& id);
+    void keepWindowsReachable();
     // A child dock parent has no size of its own before its first resize.
     bool dockParentLaidOut() const;
     void placeFreeContainersIn(const QSize& pane);

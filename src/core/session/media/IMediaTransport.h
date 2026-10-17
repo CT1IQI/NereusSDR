@@ -50,6 +50,10 @@
 //               receipts reported off the owner's thread for the remote
 //               transmit cut guard. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: Display send thread: MediaDisplaySink and displaySink(),
+//               the display and raw I/Q sends from any thread, so the
+//               Core's displays leave on a thread of their own. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -211,6 +215,8 @@ struct MediaTransportTelemetry {
     quint64 receivedIqPayloadBytes = 0;
     quint64 submittedIqPayloadBytes = 0;
 };
+
+class MediaDisplaySink;
 
 class NEREUS_CORE_EXPORT IMediaTransport : public QObject {
     Q_OBJECT
@@ -424,6 +430,12 @@ public:
     /// transport with no send that is safe off its owner's thread; nothing
     /// is sent from another thread then. Owner's thread only.
     virtual std::shared_ptr<MediaRtpSink> audioRtpSink() { return nullptr; }
+    /// Display send thread: the display and raw I/Q sends for another
+    /// thread (MediaDisplaySink). The same object for the transport's whole
+    /// life, so it may be asked for before start() and kept across stop().
+    /// Null (the default) for a transport with no such send; the display
+    /// is then sent from the owner's thread. Owner's thread only.
+    virtual std::shared_ptr<MediaDisplaySink> displaySink() { return nullptr; }
     /// Task 36: one RTP packet on the microphone line, which only an
     /// answerer started with micAudioSsrc sends on. False without that
     /// line, before ready, for a packet whose SSRC is not micAudioSsrc, and
@@ -565,6 +577,31 @@ signals:
     /// display channel's own error). Reported here only, not also through
     /// errorOccurred.
     void displayErrorOccurred(const QString& message);
+};
+
+/// Display send thread: where one media connection's display and raw I/Q
+/// messages are sent from a thread other than the transport's owner (the
+/// Core's display send thread). Every call may come from any thread, one at
+/// a time or several. submitDisplay(), displayBusy(), submitIq() and
+/// iqBusy() answer as IMediaTransport's do. ready() is IMediaTransport::
+/// isReady() for that thread: false before the transport is ready and
+/// once it has stopped (or is gone), and every submit then answers
+/// Refused. A send error is reported on the owner's thread, as
+/// displayErrorOccurred() or iqErrorOccurred(), never from the call. No
+/// call is inside the transport when the transport's stop() returns. It
+/// never calls back into its caller.
+class MediaDisplaySink {
+public:
+    MediaDisplaySink() = default;
+    virtual ~MediaDisplaySink() = default;
+    MediaDisplaySink(const MediaDisplaySink&) = delete;
+    MediaDisplaySink& operator=(const MediaDisplaySink&) = delete;
+
+    virtual bool ready() const = 0;
+    virtual IMediaTransport::DisplaySendResult submitDisplay(const QByteArray& message) = 0;
+    virtual bool displayBusy() const = 0;
+    virtual IMediaTransport::DisplaySendResult submitIq(const QByteArray& message) = 0;
+    virtual bool iqBusy() const = 0;
 };
 
 } // namespace NereusSDR

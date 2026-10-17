@@ -90,6 +90,16 @@ public:
     // Consumer side (TX). Returns bytes read, or -1 on error. Audio-thread safe.
     virtual qint64 pull(char* data, qint64 maxBytes) = 0;
 
+    // As pull(), for a reader that takes the audio in bursts (a remote
+    // window's uplink, read on a GUI timer): a bus that skips stale audio
+    // to keep latency low keeps up to maxBacklogBytes of it instead, and
+    // skips only what is older. A bus without such a guard reads as pull().
+    virtual qint64 pullKeepingBacklog(char* data, qint64 maxBytes, qint64 maxBacklogBytes)
+    {
+        (void)maxBacklogBytes;
+        return pull(data, maxBytes);
+    }
+
     // Drop any samples queued in the bus's internal buffer that have been
     // pushed but not yet consumed (or pulled but not yet read).  Used by
     // AudioEngine::setMasterMuted to stop already-buffered pre-mute audio
