@@ -12,9 +12,9 @@
 #     the repository's runners (RUNNER_STATUS_TOKEN, from the secret
 #     NEREUS_RUNNER_STATUS_TOKEN: a fine-grained token with the
 #     "Administration: read" repository permission; the workflow's own
-#     token cannot list runners). Without the secret the check is skipped
-#     and the run assumes a runner is there. If the check itself fails, the
-#     run goes to hosted.
+#     token cannot list runners). Without the secret, or when the check
+#     fails, the run goes to hosted: it never waits on a runner it could
+#     not see.
 #
 # Writes route=box|hosted and legs=<JSON> to $GITHUB_OUTPUT (stdout without
 # it). legs is the build job's matrix: LEGS (every leg, as JSON) as given
@@ -71,8 +71,8 @@ case "${EVENT_NAME:-}" in
 esac
 
 if [ -z "${RUNNER_STATUS_TOKEN:-}" ]; then
-    echo "::notice::No NEREUS_RUNNER_STATUS_TOKEN secret, so this run cannot see whether a $label runner is online and assumes one is."
-    decide box "the self-hosted runners (not checked)."
+    echo "::warning::No NEREUS_RUNNER_STATUS_TOKEN secret, so this run cannot see whether a $label runner is online; building Linux on GitHub's hosted runners."
+    decide hosted "the runner check could not run."
 fi
 
 # The reply's status and GitHub's message are printed when the check

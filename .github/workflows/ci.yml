@@ -14,9 +14,11 @@ on:
         options: [self-hosted, github-hosted]
         default: self-hosted
 
+# A newer push to a pull request cancels the run before it. On main every
+# run finishes, so back-to-back merges do not cancel a compiler cache save.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # --------------------------------------------------------------------
@@ -471,10 +473,11 @@ jobs:
   # self-hosted runners (label nereus-linux) for pushes, manual runs and
   # pull requests from branches of this repository, and on GitHub's hosted
   # runners for pull requests from forks, documentation-only runs, and
-  # whenever no self-hosted runner is online. Approved by J.J. Boyd,
+  # whenever it cannot see a self-hosted runner online. Approved by J.J. Boyd,
   # 2026-10-16. `legs` is the build job's matrix: every leg below for
-  # hosted, macOS and Windows only for self-hosted, where the linux-box and
-  # linux-report jobs take the Linux legs' place.
+  # hosted, macOS and Windows only for self-hosted, where the linux-box,
+  # linux-box-realtime, build-notests and linux-report jobs take the Linux
+  # legs' place.
   # --------------------------------------------------------------------
   changes:
     runs-on: ubuntu-24.04
@@ -584,11 +587,14 @@ jobs:
             echo "::error::The Change scope job ended ${{ needs.changes.result }}, so this job cannot tell whether to build."
             exit 1
           fi
-          if [ "$HEAVY" = "true" ]; then
-            echo "Building and testing."
-          else
-            echo "Documentation only: nothing to build or test."
-          fi
+          case "$HEAVY" in
+            true)  echo "Building and testing." ;;
+            false) echo "Documentation only: nothing to build or test." ;;
+            *)
+              echo "::error::The Change scope job said heavy='$HEAVY', neither true nor false, so this job cannot tell whether to build."
+              exit 1
+              ;;
+          esac
 
       - uses: actions/checkout@v4
         if: env.HEAVY == 'true'
@@ -1099,13 +1105,14 @@ jobs:
       # the same objects hit. CCACHE_DEBUG keeps ccache's hashed inputs and
       # log for each compile, and "ccache debug (Windows)" uploads those of
       # the header and of one object that uses it, so two runs can be
-      # compared. Remove once the cause is found.
+      # compared. Pull requests only. Remove once the cause is found.
       - name: Build
         if: env.HEAVY == 'true'
         id: build
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = Windows ] && [ -n "${CCACHE_BIN:-}" ]; then
+          if [ "$RUNNER_OS" = Windows ] && [ -n "${CCACHE_BIN:-}" ] \
+              && [ "${{ github.event_name }}" = pull_request ]; then
             export CCACHE_DEBUG=1
             export CCACHE_DEBUGDIR="$RUNNER_TEMP/ccache-debug"
           fi
@@ -1254,9 +1261,71 @@ jobs:
           "${CCACHE_BIN:-ccache}" --show-stats -v
           df -h .
 
+      # ------------------------------------------------------------------
+      # Build with tests off (Linux shard 1/4)
+      # ------------------------------------------------------------------
+      # The build-notests job's build (see there for why it exists), here
+      # on the hosted path so it gates a merge through this required check.
+      # It runs after the tests, whether or not they passed, so it adds its
+      # build to this shard's time to green but never hides a test result;
+      # with a warm cache that is a minute or two. Its own compiler cache
+      # (ccache-v2-Linux-notests, shared with build-notests) under the same
+      # save rules as the main one, configured through the environment so
+      # the main cache's settings stay as they are. Restored to main's
+      # place in this order (after Test) by the CI speed round, 2026-10-17.
+      - name: Restore compiler cache (tests off)
+        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Linux' && matrix.shard == 0 }}
+        id: notests-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.ccache-notests
+          key: ccache-v2-Linux-notests-${{ github.sha }}
+          restore-keys: |
+            ccache-v2-Linux-notests-
+
+      - name: Build with tests off (Linux)
+        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Linux' && matrix.shard == 0 }}
+        id: notests-build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache-notests
+          CCACHE_MAXSIZE: 5G
+          CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+          CCACHE_NOHASHDIR: "1"
+          CCACHE_COMPILERCHECK: content
+        run: |
+          echo "NOTESTS_RUN_START=$(date +%s)" >> "$GITHUB_ENV"
+          ccache --zero-stats
+          cmake -B build-notests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=OFF
+          status=0
+          cmake --build build-notests -j"$(nproc)" --target NereusSDR nereusd || status=1
+          ccache --show-stats
+          rm -rf build-notests
+          exit "$status"
+
+      - name: Trim compiler cache to this run (tests off)
+        if: ${{ !cancelled() && steps.notests-restore.outcome == 'success' && steps.notests-build.outcome == 'success' && (github.event_name != 'pull_request' || steps.notests-restore.outputs.cache-matched-key == '') }}
+        id: notests-trim
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache-notests
+        run: ccache --evict-older-than "$(( $(date +%s) - NOTESTS_RUN_START + 60 ))s"
+
+      - name: Save compiler cache (tests off)
+        if: ${{ !cancelled() && steps.notests-trim.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache-notests
+          key: ${{ steps.notests-restore.outputs.cache-primary-key }}
+
       # Temporary; see "Build".
       - name: ccache debug (Windows)
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' }}
+        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' && github.event_name == 'pull_request' }}
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/ccache-debug-pick"
@@ -1272,7 +1341,7 @@ jobs:
           done
 
       - name: Upload ccache debug (Windows)
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' }}
+        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' && github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: ccache-debug-windows-${{ github.run_attempt }}
@@ -1292,19 +1361,17 @@ jobs:
   #
   # Nothing is installed on the machine: every step runs in a container of
   # .github/docker/Dockerfile's image, which has what the hosted Linux legs
-  # install (scripts/ci/box-run.sh). Each job takes at most 10 processors,
-  # 16 GB of memory, 10 build jobs and 8 tests at once.
+  # install (scripts/ci/box-run.sh runs scripts/ci/box-linux.sh there). Each
+  # job takes at most 10 processors, 16 GB of memory, 10 build jobs and 8
+  # tests at once.
   #
-  # Three jobs, one per runner, chosen by wall time from the hosted run's
-  # test times (run 38980390590): one job running the whole suite takes
-  # about 12 minutes for the 5550 s of ordinary tests at 8 at a time and
-  # then 10 for the 572 s of realtime tests one at a time, about 26 with
-  # the build. Here the ordinary tests are halved by the same name-hash
-  # shards the hosted legs use (about 6 minutes each), and the realtime
-  # tests run in a job of their own, about 15 minutes in all with a warm
-  # cache. Every test runs exactly once, as on the hosted legs. The
-  # realtime job's machine is not idle, as the hosted shard's was: the
-  # other two jobs run their tests on the same machine meanwhile.
+  # The ordinary tests are halved by the same name-hash shards the hosted
+  # legs use (about 6 minutes of tests each at 8 at a time, from the hosted
+  # run 38980390590's test times). The realtime tests (572 s, one at a time)
+  # run in linux-box-realtime once both of these jobs have finished, so no
+  # other test of this run shares the machine with them, as none shares the
+  # hosted shard's runner with them. Every test runs exactly once, as on
+  # the hosted legs.
   # --------------------------------------------------------------------
   linux-box:
     needs: changes
@@ -1318,90 +1385,29 @@ jobs:
       matrix:
         include:
           - part: tests 1 of 2
-            shards: 2
             shard: 0
-            target: all_tests
             artifact: true
           - part: tests 2 of 2
-            shards: 2
             shard: 1
-            target: all_tests
-            artifact: false
-          - part: realtime tests
-            shards: 0
-            shard: 0
-            target: tests_realtime
             artifact: false
     env:
       NEREUS_BOX_CCACHE: /home/skyrunner/nereus-ccache
-      PART: ${{ matrix.part }}
-      SHARDS: ${{ matrix.shards }}
-      SHARD: ${{ matrix.shard }}
-      TARGET: ${{ matrix.target }}
+      BOX: SHARDS=2 SHARD=${{ matrix.shard }} TARGET=all_tests scripts/ci/box-linux.sh
     steps:
       - uses: actions/checkout@v4
 
       - name: Container image
         run: scripts/ci/box-run.sh image
 
-      # The dependency downloads (see the build job) stay in this runner's
-      # own folder between runs, so only a changed pin downloads anything.
-      # The configure is the hosted Linux legs' (Configure (Linux) in the
-      # build job), with the shards of this part.
       - name: Configure
-        run: |
-          scripts/ci/box-run.sh run '
-            mirrors="$HOME/nereus-git-mirrors.gitconfig"
-            cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
-                  -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
-                  -P cmake/FetchDependencyArchives.cmake
-            git config --global --add include.path "$mirrors"
-            cmake -B build -G Ninja \
-              -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-              "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
-              "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
-              -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
-              -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
-              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-              -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-              -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
-              -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
-              -DNEREUS_BUILD_TESTS=ON \
-              -DNEREUS_TEST_SHARDS='"$SHARDS"' \
-              -DNEREUS_TEST_SHARD='"$SHARD"'
-            # ctest reads the measured test times from here and starts the
-            # longest first.
-            mkdir -p build/Testing/Temporary
-            cp "/box/CTestCostData-'"$SHARDS-$SHARD"'.txt" build/Testing/Temporary/CTestCostData.txt 2>/dev/null || true
-          '
+        run: scripts/ci/box-run.sh run "$BOX configure"
 
-      # all as well as the tests: the tests run nereusd, nereus_pairing_peer
-      # and nereus_rendezvous_peer (see Build in the build job).
       - name: Build
         id: build
-        run: scripts/ci/box-run.sh run 'cmake --build build -j10 --target all '"$TARGET"
+        run: scripts/ci/box-run.sh run "$BOX build"
 
-      # The hosted legs' Test step, split as above: the ordinary tests 8 at
-      # a time in the two test parts, the realtime tests one at a time in
-      # their own part.
       - name: Test
-        run: |
-          if [ "$TARGET" = tests_realtime ]; then
-            select='-L realtime'
-          else
-            select='-LE realtime -j8'
-          fi
-          scripts/ci/box-run.sh run '
-            export QT_QPA_PLATFORM=xcb
-            export QTEST_FUNCTION_TIMEOUT=240000
-            export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
-            cd build
-            status=0
-            xvfb-run -a ctest '"$select"' --output-on-failure --no-tests=error || status=1
-            cp Testing/Temporary/CTestCostData.txt "/box/CTestCostData-'"$SHARDS-$SHARD"'.txt" 2>/dev/null || true
-            exit "$status"
-          '
+        run: scripts/ci/box-run.sh run "$BOX test"
 
       - name: Upload PR build artifact
         if: ${{ !cancelled() && matrix.artifact && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
@@ -1415,19 +1421,52 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      # This job's hits and misses (the cache is shared, so its own
-      # counters cover every job on the machine).
       - name: ccache stats
         if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
-        run: |
-          scripts/ci/box-run.sh run '
-            ccache --show-log-stats -v
-            echo
-            ccache --show-stats
-          '
+        run: scripts/ci/box-run.sh run "$BOX stats"
 
       # The build folder and the container go at the end of every job; the
       # runner's disk belongs to other work too.
+      - name: Clean up
+        if: always()
+        run: |
+          scripts/ci/box-run.sh cleanup
+          rm -rf build .box-home
+          df -h . | tail -1
+
+  # The realtime tests on the self-hosted runners, after linux-box (see
+  # there). It runs whether or not linux-box passed, so a run reports every
+  # failure at once.
+  linux-box-realtime:
+    needs: [changes, linux-box]
+    # Never a fork's pull request, whatever the changes job says.
+    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, nereus-linux]
+    name: Linux on the self-hosted runners (realtime tests)
+    timeout-minutes: 90
+    env:
+      NEREUS_BOX_CCACHE: /home/skyrunner/nereus-ccache
+      BOX: SHARDS=0 SHARD=0 TARGET=tests_realtime scripts/ci/box-linux.sh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Container image
+        run: scripts/ci/box-run.sh image
+
+      - name: Configure
+        run: scripts/ci/box-run.sh run "$BOX configure"
+
+      - name: Build
+        id: build
+        run: scripts/ci/box-run.sh run "$BOX build"
+
+      - name: Test
+        run: scripts/ci/box-run.sh run "$BOX test"
+
+      - name: ccache stats
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        run: scripts/ci/box-run.sh run "$BOX stats"
+
       - name: Clean up
         if: always()
         run: |
@@ -1439,13 +1478,14 @@ jobs:
   # The required Linux checks when Linux runs on the self-hosted runners.
   #
   # Branch protection requires "Build (Linux x64 (1/4))" to "(4/4)". When
-  # linux-box builds and tests Linux, these four report its result under
-  # those names: each passes only if every linux-box job passed. On the
-  # hosted path this job is skipped and the build job's Linux legs report
-  # under the same names.
+  # Linux runs on the self-hosted runners, these four report its result
+  # under those names: each passes only if both linux-box jobs, the
+  # realtime job and the build with tests off all passed. On the hosted
+  # path this job is skipped and the build job's Linux legs report under
+  # the same names (shard 1/4 runs the build with tests off there).
   # --------------------------------------------------------------------
   linux-report:
-    needs: [changes, linux-box]
+    needs: [changes, linux-box, linux-box-realtime, build-notests]
     if: ${{ !cancelled() && needs.changes.outputs.route == 'box' }}
     runs-on: ubuntu-24.04
     name: Build (${{ matrix.name }})
@@ -1454,40 +1494,47 @@ jobs:
       matrix:
         name: [Linux x64 (1/4), Linux x64 (2/4), Linux x64 (3/4), Linux x64 (4/4)]
     steps:
-      - name: Result of the Linux jobs on the self-hosted runners
+      - name: Result of the Linux jobs
         run: |
-          result="${{ needs.linux-box.result }}"
-          echo "The Linux build and tests on the self-hosted runners: $result."
-          if [ "$result" != "success" ]; then
-            echo "::error::The Linux build or tests on the self-hosted runners ended $result; see the linux-box jobs of this run."
-            exit 1
-          fi
+          failed=0
+          check() {
+            echo "$1: $2."
+            if [ "$2" != "success" ]; then
+              echo "::error::$1 ended $2; see that job in this run."
+              failed=1
+            fi
+          }
+          check "Linux build and tests on the self-hosted runners" "${{ needs.linux-box.result }}"
+          check "Linux realtime tests on the self-hosted runners" "${{ needs.linux-box-realtime.result }}"
+          check "Linux build with tests off" "${{ needs.build-notests.result }}"
+          exit "$failed"
 
   # --------------------------------------------------------------------
-  # Linux build with tests off.
+  # Linux build with tests off, when Linux runs on the self-hosted runners.
   #
     # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
-    # jobs above have NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
+    # jobs have NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
     # build the app with tests off (their configure steps above leave
     # NEREUS_BUILD_TESTS at its OFF default), but the Linux-only sources
     # (the PipeWire bridge and the pipe bus) compile only here, so this
     # is the one build before merge that compiles them with tests off.
     # It builds the app and nereusd a second time in that shape.
     #
-    # One build is enough: every shard builds the same app. It builds in
-    # Release, since only compiling and linking matter here, and uses its
-    # own ccache directory and cache key: NEREUS_BUILD_TESTS is a PUBLIC
-    # definition on NereusCore, so none of these objects match the main
-    # build's.
+    # It builds in Release, since only compiling and linking matter here,
+    # and uses its own ccache directory and cache key: NEREUS_BUILD_TESTS
+    # is a PUBLIC definition on NereusCore, so none of these objects match
+    # the main build's.
     #
-    # CI speed round, 2026-10-16: a job of its own, no longer a step of
-    # Linux shard 1/4, where it added its build to that shard's time to
-    # green. It is not a required check, so it runs only when the build
-    # jobs build (see the changes job) and does not hold up a merge.
+    # On the hosted path the same build is steps of Linux shard 1/4 (see
+    # "Build with tests off (Linux)" in the build job), so it gates a merge
+    # through that required check. On the self-hosted path it is this job,
+    # on a hosted runner alongside the linux-box jobs, and linux-report
+    # passes only if it passed, so it gates a merge through the four Linux
+    # checks. CI speed round, 2026-10-16 and 2026-10-17.
   # --------------------------------------------------------------------
   build-notests:
     needs: changes
-    if: needs.changes.outputs.heavy == 'true'
+    if: needs.changes.outputs.heavy == 'true' && needs.changes.outputs.route == 'box'
     runs-on: ubuntu-24.04
     name: Build with tests off (Linux)
 
@@ -1516,8 +1563,7 @@ jobs:
                 -P cmake/FetchDependencyArchives.cmake
           git config --global --add include.path "$mirrors"
 
-      # Saved here too: when Linux builds on the self-hosted runners, no
-      # build job leg saves them.
+      # Saved here: on this path no Linux leg of the build job saves them.
       - name: Save dependency downloads
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

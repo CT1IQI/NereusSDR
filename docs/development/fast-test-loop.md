@@ -164,9 +164,10 @@ treat it as background noise: if it also fails alone, it is a real failure.
 CI does the same. On GitHub's hosted runners each Linux job runs everything
 else side by side, one test per core, then the `realtime` tests one at a time
 on the otherwise idle runner (the Test step in `.github/workflows/ci.yml`).
-On the self-hosted runners two jobs run everything else, 8 at a time, and a
-third runs the `realtime` tests one at a time meanwhile, on the same machine
-(the linux-box job), so a `realtime` failure there gets the same rerun.
+On the self-hosted runners two jobs run everything else, 8 at a time (the
+linux-box jobs), and once both have finished a third runs the `realtime`
+tests one at a time (the linux-box-realtime job). The machine is shared with
+other work, so a `realtime` failure there gets the same rerun.
 
 To add a test to the group, register it with
 `nereus_add_test(<name> REALTIME ...)` and call
