@@ -690,6 +690,9 @@ Advanced, and each control appears on one page only.
   to the radio. Before, the readout jumped to the new band's value while the
   radio stayed on the transmit value, and the unkey put back the old band's
   value on the new band.
+- Disconnecting from the radio or quitting with VAX TX as the microphone
+  source can no longer crash NereusSDR. The transmit audio now stops before
+  the audio devices close.
 - A floating container window that would be shown with its header off every
   screen is moved back where it can be reached: when it is shown again, at the
   end of a transmit, or when a monitor is added, removed or resized. Before,
