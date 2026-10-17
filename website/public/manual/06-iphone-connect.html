@@ -78,6 +78,9 @@ The only manually kept address cannot be removed; its disabled reason
 explains the requirement. Removing an address does not revoke pairing.</li>
 <li>The <strong>Learned from the Core</strong> group is maintained from the Core's advertised
 and proven direct destinations. Those rows are read-only and have no Remove.
+An address the Core stops advertising leaves this group, including when it
+reports that it has none. The address in use goes once a connection on
+another address is made, and the phone never removes its only address.
 A Core paired through remote access can have no manually kept addresses.</li>
 </ol>
 <p>The saved row also offers <strong>Remove Core</strong>. Read the confirmation and choose it

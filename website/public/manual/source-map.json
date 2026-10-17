@@ -2,14 +2,14 @@
   "downloads": [
     {
       "output": "manual/01-desktop-connect.md",
-      "output_sha256": "76d47d3276ba14007d6344b9030075be693cc1008bb683a09f8f4112b94f079c",
-      "sha256": "76d47d3276ba14007d6344b9030075be693cc1008bb683a09f8f4112b94f079c",
+      "output_sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
+      "sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.md",
-      "output_sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
-      "sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
+      "output_sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
+      "sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
@@ -32,8 +32,8 @@
     },
     {
       "output": "manual/06-iphone-connect.md",
-      "output_sha256": "28caa8ee74a445b6eefaa77f31575b8c0b69afad4e5e27d9bb009ddd3581efb7",
-      "sha256": "28caa8ee74a445b6eefaa77f31575b8c0b69afad4e5e27d9bb009ddd3581efb7",
+      "output_sha256": "dab4a3616cb89c4e6f30e77eedc6376708c3b50b61fcfc209950ae0f872b808f",
+      "sha256": "dab4a3616cb89c4e6f30e77eedc6376708c3b50b61fcfc209950ae0f872b808f",
       "source": "docs/manual/06-iphone-connect.md"
     },
     {
@@ -50,14 +50,14 @@
     },
     {
       "output": "manual/09-tools.md",
-      "output_sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
-      "sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
+      "output_sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
+      "sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
-      "sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
+      "output_sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
+      "sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -432,14 +432,14 @@
     },
     {
       "output": "manual/01-desktop-connect.html",
-      "output_sha256": "4c2e69058084bfa94e4128eca8b1a3a55c12ea8a5a02a5e422941f936a916425",
-      "sha256": "76d47d3276ba14007d6344b9030075be693cc1008bb683a09f8f4112b94f079c",
+      "output_sha256": "be6288842f7a13afa1c7c8999ade164efc9734a31208965c0cafb01b0a8352eb",
+      "sha256": "7eeeb1f141f223dedb7d33773ef5cb05cb6fcaf786437225d922cd7bdf9d581a",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.html",
-      "output_sha256": "fbeb0c863e87ab55dbad377fbd2cd38e6859d45ed93099ef37d9b03a6f56864f",
-      "sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
+      "output_sha256": "24ad56bcbec0ca297e5f4ac7743b02e59505b351ce9141ccf514e222fe553623",
+      "sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
@@ -462,8 +462,8 @@
     },
     {
       "output": "manual/06-iphone-connect.html",
-      "output_sha256": "89be1cf0cbc8ff3bb446bdd35a6d393f36e18dfdc02a3b7d74c453d8dee3b191",
-      "sha256": "28caa8ee74a445b6eefaa77f31575b8c0b69afad4e5e27d9bb009ddd3581efb7",
+      "output_sha256": "e1f9e68da3795a3d7ccc018a6c6a0641cf00cd41b8a4c2d08578a7a151d23b26",
+      "sha256": "dab4a3616cb89c4e6f30e77eedc6376708c3b50b61fcfc209950ae0f872b808f",
       "source": "docs/manual/06-iphone-connect.md"
     },
     {
@@ -480,14 +480,14 @@
     },
     {
       "output": "manual/09-tools.html",
-      "output_sha256": "b220d372246285ece22a0086d02a763cebb215f075c8a0c3b5618b9a2375f84a",
-      "sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
+      "output_sha256": "b4dc5d867b2e673cb8edb165ae547e376b4c627b6ad8bb3086c2b646585528a0",
+      "sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "fe0ca2bb0e40fbe0d29c9846bf3141070c9d9d90d803427e5309af455599ae55",
-      "sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
+      "output_sha256": "f194a4336479238ffd3d6f71cdf09d3d71a47107dce88381b82cfaad7d0f9377",
+      "sha256": "fc7764c936a10669284b833f59379da822722f531da3c5c61771284d81b334fb",
       "source": "docs/manual/10-customize.md"
     },
     {

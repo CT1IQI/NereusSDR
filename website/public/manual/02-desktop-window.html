@@ -166,11 +166,15 @@ check selection and ownership before repeating the change.</p>
 <h2 id="show-hide-and-float-applets">Show, hide and float applets</h2>
 <ol>
 <li>Open <strong>Containers</strong>. In its <strong>Applets</strong> section, check the applets you
-want visible. The panel's <strong>☰</strong> menu provides the same visibility choices.</li>
+want visible. The panel's <strong>☰</strong> menu provides the same visibility choices.
+Checking an applet whose container is hidden shows that container too and
+brings its window where you can reach it. A check reads on only while the
+applet can be seen.</li>
 <li>If an entry is unavailable, read its reason or check the corresponding
 station feature. For example, the amplifier and tuner applets depend on their
 enabled accessory connection. The <strong>Rotor</strong> applet is never grayed in the menu. A checked preference does not make an unavailable
-device appear.</li>
+device appear. An unavailable applet stays in its container, grayed, with
+the reason under its title.</li>
 <li>Applets live in containers. A container's header carries <strong>↗</strong>
 (tooltip <strong>Pop out</strong>); click it to move the container, with its applets,
 into its own window. <strong>Pop Out</strong> is also in the container's right-click
@@ -228,10 +232,13 @@ never docked joins the Main Panel's strip.</p>
 nothing to grab, so it cannot be moved by accident, and a container saved as
 locked opens unlocked. Every container and window starts where you left it, at
 the size you left it, on the monitor you left it on; if that monitor is not
-connected the window opens on the main window's screen.</p>
+connected the window opens on the main window's screen. A window that would
+be shown with its header off every screen, or is left there when a monitor is
+added, removed or resized, is moved back where you can reach its header.</p>
 <p><strong>Containers &gt; Hidden</strong> lists everything that was taken off the screen (a
 header's <strong>✕</strong>, <strong>Hide container (retain placement)</strong>, a closed floating window
-or an applet you unticked) so you can bring it back where it was. It reads
+or an applet you unticked, and containers hidden on receive, on transmit or by
+a macro) so you can bring it back where it was. It reads
 <strong>Nothing hidden</strong> when the list is empty. <strong>Containers &gt; Reset Default Layout</strong>
 removes the containers you added and restores the standard layout, with the
 S-Meter showing first; it sits next to <strong>Edit Container</strong> in the menu.</p>

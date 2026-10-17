@@ -68,7 +68,10 @@ pairing a different Core.
    be retained. **Previously worked** is a separate successful-connection
    history of up to four; **Supplied by the Core** is its reported inventory,
    which may contain addresses this computer cannot reach. One row can carry
-   several of these labels.
+   several of these labels. An address the Core stops naming, including when
+   it reports that it has none, leaves **Supplied by the Core** and
+   **Previously worked**. The one this window is connected on goes once a
+   connection on another address is made. Addresses you added stay.
 4. Changes apply to future connection attempts. They do not switch the current
    connection or mark a newly retained address as previously successful.
    When ready to reconnect, use **Connections**, select this Core and verify
