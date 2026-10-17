@@ -630,6 +630,11 @@ Advanced, and each control appears on one page only.
   a direct secure WebSocket (WSS) at once. Where UDP between the window and
   the Core is blocked but TCP port 443 works, it used to wait 40 to 85
   seconds first. Audio and display kept flowing on the relay meanwhile.
+- A remote window's receive audio rides out a pause in the network of up to
+  2.5 seconds instead of restarting, and comes back with no added delay.
+  Before, half a second with no packets restarted it, which added 1.3 to 2.4
+  seconds more silence, and after a pause the audio could run up to 0.4 s late
+  for about 20 seconds.
 - When a remote window's audio and displays move to a new connection, as after
   the network drops and comes back, the window asks the Core again for
   everything the move lost: receive audio, the headphones mix, the transmit
