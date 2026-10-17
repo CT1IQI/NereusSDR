@@ -40,6 +40,21 @@
 // When the Core goes quiet for 250 ms, it restarts the rate matcher and
 // waits for audio.
 //
+// The rate matcher starts with 90 ms of reserve. A link that delivers in
+// clumps (a pause of 80 to 115 ms, then the backlog at once) runs that dry,
+// and each time the app hears a gap. So a dropout while the output reads
+// doubles the reserve, up to 250 ms, for the feeder's life.
+//
+// The matcher's ratio is held, not left to WDSP rmatch's own control: that
+// control answers each pause and burst with a ratio swing of up to 1.2
+// percent, which moved a 1579 Hz tone by up to 25 Hz (FT8's tones are
+// 6.25 Hz apart). As the remote microphone's matcher does (RemoteMicFeed),
+// the ratio moves the matcher's average fill over each 2 s window toward
+// half its ring at 50 ppm per ms of deviation, at most 500 ppm (under a
+// cent of pitch). The held ratio survives a rebuilt matcher, so it keeps
+// the clock rate it learned, as Thetis IVAC keeps its forced var across
+// create_rmatchV (ivac.c:38-44).
+//
 // An output that reports no playback timing (the Linux pactl pipe) is
 // written as the audio arrives, paced by the Core's stream alone.
 //
@@ -58,6 +73,10 @@
 //                 the stereo mix into its own clock matcher is written as
 //                 the audio arrives, without this feeder's rate matcher.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: The rate matcher's reserve grows after a dropout, 90 ms up
+//                 to 250 ms; its ratio is held and moved slowly toward the
+//                 ring's middle, kept across a rebuilt matcher. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -133,8 +152,12 @@ struct RemoteVaxFeederStats {
     int queuedFrames = 0;
     int matcherFillFrames = 0;
     int handoffFrames = 0;
-    // The rate matcher's output-per-input ratio, once it has measured one.
+    // The rate matcher's output-per-input ratio, once its 3.0 s startup has
+    // passed (WDSP rmatch's control flag).
     std::optional<double> ratio;
+    // The rate matcher's ring; it starts half full, so half of it is the
+    // reserve. Grows after a dropout (RemoteVaxFeeder::kMaxMatcherRingFrames).
+    int matcherRingFrames = 0;
     // The output reports playback timing, so the feeder paces by it.
     bool paced = false;
     int delayFrames() const { return queuedFrames + matcherFillFrames + handoffFrames; }
@@ -151,6 +174,17 @@ public:
     // The rate matcher's ring: 180 ms, the remote speaker's default, so it
     // starts with 90 ms of reserve (WDSP rmatch starts half full).
     static constexpr int kMatcherRingFrames = 8640;
+    // Each dropout doubles the ring, up to 500 ms: 250 ms of reserve, which
+    // rides out the 80 to 115 ms pauses a busy link shows. A pause past
+    // kQuietNs restarts playback whatever the reserve.
+    static constexpr int kMaxMatcherRingFrames = 24000;
+    // The held ratio: each window's average matcher fill moves it toward
+    // half the ring, at kRatioPpmPerMs per ms of deviation and at most
+    // kMaxRatioPpm, the remote microphone's figures
+    // (RemoteMicConfig::kRatioPpmPerMs, kMaxRatioPpm).
+    static constexpr qint64 kRatioWindowNs = 2'000'000'000;
+    static constexpr double kRatioPpmPerMs = 50.0;
+    static constexpr double kMaxRatioPpm = 500.0;
     // Hand-off ring from the receive worker, one per slice: 32768 stereo
     // frames, 683 ms.
     static constexpr std::size_t kHandoffBytes = std::size_t(1) << 18;
@@ -266,7 +300,12 @@ private:
     // Drops the oldest `frames` of a slice's ring and counts them.
     void trimHandoff(Source& source, std::size_t frames);
     qint64 pausedNs() const;
-    void restartMatcher();
+    // Restarts the rate matcher, at the held ratio; `grow` doubles its
+    // ring first (a dropout), up to kMaxMatcherRingFrames.
+    void restartMatcher(bool grow = false);
+    // Adds this pump's matcher fill to the window; at the window's end,
+    // moves the held ratio. Not during rmatch's startup.
+    void holdRatio(const RemoteAudioRateMatcherStats& matcherStats, qint64 now);
     // Sums whole chunks from the live slices' rings into the matcher (or,
     // unpaced, straight to the output). Returns the frames moved.
     int drainHandoff(bool paced, qint64 now);
@@ -286,6 +325,11 @@ private:
     RemoteAudioRateMatcher m_matcher;
     bool m_matcherReady = false;
     bool m_matcherTried = false;
+    int m_matcherRingFrames = kMatcherRingFrames;
+    double m_ratio = 1.0;
+    qint64 m_ratioWindowStartNs = -1;
+    double m_ratioFillSum = 0.0;
+    int m_ratioFillSamples = 0;
     QVector<float> m_chunk;
     QVector<float> m_part;
     QVector<float> m_matcherChunk;
