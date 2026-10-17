@@ -36,6 +36,13 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: Warm is answered with Warmed (the persistent helper);
+//               the hang-warm, warm-while-marked and exit-after-warm
+//               scenarios.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-16: a Warm that names a bundle is answered as a stored Voice
+//               Isolation made Standard.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -85,7 +92,7 @@ enum class Scenario {
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
     PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
     Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing,
-    PermissionWhileMarked
+    PermissionWhileMarked, HangWarm, WarmWhileMarked, ExitAfterWarm, WarmWrongMicMode
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -123,6 +130,10 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("permission-while-marked")) {
         return Scenario::PermissionWhileMarked;
     }
+    if (name == QLatin1String("hang-warm")) { return Scenario::HangWarm; }
+    if (name == QLatin1String("warm-while-marked")) { return Scenario::WarmWhileMarked; }
+    if (name == QLatin1String("exit-after-warm")) { return Scenario::ExitAfterWarm; }
+    if (name == QLatin1String("warm-wrong-mic-mode")) { return Scenario::WarmWrongMicMode; }
     return std::nullopt;
 }
 
@@ -135,6 +146,7 @@ struct Command {
     QString asioDriver;            // AsioDescribe
     P::AsioOpen asioOpen;          // AsioOpen
     QString deviceName;            // Configure: the chosen device, empty for the default
+    QString micModeBundle;         // Warm
 };
 
 struct Queue {
@@ -196,6 +208,12 @@ void readParent(std::shared_ptr<Queue> queue)
                     std::_Exit(0);
                 }
                 command.asioOpen = *open;
+            } else if (record->type == P::RecordType::Warm) {
+                const auto warm = P::decodeWarm(record->payload);
+                if (!warm) {
+                    std::_Exit(0);
+                }
+                command.micModeBundle = warm->micModeBundle;
             } else if (record->type != P::RecordType::Shutdown
                        && record->type != P::RecordType::AsioControlPanel) {
                 std::_Exit(0);
@@ -325,12 +343,26 @@ public:
                 if (m_ignoring) {
                     continue;
                 }
+                // warm-while-marked: the helper's commands run in order,
+                // so everything after a held Warm waits behind it.
+                if (m_warmHeld) {
+                    m_afterWarm.push_back(command);
+                    continue;
+                }
                 if (command.type == P::RecordType::Shutdown) {
                     return 0;
                 }
                 handle(command);
             }
             tick();
+            while (!m_warmHeld && !m_ignoring && !m_afterWarm.empty()) {
+                const Command command = m_afterWarm.front();
+                m_afterWarm.pop_front();
+                if (command.type == P::RecordType::Shutdown) {
+                    return 0;
+                }
+                handle(command);
+            }
         }
     }
 
@@ -399,6 +431,23 @@ private:
         case P::RecordType::AsioOpen:
             openAsio(command.asioOpen);
             break;
+        case P::RecordType::Warm:
+            if (m_scenario == Scenario::HangWarm) {
+                m_ignoring = true;
+                markHanging();
+                break;
+            }
+            if (m_scenario == Scenario::WarmWhileMarked && warmMarked()) {
+                m_warmHeld = true;
+                m_heldMicModeBundle = command.micModeBundle;
+                markHanging();
+                break;
+            }
+            sendWarmed(command.micModeBundle);
+            if (m_scenario == Scenario::ExitAfterWarm) {
+                std::_Exit(3);
+            }
+            break;
         case P::RecordType::Stop:
             if (command.generation == m_generation && m_scenario != Scenario::IgnoreStop) {
                 m_streaming = false;
@@ -463,10 +512,31 @@ private:
         send(P::encodeAsioState(state));
     }
 
-    // hang-open only: once the Open is answered and every later command is
-    // ignored, creates <dir>/<pid> when NEREUS_FAKE_CAPTURE_HANG_DIR names a
-    // directory, so a test can tell that the helper is now really hanging
-    // (before that, a Shutdown still ends it).
+    void sendWarmed(const QString& micModeBundle)
+    {
+        P::Warmed warmed;
+        warmed.inputs = 1;
+        warmed.startNs = audioProbeNowNs();
+        warmed.listedNs = warmed.startNs;
+        // warm-wrong-mic-mode answers the question its Warm did not ask.
+        const bool asked = !micModeBundle.isEmpty();
+        if (asked != (m_scenario == Scenario::WarmWrongMicMode)) {
+            warmed.micMode = MicModeResult{MicModeOutcome::MadeStandard, kMicModeVoiceIsolation};
+        }
+        send(P::encodeWarmed(warmed));
+    }
+
+    // warm-while-marked: the hold lasts while this file exists.
+    static bool warmMarked()
+    {
+        return QFile::exists(qEnvironmentVariable("NEREUS_FAKE_CAPTURE_WARM_FILE"));
+    }
+
+    // hang-open and hang-warm: once every later command is ignored, and
+    // warm-while-marked: once its Warm is held, creates <dir>/<pid> when
+    // NEREUS_FAKE_CAPTURE_HANG_DIR names a directory, so a test can tell
+    // that the helper is now really hanging (before that, a Shutdown still
+    // ends it).
     static void markHanging()
     {
         const QString dir = qEnvironmentVariable("NEREUS_FAKE_CAPTURE_HANG_DIR");
@@ -632,6 +702,11 @@ private:
             sendStatus(m_generation, P::HelperState::Ready);
             startStreaming();
         }
+        // warm-while-marked: likewise for the warm-up.
+        if (m_warmHeld && !warmMarked()) {
+            m_warmHeld = false;
+            sendWarmed(m_heldMicModeBundle);
+        }
         // permission-while-marked: the test ends the hold by removing the
         // file, so the hold is as long as the test needs and no longer.
         if (m_permissionHeld
@@ -695,6 +770,9 @@ private:
     Clock::time_point m_nextPcm;
     std::optional<Clock::time_point> m_readyAt;
     bool m_permissionHeld = false;                  // permission-while-marked
+    bool m_warmHeld = false;                        // warm-while-marked
+    QString m_heldMicModeBundle;                    // the held Warm's bundle
+    std::deque<Command> m_afterWarm;                // commands behind the held Warm
     std::vector<float> m_tone;
     bool m_readySent = false;
     bool m_probeOn = false;

@@ -34,6 +34,12 @@
 //   2026-10-16 : pullVaxTxMicKeepingBacklog(): a remote window's uplink
 //                 keeps the VAX TX device's backlog. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 : setDeviceListInBackground(): the window's catalog lists
+//                 in the background, so nothing waits for this computer's
+//                 first device list (the window held its open up to 3 s
+//                 for it); the stream supervisor waits for it instead.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -379,6 +385,11 @@
 //               packet's timing (MatcherPacketTiming), where it passed
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: an engine uses the application's shared capture
+//               supervisor when one is set (setSharedCaptureSupervisor(),
+//               the Mac's standing helper) and leaves it running when it
+//               goes.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -672,7 +683,18 @@ AudioEngine::AudioEngine(QObject* parent)
     // (application-less unit tests) has no capture input, exactly like an
     // engine whose capture never became Ready.
     if (QCoreApplication::instance() != nullptr) {
-        installCaptureSupervisor({});
+        // 2026-10-16: on the Mac the application's standing helper serves
+        // every engine (CaptureStandby); a failure the last window saw is
+        // not this one's, as a supervisor of its own would start Closed.
+        if (CaptureSupervisor* const shared = sharedCaptureSupervisor().data()) {
+            attachCaptureSupervisor(shared);
+            if (shared->status().state == CaptureSupervisor::Status::State::Failed
+                && !shared->hasDemand()) {
+                shared->retry();
+            }
+        } else {
+            installCaptureSupervisor({});
+        }
     }
 
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
@@ -696,8 +718,16 @@ AudioEngine::~AudioEngine()
     }
     m_asioLease.release();
     // Bounded (stop deadline plus slack); kills a helper that ignores Stop.
-    if (m_captureSupervisor) {
-        m_captureSupervisor->shutdown();
+    if (m_ownedCaptureSupervisor) {
+        m_ownedCaptureSupervisor->shutdown();
+    } else if (m_captureSupervisor) {
+        // 2026-10-16: the shared supervisor and its helper stay for the
+        // next engine; only this engine's uses of it end.
+        if (m_delayProbeEnabled.load(std::memory_order_acquire)) {
+            m_captureSupervisor->setProbeEnabled(false);
+        }
+        m_delayProbeLease.release();
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
     }
     // Pa_Terminate when this was the last engine and PortAudio was started.
     PortAudioLibrary::removeUser();
@@ -1533,8 +1563,29 @@ void AudioEngine::ensureSpeakersOpen()
 void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
 {
     m_asioLease.release();
-    m_captureSupervisor.reset();
-    m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    if (m_captureSupervisor) {
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
+    }
+    m_captureSupervisor.clear();
+    m_ownedCaptureSupervisor.reset();
+    m_ownedCaptureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    attachCaptureSupervisor(m_ownedCaptureSupervisor.get());
+}
+
+QPointer<CaptureSupervisor>& AudioEngine::sharedCaptureSupervisor()
+{
+    static QPointer<CaptureSupervisor> shared;
+    return shared;
+}
+
+void AudioEngine::setSharedCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    sharedCaptureSupervisor() = supervisor;
+}
+
+void AudioEngine::attachCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    m_captureSupervisor = supervisor;
     // Task 15: the helper's ASIO answers go to the ASIO backend; a held
     // ASIO demand moves to the new supervisor.
     connect(m_captureSupervisor.get(), &CaptureSupervisor::asioCaps, this,
@@ -1573,6 +1624,17 @@ std::atomic<bool>& AudioEngine::delayProbeRequestedAtStart()
 void AudioEngine::setDelayProbeRequestedAtStart(bool requested)
 {
     delayProbeRequestedAtStart().store(requested, std::memory_order_release);
+}
+
+std::atomic<bool>& AudioEngine::deviceListInBackground()
+{
+    static std::atomic<bool> inBackground{false};
+    return inBackground;
+}
+
+void AudioEngine::setDeviceListInBackground(bool inBackground)
+{
+    deviceListInBackground().store(inBackground, std::memory_order_release);
 }
 
 // V-HW-8: the lease opens the helper; the supervisor tells it to listen
@@ -1788,7 +1850,9 @@ bool AudioEngine::ensureCatalogue()
     if (savedChoicesNeedOlderDrivers()) {
         m_catalogue->wantOlderDrivers();
     }
-    m_catalogue->start();
+    m_catalogue->start(deviceListInBackground().load(std::memory_order_acquire)
+                           ? AudioDeviceCatalog::FirstList::InBackground
+                           : AudioDeviceCatalog::FirstList::Wait);
     // R-AUD-06 (round 3): the catalogue answers its rescans in the order
     // they were asked, one answer each, so each answer finishes the
     // Rescan that asked for it.  An answer that comes after its Rescan
@@ -1979,7 +2043,10 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     // Every choice is known: the supervisor starts now, so the outputs are
     // open when this returns, as the direct paths left them.  For MicOnly
     // the mic role starts alone; the outputs wait for start() or an output
-    // setting (the posted start then does nothing).
+    // setting (the posted start then does nothing).  Before the catalog's
+    // first list (the window lists in the background) the start waits for
+    // it, no longer than the catalog's start would have
+    // (IAudioDeviceCatalog::firstListWaitLeftMs()).
     if (start == DeviceStart::MicOnly) {
         m_streamSupervisor->startMicOnly();
     }
