@@ -5092,10 +5092,10 @@ void DisplayAssemblyPage::pairNumberRows(QWidget* page)
         if (owner != page || group->property("nativeOwnerLabelReady").toBool()) { continue; }
         QString tag;
         if (title == QStringLiteral("FFT & Engine")) {
-            tag = group->title() == QStringLiteral("This computer") ? QStringLiteral("THIS COMPUTER") : QStringLiteral("STATION");
+            tag = group->title() == QStringLiteral("This computer") ? QStringLiteral("THIS COMPUTER") : QStringLiteral("CORE");
         } else if (title == QStringLiteral("Transmit Display")) {
             if (group->title() == QStringLiteral("Transmit scale") || group->title() == QStringLiteral("Waterfall Amplitude Scale")) { tag = QStringLiteral("THIS COMPUTER"); }
-            else if (group->title() == QStringLiteral("FFT") || group->title() == QStringLiteral("Panadapter") || group->title() == QStringLiteral("Waterfall")) { tag = QStringLiteral("STATION"); }
+            else if (group->title() == QStringLiteral("FFT") || group->title() == QStringLiteral("Panadapter") || group->title() == QStringLiteral("Waterfall")) { tag = QStringLiteral("CORE"); }
         } else if (title == QStringLiteral("Multimeter") && (group->title() == QStringLiteral("Signal Units") || group->title() == QStringLiteral("Signal History"))) { tag = QStringLiteral("THIS COMPUTER"); }
         if (tag.isEmpty()) { continue; }
         auto* label = new QLabel(tag, group);

@@ -49,6 +49,9 @@
 //               not asked for again while the removal is on its way (at most
 //               kPanWaitingGraceMs); the removal retires the binding. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13: Size remote FFT requests and normalized codec windows
+//               from the preserved requested span after a clipped answer.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -640,6 +643,8 @@ struct DbmWindow {
 struct RequestInputs {
     std::optional<DbmWindow> dbmWindow;
     std::optional<int> decimation;
+    std::optional<double> viewCentreHz;
+    std::optional<double> viewSpanHz;
     // Parity Task 28: the transmit window, for a Core told txDisplayVersion.
     std::optional<DbmWindow> txDbmWindow;
     // Parity Task 31: display duplex, for a Core told txDisplayVersion 3.
@@ -810,11 +815,12 @@ int requestedFps()
 // Hz/bin, exactly the stored size in Fixed. 0 when the pan cannot ask yet.
 // `baseSizeOut` takes the size the mode's own control chose, which is what
 // the shared Wide engine runs: a request above it asks for its own tier.
-int plannedFftSize(SpectrumWidget* widget, SliceModel* slice, int* baseSizeOut = nullptr)
+int plannedFftSize(SpectrumWidget* widget, SliceModel* slice, int* baseSizeOut = nullptr,
+                   std::optional<double> requestedSpanHz = std::nullopt)
 {
     const DisplayFftSizing sizing = readDisplayFftSizing(AppSettings::instance());
     if (baseSizeOut) { *baseSizeOut = sizing.baseline(); }
-    const double span = widget->bandwidth();
+    const double span = requestedSpanHz.value_or(widget->bandwidth());
     if (!std::isfinite(span) || span <= 0 || !std::isfinite(widget->centerFrequency())
         || slice->sampleRateHz() <= 0) {
         return 0;
@@ -855,9 +861,9 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
                                     .toString().toInt(), int(WindowFunction::Count) - 1);
     const int pixels = qBound(1, widget->width() - widget->reservedRightEdgeWidth(),
                              SpectrumEndpoint::kMaxPixels);
-    const double span = widget->bandwidth();
+    const double span = inputs.viewSpanHz.value_or(widget->bandwidth());
     int baseSize = 0;
-    const int size = plannedFftSize(widget, slice, &baseSize);
+    const int size = plannedFftSize(widget, slice, &baseSize, span);
     if (size <= 0) {
         return {};
     }
@@ -871,7 +877,7 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
     QJsonObject request{{QStringLiteral("sliceId"), slice->sliceIndex()},
             {QStringLiteral("tier"), size > baseSize ? QStringLiteral("fine") : QStringLiteral("wide")},
             {QStringLiteral("fftSize"), size}, {QStringLiteral("windowType"), window},
-            {QStringLiteral("centreHz"), widget->centerFrequency()},
+            {QStringLiteral("centreHz"), inputs.viewCentreHz.value_or(widget->centerFrequency())},
             {QStringLiteral("spanHz"), span}, {QStringLiteral("pixels"), pixels},
             {QStringLiteral("fps"), fps}, {QStringLiteral("framesPerLine"), framesPerLine},
             {QStringLiteral("trace"), plane(int(widget->spectrumDetector()),
@@ -1330,12 +1336,39 @@ struct RemoteMediaController::Private {
     // Forgotten when the slice's mini display is no longer wanted.
     mutable QHash<int, DbmWindow> miniDbmWindows;
 
+    // Resolve the operator's requested view before both FFT sizing and
+    // normalized dBm settlement; a clipped answer is not a deeper zoom.
+    void preserveRequestedView(const SpectrumWidget* widget, RequestInputs& inputs) const
+    {
+        // R-DISP-HOLD: a pan still showing the view the Core answered asks
+        // for the view it asked before (see Binding::viewAskedCentreHz).
+        // R-DISP-RETUNE: a pan that kept the answered width and moved asks
+        // for the width it asked before, at the asked center moved as far as
+        // the pan moved.
+        for (const auto& entry : bindings) {
+            const Binding& binding = entry.second;
+            if (binding.widget != widget || binding.isMini()) { continue; }
+            if (binding.viewAskedSpanHz > 0.0
+                && qFuzzyCompare(widget->bandwidth(), binding.viewAnsweredSpanHz)) {
+                const bool unmoved = qFuzzyCompare(widget->centerFrequency(),
+                                                   binding.viewAnsweredCentreHz);
+                inputs.viewCentreHz = unmoved
+                    ? binding.viewAskedCentreHz
+                    : binding.viewAskedCentreHz
+                        + (widget->centerFrequency() - binding.viewAnsweredCentreHz);
+                inputs.viewSpanHz = binding.viewAskedSpanHz;
+            }
+            break;
+        }
+    }
+
     /// The request this window would send for the pan now: requestFor with
     /// the pan's settled dBm window and, for a Core at spectrumGrantVersion
     /// 2, Rendering > Decimation (the value the Setup page keeps on this
     /// window's FFT engine, as a local window's page does).
     QJsonObject request(SpectrumWidget* widget, SliceModel* slice) const
     {
+        if (!widget) { return {}; }
         RequestInputs inputs;
         if (const auto found = dbmWindows.constFind(widget); found != dbmWindows.cend()) {
             inputs.dbmWindow = found->settled;
@@ -1349,30 +1382,11 @@ struct RemoteMediaController::Private {
         }
         inputs.duplex = displayDuplexNegotiated && displayDuplex;
         inputs.coreWaterfallLevels = coreWaterfallLevelsAvailable();
-        QJsonObject built = requestFor(widget, slice,
-                                       client && client->remoteWidebandAvailable(), inputs);
-        if (built.isEmpty() || !widget) { return built; }
-        // R-DISP-HOLD: a pan still showing the view the Core answered asks
-        // for the view it asked before (see Binding::viewAskedCentreHz).
-        // R-DISP-RETUNE: a pan that kept the answered width and moved asks
-        // for the width it asked before, at the asked center moved as far as
-        // the pan moved.
-        for (const auto& entry : bindings) {
-            const Binding& binding = entry.second;
-            if (binding.widget != widget || binding.isMini()) { continue; }
-            if (binding.viewAskedSpanHz > 0.0
-                && qFuzzyCompare(widget->bandwidth(), binding.viewAnsweredSpanHz)) {
-                const bool unmoved = qFuzzyCompare(widget->centerFrequency(),
-                                                   binding.viewAnsweredCentreHz);
-                built.insert(QStringLiteral("centreHz"), unmoved
-                    ? binding.viewAskedCentreHz
-                    : binding.viewAskedCentreHz
-                        + (widget->centerFrequency() - binding.viewAnsweredCentreHz));
-                built.insert(QStringLiteral("spanHz"), binding.viewAskedSpanHz);
-            }
-            break;
-        }
-        return built;
+        preserveRequestedView(widget, inputs);
+        // Size the FFT from the same preserved span that goes on the wire.
+        // A clipped Core answer must not feed back into Auto as a deeper zoom.
+        return requestFor(widget, slice,
+                          client && client->remoteWidebandAvailable(), inputs);
     }
 
     /// A pan's ask after its slice moved to another receiver is for the
@@ -1511,7 +1525,9 @@ struct RemoteMediaController::Private {
             SliceModel* slice = widget ? model->sliceById(applet->activeSliceIndex()) : nullptr;
             if (!slice) { continue; }
             widget->setCoreWaterfallLevelsAvailable(coreWaterfallLevelsAvailable());
-            const int size = plannedFftSize(widget, slice);
+            RequestInputs inputs;
+            preserveRequestedView(widget, inputs);
+            const int size = plannedFftSize(widget, slice, nullptr, inputs.viewSpanHz);
             if (size <= 0) { continue; }
             seen.insert(widget);
             auto found = dbmWindows.find(widget);

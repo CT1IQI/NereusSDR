@@ -8128,14 +8128,29 @@ private slots:
 
         // 2. A receive frame waiting for its time when the pan keys.
         framesBefore = int(frames.count());
-        const quint64 rowsAtKey = widget->remoteRowsPushedForTest();
-        media->deliver(encoder.encode(frameAt(1, 17, coreNow(), -90.0f)));
+        const quint64 fillsBeforeDelivery = filledRows();
+        media->deliver(encoder.encode(frameAt(1, 17, coreNow() + 3 * kPeriodNs, -90.0f)));
         QCOMPARE(int(frames.count()), framesBefore);
+        QTRY_VERIFY_WITH_TIMEOUT(widget->remoteRowQueueDepthForTest() > 0, 2000);
+        QCOMPARE(int(frames.count()), framesBefore);
+        qInfo("receive key boundary: pushed=%llu queued=%d fillsBefore=%llu fillsAfter=%llu",
+              static_cast<unsigned long long>(widget->remoteRowsPushedForTest()),
+              widget->remoteRowQueueDepthForTest(),
+              static_cast<unsigned long long>(fillsBeforeDelivery),
+              static_cast<unsigned long long>(filledRows()));
+        QVERIFY(filledRows() > fillsBeforeDelivery);
+        // The presenter has handed out a due blend before the key. Drain
+        // that receive row before measuring the actual key boundary; the
+        // future real frame and further fills must stay suppressed after it.
+        drainRows();
+        const quint64 rowsAtKey = widget->remoteRowsPushedForTest();
+        const quint64 fillsAtKey = filledRows();
         controller.setPanTransmitting(panId, true, false);
         QTest::qWait(400);
         drainRows();
         QCOMPARE(int(frames.count()), framesBefore);
         QCOMPARE(widget->remoteRowsPushedForTest(), rowsAtKey);
+        QCOMPARE(filledRows(), fillsAtKey);
         controller.setPanTransmitting(panId, false, false);
 
         // 4 and 1. A receive frame waits; the Core's transmit context then
@@ -10552,16 +10567,31 @@ private slots:
         QTest::addColumn<int>("minor");
         QTest::addColumn<bool>("shared");
         QTest::addColumn<int>("leave");
+        QTest::addColumn<QString>("sizingMode");
+        QTest::addColumn<double>("cropSpanHz");
+        QTest::addColumn<bool>("normalize");
         const int grant = int(kRemoteSpectrumGrantSessionProtocolMinor);
-        QTest::newRow("minor 9 crop past the source edge") << grant << false << kStays;
-        QTest::newRow("minor 9 shared engine") << grant << true << kStays;
-        QTest::newRow("minor 8 crop past the source edge") << grant - 1 << false << kStays;
-        QTest::newRow("minor 8 shared engine") << grant - 1 << true << kStays;
+        QTest::newRow("minor 9 crop past the source edge") << grant << false << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 9 shared engine") << grant << true << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 8 crop past the source edge") << grant - 1 << false << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 8 shared engine") << grant - 1 << true << kStays << QStringLiteral("Auto") << 48000.0 << false;
         // R-R3-01, R-R3-08, R-R3-37: the pan that sized the engine leaves.
         QTest::newRow("minor 9 shared engine, first pan leaves")
-            << grant << true << kLeaves;
+            << grant << true << kLeaves << QStringLiteral("Auto") << 48000.0 << false;
         QTest::newRow("minor 9 shared engine, first pan leaves, Core refuses more")
-            << grant << true << kLeavesCoreRefuses;
+            << grant << true << kLeavesCoreRefuses << QStringLiteral("Auto") << 48000.0 << false;
+        for (int minor : {grant, grant - 1}) {
+            const QByteArray name = QStringLiteral("minor %1 normalized full-span source edge")
+                .arg(minor).toUtf8();
+            QTest::newRow(name.constData()) << minor << false << kStays
+                << QStringLiteral("Auto") << 192000.0 << true;
+        }
+        for (const QString& mode : {QStringLiteral("Fixed"), QStringLiteral("HzPerBin")}) {
+            for (int minor : {grant, grant - 1}) {
+                const QByteArray name = QStringLiteral("minor %1 source edge %2").arg(minor).arg(mode).toUtf8();
+                QTest::newRow(name.constData()) << minor << false << kStays << mode << 48000.0 << false;
+            }
+        }
     }
 
     void budgetModePaintsWhenCoreGrantsFewerPixels()
@@ -10569,16 +10599,33 @@ private slots:
         QFETCH(int, minor);
         QFETCH(bool, shared);
         QFETCH(int, leave);
+        QFETCH(QString, sizingMode);
+        constexpr int kSourceSampleRateHz = 192000;
+        QFETCH(double, cropSpanHz);
+        QFETCH(bool, normalize);
+        constexpr double kCropOverlapHz = 1000.0;
         const bool grantAgreed = minor >= kRemoteSpectrumGrantSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         auto& appSettings = AppSettings::instance();
         const bool hadFft = appSettings.contains(QStringLiteral("DisplayFftSize"));
         const QVariant savedFft = appSettings.value(QStringLiteral("DisplayFftSize"));
+        const QString modeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const QString targetKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        const bool hadMode = appSettings.contains(modeKey);
+        const QVariant savedMode = appSettings.value(modeKey);
+        const bool hadTarget = appSettings.contains(targetKey);
+        const QVariant savedTarget = appSettings.value(targetKey);
         appSettings.setValue(QStringLiteral("DisplayFftSize"), QStringLiteral("4096"));
+        appSettings.setValue(modeKey, sizingMode);
+        appSettings.setValue(targetKey, QStringLiteral("8"));
         const auto restoreFft = qScopeGuard([&] {
             if (hadFft) { appSettings.setValue(QStringLiteral("DisplayFftSize"), savedFft); }
             else { appSettings.remove(QStringLiteral("DisplayFftSize")); }
+            if (hadMode) { appSettings.setValue(modeKey, savedMode); }
+            else { appSettings.remove(modeKey); }
+            if (hadTarget) { appSettings.setValue(targetKey, savedTarget); }
+            else { appSettings.remove(targetKey); }
         });
         RadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
@@ -10648,19 +10695,33 @@ private slots:
         if (shared) {
             first->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 96000);
         } else {
-            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre + 116000, 48000);
+            const double edgeCentreHz = centre + double(kSourceSampleRateHz) * 0.5
+                + cropSpanHz * 0.5 - kCropOverlapHz;
+            first->spectrumWidget()->setDisplayWindowPreservingHistory(edgeCentreHz,
+                                                                        cropSpanHz);
         }
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
         // The pan fills its stack, so it asks for the stack's width.
         QTRY_COMPARE(first->spectrumWidget()->width(), stack.width());
+        first->spectrumWidget()->setDispNormalize(normalize);
+        if (normalize) {
+            first->spectrumWidget()->setSpectrumDetector(SpectrumDetector::Average);
+            first->spectrumWidget()->setDbmRange(-140.0f, 0.0f);
+            first->spectrumWidget()->setWfAgcEnabled(false);
+            first->spectrumWidget()->setWfUseSpectrumMinMax(false);
+            first->spectrumWidget()->setClarityActive(false);
+            first->spectrumWidget()->setWfLowThreshold(-140.0f);
+            first->spectrumWidget()->setWfHighThreshold(-70.0f);
+        }
+        qint64 plannerNow = 1000;
         QPointer<DisplayTransport> sinkMedia;
         RemoteMediaController gui(&client, &remote, &stack, nullptr,
             [&sinkMedia](QObject* owner) -> IMediaTransport* {
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
-            });
+            }, [&plannerNow] { return plannerNow; });
         QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
         QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
         auto* stationLink = new Test::RewritingTransport(QStringLiteral("station"),
@@ -10715,6 +10776,40 @@ private slots:
                  qPrintable(limited->remoteDisplayStatus()));
 
         // The limited pan really was granted fewer pixels than it asked for.
+        if (!shared) {
+            // A clipped answer is not a new zoom. Exercise several planner
+            // turns so their FFT stays sized for the original requested span.
+            for (int turn = 0; turn < 3; ++turn) {
+                plannerNow += 200;
+                gui.planNowForTest();
+                QCoreApplication::processEvents();
+            }
+            const QList<QJsonObject> requests =
+                controlsFor(outbound, QStringLiteral("subscribe"));
+            QVERIFY(!requests.isEmpty());
+            QCOMPARE(first->spectrumWidget()->normalizeActive(), normalize);
+            const double initialMaxDbm = requests.constFirst().value(QStringLiteral("maxDbm")).toDouble();
+            const DisplayFftSizing sizing = readDisplayFftSizing(appSettings);
+            const int expectedSize = sizing.plan(kSourceSampleRateHz, cropSpanHz).size;
+            for (const QJsonObject& request : requests) {
+                qInfo().noquote() << "source-edge planning" << sizingMode
+                    << "answeredSpan" << first->spectrumWidget()->bandwidth()
+                    << "request" << QJsonDocument(request).toJson(QJsonDocument::Compact);
+                QCOMPARE(request.value(QStringLiteral("spanHz")).toDouble(), cropSpanHz);
+                QCOMPARE(request.value(QStringLiteral("fftSize")).toInt(), expectedSize);
+                if (normalize) {
+                    // The clipped answer must not change the source bin width
+                    // used for normalization or narrow away its pan headroom.
+                    QCOMPARE(request.value(QStringLiteral("maxDbm")).toDouble(), initialMaxDbm);
+                }
+            }
+            const QJsonObject& edgeRequest = requests.constLast();
+            const int plannedFftSize = edgeRequest.value(QStringLiteral("fftSize")).toInt();
+            QVERIFY(plannedFftSize > 0);
+            const int edgeBinUpperBound = int(std::ceil(
+                kCropOverlapHz * double(plannedFftSize) / double(kSourceSampleRateHz))) + 1;
+            QVERIFY(edgeRequest.value(QStringLiteral("pixels")).toInt() > edgeBinUpperBound);
+        }
         bool reduced = false;
         quint32 limitedEndpoint = 0;
         QJsonObject limitedRequest;
