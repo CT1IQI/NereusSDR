@@ -627,6 +627,11 @@ Advanced, and each control appears on one page only.
   the receive S-ATT at its transmit value. Before, the next receive kept the
   transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
   preamp stayed off.
+- A Core sends its spectrum and waterfall to remote windows and phones from a
+  thread of its own, so they keep flowing while the desktop app that runs the
+  Core is busy drawing. Before, a Windows desktop Core with the screen locked
+  sent them only 2 to 4 times a second. The RADE waveform meters still pause
+  while it is busy.
 
 ## [2026.10.0] - 2026-10-05
 
