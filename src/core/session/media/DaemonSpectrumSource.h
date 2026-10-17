@@ -5,6 +5,13 @@
 // no-port-check: NereusSDR-original.  A daemon-owned, explicit spectrum
 // producer.  It intentionally contains no endpoint, reducer, codec or
 // transport policy.
+//
+// Modification history (NereusSDR):
+//   2026-10-15: Display send thread: setFrameWake(), a published frame
+//               wakes the display thread instead of queueing frameAvailable
+//               to the main thread; currentGeneration(), so a frame held
+//               for the main thread is dropped after a retune. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -17,7 +24,9 @@
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 class FFTEngine;
@@ -178,6 +187,10 @@ public:
         int maxPendingIqFloats{0};
     };
     InputQueueDiagnostics inputQueueDiagnostics(const MediaSourceKey& key) const;
+    /// The generation the source's frames carry now, 0 for an unknown key.
+    /// Display send thread: a frame taken before an update() is no longer
+    /// of it.
+    quint64 currentGeneration(const MediaSourceKey& key) const;
     /// The decimation the source's engine runs at (FFTEngine::decimation),
     /// 0 for an unknown source.
     int engineDecimation(const MediaSourceKey& key) const;
@@ -185,6 +198,17 @@ public:
     /// Returns and clears the one latest frame slot for key.  A slow consumer
     /// can therefore miss frames but cannot cause an output-frame backlog.
     std::optional<DaemonSpectrumFrame> takeLatest(const MediaSourceKey& key);
+
+    /// Display send thread: who is told that a frame waits, in place of the
+    /// queued frameAvailable. While one is set, every frame an engine
+    /// publishes calls `wake` on that engine's thread, outside the frame
+    /// lock, and queues no frameAvailable; the woken side takes the frames
+    /// with takeLatest(). Empty (the default), frameAvailable is queued as
+    /// before; a frame published while a wake was set is not announced
+    /// then, so whoever clears the wake takes the waiting frames itself.
+    /// The owner's thread. When it returns, no engine thread is still
+    /// inside the wake it replaced.
+    void setFrameWake(std::function<void()> wake);
 
     /// Test and non-RadioModel ingress.  Real daemon production uses
     /// RadioModel::rawIqDataForStream.  This is queued to the engine thread
@@ -194,8 +218,9 @@ public:
 
     /// Test seam: publishes one frame for an active source as its engine
     /// would, stamped `producedAtNs` instead of the clock, with every bin at
-    /// `binLinear`, and emits frameAvailable now rather than queued. Lets a
-    /// test drive the source's cadence itself. False for an unknown source
+    /// `binLinear`, and emits frameAvailable now rather than queued (or,
+    /// with a frame wake set, calls the wake). Lets a test drive the
+    /// source's cadence itself. False for an unknown source
     /// or one whose engine has not yet taken its configuration.
     bool publishFrameForTest(const MediaSourceKey& key, qint64 producedAtNs,
                              float binLinear = 1.0e-6f);
@@ -204,6 +229,10 @@ public:
     /// can drive a shaped spectrum on a clock of its own.
     bool publishFrameForTest(const MediaSourceKey& key, qint64 producedAtNs,
                              const QVector<float>& binsLinear);
+
+    /// Test seam: whether a published frame waits in key's latest-frame
+    /// slot, not yet taken.
+    bool frameWaitingForTest(const MediaSourceKey& key) const;
 
     /// The producer clock: steady_clock nanoseconds since its epoch, the
     /// clock every DaemonSpectrumFrame::producedAtNs (and so each display
@@ -259,7 +288,15 @@ private:
                       double windowEnb,
                       double dbmOffset);
 
+    /// Calls the wake, when one is set, for a frame just published, or
+    /// says there is none. Engine threads and the owner's.
+    bool callFrameWake();
+
     QPointer<RadioModel> m_radioModel;
+    // Display send thread: setFrameWake()'s wake. The mutex is held while
+    // the wake is called, so replacing it waits for a call under way.
+    std::mutex m_frameWakeMutex;
+    std::function<void()> m_frameWake;
     std::unique_ptr<FftEnginePool> m_pool;
     QMap<MediaSourceKey, SourceEntry> m_sources;
     quint64 m_nextGeneration{0};
