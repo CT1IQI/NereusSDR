@@ -33,6 +33,10 @@
 //                 on a dispatch queue of their own, instead of walking every
 //                 device on each call. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-16: pullKeepingBacklog(): a remote window's uplink reads the
+//                 TX ring on a 10 ms GUI timer, and the 16 ms guard dropped
+//                 a tenth of WSJT-X's audio between reads. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "CoreAudioHalBus.h"
@@ -473,6 +477,19 @@ qint64 CoreAudioHalBus::push(const char* data, qint64 bytes) {
 }
 
 qint64 CoreAudioHalBus::pull(char* data, qint64 maxBytes) {
+    return drainTx(data, maxBytes, kMaxBacklogSamples, kTargetBacklogSamples);
+}
+
+qint64 CoreAudioHalBus::pullKeepingBacklog(char* data, qint64 maxBytes, qint64 maxBacklogBytes) {
+    // At least pull()'s guard; at most half the ring, as a lapped reader
+    // keeps.
+    const qint64 samples = std::clamp<qint64>(maxBacklogBytes / qint64(sizeof(float)),
+                                              kMaxBacklogSamples, VaxShmBlock::RING_SIZE / 2);
+    return drainTx(data, maxBytes, uint32_t(samples), uint32_t(samples));
+}
+
+qint64 CoreAudioHalBus::drainTx(char* data, qint64 maxBytes, uint32_t maxBacklogSamples,
+                                uint32_t keepSamples) {
     if (isProducer()) {
         return -1;
     }
@@ -505,8 +522,8 @@ qint64 CoreAudioHalBus::pull(char* data, qint64 maxBytes) {
 
     // Low-latency guard: if backlog grows, skip stale audio and keep only
     // a small recent window near the writer head.
-    if (available > kMaxBacklogSamples) {
-        rp = wp - kTargetBacklogSamples;
+    if (available > maxBacklogSamples) {
+        rp = wp - keepSamples;
         available = wp - rp;
     }
 
@@ -537,6 +554,8 @@ qint64 CoreAudioHalBus::pull(char* data, qint64 maxBytes) {
 #else
     (void)data;
     (void)maxBytes;
+    (void)maxBacklogSamples;
+    (void)keepSamples;
     return 0;
 #endif
 }

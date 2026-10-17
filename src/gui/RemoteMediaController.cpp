@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-16: the VAX collector keeps the VAX TX device's backlog (up
+//               to the Core's deepest transmit buffer), not the device's
+//               16 ms guard. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-15: a control path whose ICE pair is not known yet keeps the
 //               direct-path media rules, as before it ranked as relayed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3369,7 +3373,10 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine, bool vax)
         d->micCollectorVax = vax;
         if (vax) {
             d->micCollector = std::make_unique<MicUplinkCollector>(
-                [engine](float* dst, int frames) { return engine->pullVaxTxMic(dst, frames); });
+                [engine](float* dst, int frames) {
+                    return engine->pullVaxTxMicKeepingBacklog(dst, frames,
+                                                              RemoteMicConfig::kMaxDepthFrames);
+                });
         } else {
             d->micCollector = std::make_unique<MicUplinkCollector>(
                 [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
