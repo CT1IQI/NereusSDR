@@ -18,6 +18,11 @@
 //   2026-10-15 - The pump reads only while the program-audio key is on, and
 //                the Core ending the key ends it here, as in TciServer.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16 - The pump keeps the VAX TX device's backlog (up to the
+//                Core's deepest transmit buffer): read on a 10 ms GUI timer,
+//                the device's 16 ms guard dropped a tenth of WSJT-X's audio
+//                and the Core ran dry every second of a key.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/RemoteRigctlServer.h"
@@ -28,6 +33,7 @@
 #include "core/cat/RigctlProtocol.h"
 #include "core/cat/RigctlTarget.h"
 #include "core/session/SliceAccessMirror.h"
+#include "core/session/media/RemoteMicReceiver.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -435,7 +441,10 @@ void RemoteRigctlServer::pumpAudio()
     if (engine == nullptr || !keyed() || !m_transmit.audio || !programAudioKeyOn()) {
         return;
     }
-    const int got = engine->pullVaxTxMic(m_audio.data(), kPumpFrames);
+    // A late tick finds more than 16 ms waiting: kept, up to what the
+    // Core's transmit buffer holds.
+    const int got = engine->pullVaxTxMicKeepingBacklog(m_audio.data(), kPumpFrames,
+                                                       RemoteMicConfig::kMaxDepthFrames);
     if (got > 0) {
         m_transmit.audio(m_audio.data(), got, 1, kVaxTxRateHz);
     }
