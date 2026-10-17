@@ -935,12 +935,24 @@ bool CoreTargetStore::rememberAddress(const QString& id, const QString& url, QSt
 // importing Swift. Listener ports are supplied here, never ICE candidates.
 QStringList CoreTargetStore::parseCoreAddresses(const QString& text)
 {
-    if (text.size() > 65536) { return {}; }
+    return parseCoreAddressUpdate(text).value_or(QStringList{});
+}
+
+std::optional<QStringList> CoreTargetStore::parseCoreAddressUpdate(const QString& text)
+{
+    if (text.size() > 65536) { return std::nullopt; }
     const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
-    if (!doc.isObject() || !doc.object().value(QStringLiteral("addresses")).isArray()) { return {}; }
+    if (!doc.isObject() || !doc.object().value(QStringLiteral("addresses")).isArray()) {
+        return std::nullopt;
+    }
+    const QJsonArray entries = doc.object().value(QStringLiteral("addresses")).toArray();
+    // The Core's own empty answer: it names no address now, so the saved
+    // ones go. The Core re-reads its interfaces every 5 s, so a brief gap
+    // heals at once, while a kept dead address costs every reconnect.
+    if (entries.isEmpty()) { return QStringList{}; }
     QStringList result;
     const QRegularExpression pattern(QStringLiteral("^(?:\\[([0-9A-Fa-f:]+)\\]|([0-9.]+)):([0-9]{1,5})$"));
-    for (const QJsonValue& value : doc.object().value(QStringLiteral("addresses")).toArray()) {
+    for (const QJsonValue& value : entries) {
         if (!value.isString()) { continue; }
         const auto match = pattern.match(value.toString());
         if (!match.hasMatch()) { continue; }
@@ -960,6 +972,9 @@ QStringList CoreTargetStore::parseCoreAddresses(const QString& text)
         if (!result.contains(canonical)) { result.append(canonical); }
         if (result.size() == CoreAddresses::kMaxAddresses) { break; }
     }
+    // Entries were sent but none survived the filters. That is not the
+    // Core's empty answer, so the saved list stays.
+    if (result.isEmpty()) { return std::nullopt; }
     return result;
 }
 
@@ -971,13 +986,14 @@ bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray&
         setError(error, QStringLiteral("Saved Core identity no longer matches this connection."));
         return false;
     }
-    const QStringList addresses = parseCoreAddresses(text);
-    if (addresses.isEmpty() || addresses == found->connection.coreAddresses) {
+    // Link 7.1: the Core's explicit empty list clears; anything unusable retains.
+    const std::optional<QStringList> addresses = parseCoreAddressUpdate(text);
+    if (!addresses || *addresses == found->connection.coreAddresses) {
         clearError(error);
         return true;
     }
     SavedCoreTarget updated = *found;
-    updated.connection.coreAddresses = addresses;
+    updated.connection.coreAddresses = *addresses;
     return upsert(updated, error);
 }
 

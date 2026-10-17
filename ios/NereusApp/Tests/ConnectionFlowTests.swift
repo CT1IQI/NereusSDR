@@ -1437,9 +1437,10 @@ struct ConnectionFlowTests {
     }
 
     /// The Core's own list arrives at sign-in and is kept; a renumbering
-    /// replaces it; an empty list changes nothing; the next race off the
-    /// Core's network dials its global IPv6 and never its private address.
-    @Test("the Core's own addresses are kept at sign-in, replaced by each new list, and dialled from cellular")
+    /// replaces it; a list with nothing dialable changes nothing; the next
+    /// race off the Core's network dials its global IPv6 and never its
+    /// private address; the Core's own empty list clears them.
+    @Test("the Core's own addresses are kept at sign-in, replaced by each new list, dialled from cellular, and cleared by an empty list")
     func theCoresOwnAddressesAreKeptAndDialled() async throws {
         let station = try FakeStation(fixture: "session-device-sign-in", additions: [.coreAddresses])
         station.setCoreAddresses("{\"addresses\":[\"[\(Self.rockEnd1.host)]:50055\",\"[\(Self.rockWlan0.host)]:50055\"]}")
@@ -1466,7 +1467,9 @@ struct ConnectionFlowTests {
         #expect(await settle {
             (try? harness.stations.station(identityKey: station.identity.publicKey))?.directAddresses == [renumbered]
         })
-        await station.deliverCoreAddresses(FakeStation.noCoreAddresses)
+        // A list with entries, none of which the phone can dial, is not the
+        // Core's empty answer: the kept ones stay.
+        await station.deliverCoreAddresses("{\"addresses\":[\"[fe80::1]:50055\"]}")
         try await LinkBarrier.roundTrip(harness.app.commands)
         #expect(try harness.stations.station(identityKey: station.identity.publicKey)?.directAddresses == [renumbered])
         await flow.leaveBand()
@@ -1478,6 +1481,13 @@ struct ConnectionFlowTests {
         #expect(Array(dialled.hosts.dropFirst(before)) == [renumbered.host])
         #expect(flow.attempt.tries.map(\.address) == [ConnectionFlow.addressText(renumbered)])
         #expect(flow.attempt.tries.first?.path == .direct)
+
+        // The Core's own empty list (JJ, 2026-10-16: IPv6 turned off on the
+        // Core) clears what its list named.
+        await station.deliverCoreAddresses(FakeStation.noCoreAddresses)
+        #expect(await settle {
+            (try? harness.stations.station(identityKey: station.identity.publicKey))?.directAddresses.isEmpty == true
+        })
         await harness.app.disconnect()
     }
 

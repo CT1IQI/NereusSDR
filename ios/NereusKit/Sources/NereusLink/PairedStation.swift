@@ -211,10 +211,16 @@ public struct PairedStation: Codable, Sendable, Equatable {
 
     /// The Core's own list of where it can be dialled (``CoreAddressList``)
     /// replaces what was kept, at most ``CoreAddressList/maximumCount``. An
-    /// empty list is nothing new: the Core has none to name now, which does
-    /// not make the kept ones wrong.
+    /// empty list is the Core saying it has none to name now (link document
+    /// section 7.1): the addresses its last list named (``coreListed``) are
+    /// cleared, and the ones this phone proved and the Core never named
+    /// stay. The Core re-reads its interfaces every 5 s, so a brief gap heals
+    /// at once, while a kept dead address costs every reconnect.
     public mutating func keepCoreAddresses(_ addresses: [StationEndpoint]) {
         guard !addresses.isEmpty else {
+            let listed = Set(coreListed.map(\.canonical))
+            directAddresses.removeAll { listed.contains($0.canonical) }
+            coreListed = []
             return
         }
         var seen = Set<StationEndpoint>()

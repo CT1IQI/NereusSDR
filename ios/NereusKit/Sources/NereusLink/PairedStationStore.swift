@@ -100,8 +100,8 @@ public final class PairedStationStore: @unchecked Sendable {
     }
 
     /// Keeps the list of addresses the Core with this identity key sent in
-    /// `devices`' `coreAddresses`, replacing the last; an empty one changes
-    /// nothing (``PairedStation/keepCoreAddresses(_:)``). Returns the
+    /// `devices`' `coreAddresses`, replacing the last; an empty one clears
+    /// the ones the Core's list named (``PairedStation/keepCoreAddresses(_:)``). Returns the
     /// updated Core, or nil when no paired Core has the key.
     @discardableResult
     public func recordCoreAddresses(identityKey: Data, _ addresses: [StationEndpoint]) throws -> PairedStation? {

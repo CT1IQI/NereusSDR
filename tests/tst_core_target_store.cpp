@@ -661,10 +661,28 @@ private slots:
         QCOMPARE(store.target(saved.id)->connection.coreAddresses, expected);
         QCOMPARE(store.target(saved.id)->connection.cachedAddresses, saved.connection.cachedAddresses);
         QCOMPARE(store.target(saved.id)->connection.url, saved.connection.url);
-        for (const QString& empty : {QStringLiteral("broken"), QStringLiteral("{}"), QString::fromUtf8("{\"addresses\":[]}")}) {
-            QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, empty));
+        // Malformed text, a missing or non-array list, a non-object, and a
+        // list whose every entry the filters drop all keep the saved list.
+        for (const QString& unusable : {QStringLiteral("broken"), QStringLiteral("{}"),
+                                        QString::fromUtf8("{\"addresses\":\"8.8.8.8:47910\"}"),
+                                        QString::fromUtf8("[\"8.8.8.8:47910\"]"),
+                                        QString::fromUtf8("{\"addresses\":[\"[fe80::1]:47910\"]}")}) {
+            QVERIFY(!CoreTargetStore::parseCoreAddressUpdate(unusable).has_value());
+            QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, unusable));
             QCOMPARE(store.target(saved.id)->connection.coreAddresses, expected);
         }
+        // The Core's own explicit empty list clears the saved Core addresses,
+        // but only for the matching identity, and never the proven ones.
+        const QString explicitEmpty = QString::fromUtf8("{\"addresses\":[]}");
+        QCOMPARE(CoreTargetStore::parseCoreAddressUpdate(explicitEmpty), std::optional<QStringList>(QStringList{}));
+        QCOMPARE(CoreTargetStore::parseCoreAddresses(explicitEmpty), QStringList{});
+        QVERIFY(!store.rememberCoreAddresses(saved.id, QByteArray(32, 'x'), explicitEmpty));
+        QCOMPARE(store.target(saved.id)->connection.coreAddresses, expected);
+        QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, explicitEmpty));
+        QVERIFY(store.target(saved.id)->connection.coreAddresses.isEmpty());
+        QCOMPARE(store.target(saved.id)->connection.cachedAddresses, saved.connection.cachedAddresses);
+        QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, explicitEmpty));
+        QVERIFY(store.target(saved.id)->connection.coreAddresses.isEmpty());
         QStringList many;
         for (int i = 1; i <= 12; ++i) { many.append(QStringLiteral("[2001:db8::%1]:47910").arg(i)); }
         const QString manyWire = QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("addresses"), QJsonArray::fromStringList(many)}}).toJson());
@@ -673,6 +691,34 @@ private slots:
         QCOMPARE(store.target(saved.id)->connection.coreAddresses.size(), 8);
         QVERIFY(store.remove(saved.id));
         QVERIFY(!store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, wire));
+    }
+
+    void explicitEmptyCoreAddressListClearPersistsAcrossReload()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        SavedCoreTarget saved = makeTarget(QStringLiteral("paired"));
+        saved.connection.identityFingerprint = someIdentity();
+        saved.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.9:47910")};
+        {
+            AppSettings settings(path);
+            CoreTargetStore store(settings);
+            QVERIFY(store.load());
+            QVERIFY(store.upsert(saved));
+            QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint,
+                QString::fromUtf8("{\"addresses\":[\"[2001:db8::5]:47912\",\"8.8.8.8:47913\"]}")));
+            QCOMPARE(store.target(saved.id)->connection.coreAddresses.size(), 2);
+            QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint,
+                QString::fromUtf8("{\"addresses\":[]}")));
+            QVERIFY(store.target(saved.id)->connection.coreAddresses.isEmpty());
+        }
+        AppSettings reloadedSettings(path);
+        reloadedSettings.load();
+        CoreTargetStore reloaded(reloadedSettings);
+        QVERIFY(reloaded.load());
+        QVERIFY(reloaded.target(saved.id).has_value());
+        QVERIFY(reloaded.target(saved.id)->connection.coreAddresses.isEmpty());
+        QCOMPARE(reloaded.target(saved.id)->connection.cachedAddresses, saved.connection.cachedAddresses);
     }
 
     void failedLearnedAddressSaveKeepsPriorIdentityHistoryAndList()

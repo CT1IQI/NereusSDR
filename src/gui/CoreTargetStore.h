@@ -118,6 +118,11 @@ public:
 
     /// Parse the existing devices.coreAddresses contract. No service/ICE URLs.
     static QStringList parseCoreAddresses(const QString& text);
+    /// Link 7.1: the saved Core address list a devices.coreAddresses document
+    /// asks for. An empty list is the Core's own explicit `"addresses":[]` and
+    /// clears the saved ones; std::nullopt (malformed text, no `addresses`
+    /// array, or entries that every filter dropped) keeps them.
+    static std::optional<QStringList> parseCoreAddressUpdate(const QString& text);
     bool rememberCoreAddresses(const QString& id, const QByteArray& identity,
                               const QString& text, QString* error = nullptr);
     /// Caller supplies the actual stationLabel from a proved paired session.

@@ -3786,14 +3786,16 @@ final class ConnectionFlow: ObservableObject {
 
     /// Keeps where the connected Core says it can be dialled (`devices`'
     /// `coreAddresses`, ``CoreAddressList``), replacing the last list, when
-    /// the Core offers it (agreed minor 11 and `coreAddressesVersion` 1). An
-    /// empty list, and a Core that sends none, leave the kept ones as they are.
+    /// the Core offers it (agreed minor 11 and `coreAddressesVersion` 1). The
+    /// Core's own empty list clears the ones its last list named; a Core that
+    /// sends none, or a list with no address the phone can dial, leaves the
+    /// kept ones as they are.
     private func keepCoreAddresses() {
         guard phase == .connected, let station = current,
               CoreAddressList.isOffered(agreedMinor: app.mirror.agreedMinor ?? 0,
                                         capabilityVersion: app.mirror.capabilityVersion(CoreAddressList.capabilityName)),
-              let text = app.main.coreAddresses, let list = CoreAddressList.parse(text), !list.isEmpty,
-              list != station.directAddresses else {
+              let text = app.main.coreAddresses, let list = CoreAddressList.parse(text),
+              list.isEmpty ? !station.coreListed.isEmpty : list != station.directAddresses else {
             return
         }
         do {

@@ -1078,7 +1078,9 @@ void GuiConnectionController::rememberAuthenticatedRadio()
     }
     const auto& caps = client->capabilities();
     // Link 7.1: only this authenticated paired identity, after negotiated
-    // minor/capability support. Empty/absent/malformed lists retain history.
+    // minor/capability support. The Core's explicit empty list clears the
+    // saved Core addresses, so the merge below stops offering them; absent
+    // or malformed lists, or ones whose every entry is unusable, retain.
     if (client->agreedMinor() >= 11 && caps.coreAddressesVersion >= 1
         && client->signedInWithDeviceKey()
         && !target->connection.identityFingerprint.isEmpty()) {
