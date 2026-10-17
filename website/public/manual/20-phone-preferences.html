@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phone preferences and session care | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/20-phone-preferences.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html" aria-current=page>Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="phone-preferences-and-session-care">Phone preferences and session care</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#configure-the-phones-band-display">Configure the phone&#x27;s band display</a></li><li><a href="#choose-a-tuning-dial-and-touch-behavior">Choose a tuning dial and touch behavior</a></li><li><a href="#select-playback-and-microphone-routes">Select playback and microphone routes</a></li><li><a href="#recover-from-headphone-removal-or-an-audio-interruption">Recover from headphone removal or an audio interruption</a></li><li><a href="#set-screen-background-and-sleep-behavior">Set screen, background and sleep behavior</a></li><li><a href="#manage-wi-fi-and-cellular-data-use">Manage Wi-Fi and cellular data use</a></li><li><a href="#understand-the-sharing-indicator">Understand the Sharing indicator</a></li><li><a href="#set-a-transmit-time-out-and-recognize-disabled-ptt-choices">Set a transmit time-out and recognize disabled PTT choices</a></li><li><a href="#inspect-app-information-and-collect-evidence">Inspect app information and collect evidence</a></li><li><a href="#worked-example-a-long-headphone-listening-session">Worked example: a long headphone listening session</a></li></ol></details>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phone preferences and session care | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/20-phone-preferences.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.10.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html" aria-current=page>Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="phone-preferences-and-session-care">Phone preferences and session care</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#configure-the-phones-band-display">Configure the phone&#x27;s band display</a></li><li><a href="#choose-a-tuning-dial-and-touch-behavior">Choose a tuning dial and touch behavior</a></li><li><a href="#select-playback-and-microphone-routes">Select playback and microphone routes</a></li><li><a href="#recover-from-headphone-removal-or-an-audio-interruption">Recover from headphone removal or an audio interruption</a></li><li><a href="#set-screen-background-and-sleep-behavior">Set screen, background and sleep behavior</a></li><li><a href="#manage-wi-fi-and-cellular-data-use">Manage Wi-Fi and cellular data use</a></li><li><a href="#understand-the-sharing-indicator">Understand the Sharing indicator</a></li><li><a href="#set-a-transmit-time-out-and-recognize-disabled-ptt-choices">Set a transmit time-out and recognize disabled PTT choices</a></li><li><a href="#turn-the-beam-when-you-tune-to-a-spot">Turn the beam when you tune to a spot</a></li><li><a href="#inspect-app-information-and-collect-evidence">Inspect app information and collect evidence</a></li><li><a href="#worked-example-a-long-headphone-listening-session">Worked example: a long headphone listening session</a></li></ol></details>
 <p>The native app is available through the
 <a href="https://testflight.apple.com/join/61K3p3xn">public TestFlight preview</a>, with installation
 separate from the desktop/Core release. These procedures describe the reviewed
@@ -16,7 +16,7 @@ receiver ownership. The settings below refine those workflows.</p>
 <h2 id="configure-the-phones-band-display">Configure the phone's band display</h2>
 <p>The toolbar <strong>Display</strong> sheet is a quick control surface for its named pan.
 It says <strong>Pan N · this phone</strong> and changes that pan's local waterfall and
-spectrum presentation. <strong>Palette</strong>, waterfall level mode, <strong>Colour gain</strong> and
+spectrum presentation. <strong>Palette</strong>, the waterfall level choice (<strong>Clarity</strong>, <strong>Auto</strong>, <strong>Floor</strong>, <strong>Manual</strong> or <strong>Scale</strong>), <strong>Color gain</strong> and
 <strong>Black level</strong> affect waterfall contrast. <strong>Fill</strong>, <strong>Line</strong>, and <strong>Spectrum
 height</strong> affect the trace. <strong>Top</strong> and <strong>Range</strong> move the visible dBm scale.
 Read the scale labels and trace after each change. <strong>CTUN</strong> changes the
@@ -40,11 +40,11 @@ badge on each group:</p>
 </tr>
 <tr>
 <td><strong>Core display groups</strong></td>
-<td>The Core describes its analyzer groups and owns offered FFT, window, Hz/bin target, and frame-rate settings. These are shared. Check the badge and bin-width readout; an older Core shows them greyed with an explanation.</td>
+<td>The Core describes its analyzer groups and owns offered Sizing, FFT size, Hz/bin target, window, and frame-rate settings. These are shared. <strong>Sizing</strong> (Auto, Hz/bin, or Fixed) chooses whether the zoom, the Hz/bin target, or Size sets the FFT size; a control that is not in charge is gray (in <strong>Auto</strong> both are) and the page says which choice frees it. The two averaging times start at 1 ms where the Core offers that. Check the badge and bin-width readout; an older Core shows them grayed with an explanation.</td>
 </tr>
 <tr>
 <td><strong>Waterfall</strong></td>
-<td>Choose palette and, when available, <strong>Clarity</strong>, <strong>Auto</strong>, <strong>Noise floor</strong>, or <strong>Manual</strong> levels. <strong>High level</strong> and <strong>Low level</strong> are manual endpoints; Core levels can arrive later. <strong>Colour gain</strong> and <strong>Black level</strong> refine contrast.</td>
+<td>Choose palette and the levels: <strong>Clarity</strong>, <strong>Auto</strong>, <strong>Floor</strong>, <strong>Manual</strong> or <strong>Scale</strong> (Clarity, Auto and Floor work only when the Core sends display extras). <strong>High level</strong> and <strong>Low level</strong> are manual endpoints; Core levels can arrive later. <strong>Color gain</strong> and <strong>Black level</strong> refine contrast.</td>
 </tr>
 <tr>
 <td><strong>Waterfall: more</strong></td>
@@ -63,7 +63,7 @@ badge on each group:</p>
 <td>The noise-floor line and shift, active peak hold, and peak blobs require Core display extras. Classic peak hold is separate. Follow the disabled reason if extras are unavailable.</td>
 </tr>
 <tr>
-<td><strong>On the band / Colours / View</strong></td>
+<td><strong>On the band / Colors / View</strong></td>
 <td>Toggle cursor frequency, bin width, frame rate, and strongest-signal readout; choose its corner and update rate. Set local grid, marker, line, and label colors. Extended view is available only when described by the Core; CTUN is a pan view setting.</td>
 </tr>
 <tr>
@@ -72,6 +72,7 @@ badge on each group:</p>
 </tr>
 </tbody>
 </table>
+<p>A 2026.10.1 Core also lists its own <strong>Spectrum</strong>, <strong>Levels</strong>, <strong>Waterfall</strong>, <strong>View</strong>, <strong>Peaks &amp; Markers</strong>, <strong>FFT &amp; Engine</strong>, <strong>Transmit Display</strong> and <strong>Multimeter</strong> pages under <strong>Setup &gt; Display</strong>; see <a href="/manual/10-customize.html">chapter 10</a> for what each holds.</p>
 <p>For a weak-signal view, select the correct pan, set waterfall <strong>Levels</strong> to
 <strong>Manual</strong>, and adjust High/Low around the current noise and signal. Use a copy
 button if you want those endpoints to match the dBm scale; otherwise tune them
@@ -178,9 +179,12 @@ mic input; the transmitter's input choice is covered in
 leveler shape the transmitted voice. Use <a href="/manual/14-voice-profiles.html">voice processing and
 profiles</a> for those controls rather than searching for an
 iOS voice-effect switch.</p>
-<p>The implemented <strong>Standard</strong> audio quality is Opus at 24 kbit/s with audio up
-to 8 kHz. <strong>High</strong> remains greyed with the reason that the Core does not offer
-it. The presence of that row is not an additional usable quality setting.</p>
+<p>Under <strong>Audio quality</strong>, <strong>High</strong> is Opus at 48 kbit/s with audio up to
+20 kHz and costs about 24 MB an hour. <strong>Save data</strong> is Opus at 24 kbit/s with
+audio up to 8 kHz, about 13 MB an hour. <strong>Lossless</strong> passes the Core's audio
+unchanged, for digital modes, and needs about 1.6 Mbit/s (about 720 MB an
+hour). If the network cannot carry Lossless, the audio stays on Opus and the
+page says so. The choice is saved on this phone.</p>
 <h2 id="recover-from-headphone-removal-or-an-audio-interruption">Recover from headphone removal or an audio interruption</h2>
 <p>When a connected headset disappears, playback pauses and the app presents a
 notice. Choose the offered speaker-resume action when you are ready to play
@@ -258,29 +262,31 @@ choices for Wi-Fi and cellular are stored separately.</p>
 <tr>
 <td><strong>Full</strong></td>
 <td>30 frames/s, full detail.</td>
-<td>About 60 MB/hour.</td>
+<td>About 70 MB/hour.</td>
 </tr>
 <tr>
 <td><strong>Balanced</strong></td>
 <td>15 frames/s.</td>
-<td>About 35 MB/hour.</td>
+<td>About 45 MB/hour.</td>
 </tr>
 <tr>
 <td><strong>Saver</strong></td>
 <td>5 frames/s, half the detail.</td>
-<td>About 20 MB/hour.</td>
+<td>About 30 MB/hour.</td>
 </tr>
 <tr>
 <td><strong>Audio only</strong></td>
 <td>Sound without a band view.</td>
-<td>About 13 MB/hour.</td>
+<td>About 24 MB/hour.</td>
 </tr>
 </tbody>
 </table>
 <p>Wi-Fi offers Full and Balanced. Cellular also offers Saver and Audio only.
 These rates are requests, and the displayed data amounts are estimates, not
-measurements or a billing guarantee. The page also estimates an additional
-13 MB for each hour of talking. Use its counters and your cellular account's
+measurements or a billing guarantee. The figures include High audio. The page
+also estimates an additional 24 MB for each hour of talking at High, 13 MB at
+Save data, or 720 MB while the microphone connection carries Lossless (if it
+cannot, the microphone uses High). Use its counters and your cellular account's
 usage information when planning an actual allowance.</p>
 <ol>
 <li>Choose the Wi-Fi mode for normal station or home use.</li>
@@ -315,12 +321,14 @@ This group is marked <strong>Core</strong>. The Core time-out applies to phone/i
 transmissions; the station desktop also has its own time-out setting. A Core
 watchdog remains part of transmit supervision. A time-out reason means the
 over ended, so return to receive and check the state before keying again.</p>
-<p>The Headset button, Bluetooth PTT Pair, Action button and <strong>Buttons key a
+<p>The Headset button, the <strong>Bluetooth PTT button</strong> and its <strong>Pair</strong> button, the Action button and <strong>Buttons key a
 locked phone</strong> controls are disabled in the covered app. Only on-screen PTT
 keys from this phone. Do not configure an accessory around those labels or
 assume that pairing a Bluetooth audio device gives it a working PTT button.
 In a debug build, a <strong>PTT button test</strong> may appear; it logs button behavior
 and never keys the radio.</p>
+<h2 id="turn-the-beam-when-you-tune-to-a-spot">Turn the beam when you tune to a spot</h2>
+<p>Open <strong>Tools</strong> and find <strong>Rotor setting</strong>, marked <strong>This phone</strong>. <strong>Turn the beam when I tune to a spot</strong> is off by default. With it off, tuning to a spot never moves the rotor and only <strong>Turn beam</strong> on a spot's details does. Turn it on to have a tune to a spot also turn the beam to it. It needs a 2026.10.1 Core with a rotor set up; see <a href="/manual/07-iphone-operate.html#turn-the-antenna-with-the-rotor-page">the Rotor page</a>.</p>
 <h2 id="inspect-app-information-and-collect-evidence">Inspect app information and collect evidence</h2>
 <p>Use <strong>Setup &gt; About this app</strong> for the phone build, device and license/link
 information. When reporting a session problem, record the app and Core builds,

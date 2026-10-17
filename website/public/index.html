@@ -17,7 +17,7 @@
   <meta property="og:image" content="https://nereussdr.com/assets/img/og-card.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="NereusSDR: every OpenHPSDR radio, native everywhere.">
+  <meta property="og:image:alt" content="NereusSDR: your station, wherever you operate. The NereusSDR iPhone app showing a panadapter beside the headline.">
   <meta name="twitter:card" content="summary_large_image">
 
   <link rel="icon" href="/favicon.ico" sizes="any">
@@ -70,7 +70,7 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero__grid">
         <div class="hero__copy">
-          <p class="eyebrow">2026.10.0 is here · Free and open source</p>
+          <p class="eyebrow">2026.10.1 is here · Free and open source</p>
           <h1 id="hero-title">
             <span class="line">Your station.</span>
             <span class="line line--lit">Wherever you operate.</span>
@@ -84,12 +84,12 @@
           <div class="hero__cta">
             <a class="btn btn--primary" href="#download" data-os-cta>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-              <span data-os-cta-label>Download <span data-release-version>v2026.10.0</span></span>
+              <span data-os-cta-label>Download <span data-release-version>v2026.10.1</span></span>
             </a>
             <a class="btn" href="https://testflight.apple.com/join/61K3p3xn">Join the iPhone &amp; iPad preview</a>
           </div>
           <p class="hero__meta">
-            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.0</span>, <time data-release-date datetime="2026-10-06T00:46:30Z">6 October 2026</time></span></span>
+            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.1</span>, <time data-release-date datetime="2026-10-17T22:03:26Z">17 October 2026</time></span></span>
             <span>GPLv3</span>
             <span>Built for real stations</span>
           </p>
@@ -144,7 +144,7 @@
           <article><span class="feature-index">03 / TRANSMIT</span><h3>Take the microphone.</h3>
             <p>Voice transmit with on-screen PTT. The Core manages transmit ownership, time-outs and interlocks, with one device holding transmit at a time.</p></article>
         </div>
-        <p class="capture-note">Choose native filter presets, save named TX profiles and watch PA peak and minimum readings. Spots, station accessories and Core-described Setup controls bring the rest of your station within reach. <a href="/manual/07-iphone-operate.html">Operate from your iPhone or iPad →</a></p>
+        <p class="capture-note">Choose native filter presets, save named TX profiles and watch PA peak and minimum readings. Spots, station accessories and Core-described Setup controls bring the rest of your station within reach. With a 2026.10.1 Core, Tools adds <strong>CAT Control</strong> and <strong>Rotor</strong> pages, a spot shows its bearing with a Turn beam button, and the Sound panel has Radio speaker and Core speaker sections. <a href="/manual/07-iphone-operate.html">Operate from your iPhone or iPad →</a></p>
         <div class="screens" data-reveal>
           <figure class="screen"><a href="/assets/img/iphone-panadapter.png" aria-label="Open the full panadapter screenshot"><img src="/assets/img/iphone-panadapter.png" width="1320" height="2868" alt="iPhone panadapter with a VFO flag and markers for other receiver slices" loading="lazy"></a><figcaption><b>The band</b><span>Your receivers, frequencies and waterfall.</span></figcaption></figure>
           <figure class="screen"><a href="/assets/img/iphone-receive.png" aria-label="Open the full receive controls screenshot"><img src="/assets/img/iphone-receive.png" width="1206" height="2622" alt="iPhone receive panel with filter presets, AGC and noise reduction controls" loading="lazy"></a><figcaption><b>Receive controls</b><span>Filters and DSP, within reach.</span></figcaption></figure>
@@ -173,7 +173,7 @@
           <li><span class="feature-index">03 / CONSOLE</span><h3>Your choice of screen</h3><p>macOS, Windows or Linux.<br>Native iPhone and iPad.</p></li>
         </ol>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the published 2026.10.0 ARM64 Core package that matches your operating system.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
+          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the published 2026.10.1 ARM64 Core package that matches your operating system. The guide also covers the sound card and the serial adapter a rotor or serial CAT uses.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>Local and remote operation</h3></div><div class="panel__body"><h4>Connect from home or away.</h4><p>Find and pair with your Core on the LAN, choose an address on a VPN, or use the <strong>rendezvous (RV) service</strong> for an introduction across networks.</p><p>The station session connects directly where possible, through <strong>TURN</strong>, or through a separate <strong>WebSocket relay</strong> when needed. RV signalling handles the introduction; the Core runs the radio and DSP on every path.</p><p>Core Settings shows the selected Core and its control, audio and display paths.</p><a href="/manual/01-desktop-connect.html#connect-to-another-computers-core">Connect to a remote Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>One station, several devices</h3></div><div class="panel__body"><h4>Up to four devices share a Core.</h4><p>Desktop and mobile clients use the same station, each with its own pans and slices. Receiver access is coordinated, other devices' slices are visible as markers, and one device holds transmit at a time.</p><p>The radio's available receivers and the Core's processing capacity set what the station can run together.</p><a href="/manual/08-shared-core.html">Operate with several devices →</a></div></article>
         </div>
@@ -299,24 +299,39 @@
 
     <section class="section desktop" aria-labelledby="desktop-title">
       <div class="wrap"><header class="section__head" data-reveal><p class="eyebrow">The desktop console</p><h2 id="desktop-title">A familiar console. <strong>A new station behind it.</strong></h2><p>Run locally or connect to your Core. Independently tune each receiver, arrange pans across your screens, and build a workspace from applets, containers, Canvas and meters on macOS, Windows and Linux.</p></header></div>
-      <!-- The simulated radio, framed in the program's own chrome: TitleBar, the
-           SpectrumWidget (overlay panel, spectrum, dBm strip, frequency strip,
-           waterfall, VFO flag) and the bottom banner, rebuilt from the source values. -->
+      <!-- The simulated radio in the program's default workspace look, framed in its
+           own chrome: TitleBar, the pan (SpectrumWidget, SpectrumOverlayPanel,
+           SpectrumStatusOverlay, VfoWidget, the zoom bar) and the workspace status
+           bar, rebuilt from the paint and style values in the source. -->
       <figure class="app" aria-label="Simulated NereusSDR window">
+        <!-- TitleBar.cpp: ConnectionSegment, profile badge (ProfileRailDock),
+             app name, UTC clock, MasterOutputWidget (PC), RadioSpeakerWidget
+             (RADIO, no radio audio yet) and the lightbulb. -->
         <div class="app-title" aria-hidden="true">
           <div class="conn">
             <i class="conn__dot"></i>
-            <span class="conn__rate">▲ 0.2 Mbps</span>
-            <span class="conn__rtt">2 ms</span>
-            <span class="conn__rate">▼ 9.6 Mbps</span>
+            <span>▲ 0.2 Mbps</span>
+            <span>2 ms</span>
+            <span>▼ 9.6 Mbps</span>
             <span class="conn__pip">●</span>
           </div>
           <span class="app-title__fill"></span>
-          <span class="app-title__name">NereusSDR</span>
+          <span class="app-title__name"><span class="profile">D</span>NereusSDR</span>
           <span class="app-title__fill"></span>
           <span class="app-title__utc" data-utc>00:00:00 UTC</span>
-          <span class="master"><span class="master__spk">🔊</span><span class="master__slider"><i></i></span><span class="master__db">100</span></span>
-          <span class="app-title__bulb"><svg viewBox="0 0 24 24"><path d="M12 3.2a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V17h5.2v-1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3.2z" fill="#ffd23c"/><rect x="9.4" y="18" width="5.2" height="1.6" rx=".8" fill="#c8d8e8"/><rect x="10" y="20.3" width="4" height="1.5" rx=".75" fill="#c8d8e8"/></svg></span>
+          <span class="vol vol--pc">
+            <span class="vol__btn"><img src="/assets/img/icons/pc-on.svg" alt="" width="18" height="18"></span>
+            <span class="vol__word">PC</span>
+            <span class="vol__slider"><i></i></span>
+            <span class="vol__chip">100</span>
+          </span>
+          <span class="vol vol--radio">
+            <span class="vol__btn"><img src="/assets/img/icons/radio-none.svg" alt="" width="18" height="18"></span>
+            <span class="vol__word">RADIO</span>
+            <span class="vol__slider"><i></i></span>
+            <span class="vol__chip">--</span>
+          </span>
+          <span class="app-title__bulb"><img src="/assets/img/icons/bulb.svg" alt="" width="22" height="22"></span>
         </div>
 
         <div class="pan" data-pan>
@@ -327,7 +342,9 @@
           <div class="pan__freq" data-ruler aria-hidden="true"></div>
           <div class="pan__waterfall">
             <canvas data-waterfall aria-hidden="true"></canvas>
+            <canvas class="pan__time" data-wf-scale aria-hidden="true"></canvas>
           </div>
+          <span class="pan__live" aria-hidden="true">LIVE</span>
 
           <div class="pan__pass pan__pass--spec" data-pass-spec aria-hidden="true"></div>
           <div class="pan__pass pan__pass--wf" data-pass-wf aria-hidden="true"></div>
@@ -335,6 +352,8 @@
           <div class="pan__tri" data-vfo-tri aria-hidden="true"></div>
           <div class="pan__readout" data-cursor aria-hidden="true"></div>
 
+          <!-- SpectrumOverlayPanel: the ANT button shows because an ANAN-G2 has
+               Alex antenna ports (updateLayout, m_antAvailable). -->
           <div class="ovl" data-inert aria-hidden="true">
             <span class="ovl__btn ovl__btn--toggle">◀</span>
             <span class="ovl__btn">+RX</span>
@@ -343,10 +362,16 @@
             <span class="ovl__btn">ANT</span>
             <span class="ovl__btn">Display</span>
             <span class="ovl__btn">VAX</span>
-            <span class="ovl__btn is-off">ATT</span>
+            <span class="ovl__btn">ATT</span>
           </div>
 
-          <!-- VFO flag, a copy of the app's VfoWidget -->
+          <!-- SpectrumStatusOverlay: channel tag and the TX pill -->
+          <div class="pstat" data-pstat aria-hidden="true"><span class="pstat__ch">CH 0</span><span class="pstat__tx">TX</span></div>
+
+          <!-- SpectrumOverlayPanel::buildZoomButtons -->
+          <div class="zbtns" data-inert-zoom aria-hidden="true"><span>S</span><span>B</span><span>-</span><span>+</span></div>
+
+          <!-- VFO flag, a copy of the app's VfoWidget in the workspace look -->
           <div class="vfo" data-vfo role="slider" tabindex="0"
                aria-label="Demo receiver frequency. Use the arrow keys to tune."
                aria-valuemin="7000000" aria-valuemax="7300000" aria-valuenow="7236400"
@@ -359,48 +384,49 @@
               <span class="vfo__txb">TX</span>
               <span class="vfo__slice">A</span>
             </div>
+            <div class="vfo__access" aria-hidden="true">You control</div>
             <output class="vfo__freq" data-vfo-freq>7.236.400</output>
-            <canvas class="vfo__level" data-vfo-level width="240" height="26" aria-hidden="true"></canvas>
+            <canvas class="vfo__level" data-vfo-level width="240" height="33" aria-hidden="true"></canvas>
             <div class="vfo__tabs" aria-hidden="true">
-              <span>🔊</span><i>|</i><span>DSP</span><i>|</i><span data-vfo-mode>LSB</span><i>|</i><span>X/RIT</span><i>|</i><span>VAX</span>
+              <span><img src="/assets/img/icons/pc-on.svg" alt="" width="16" height="16"></span><i>|</i><span>DSP</span><i>|</i><span data-vfo-mode>LSB</span><i>|</i><span>X/RIT</span><i>|</i><span>VAX</span>
             </div>
           </div>
           <div class="vfo-fbtns" data-vfo-fbtns aria-hidden="true">
-            <span>🔓</span><span>⏺</span><span>▶</span>
+            <span><img src="/assets/img/icons/unlock.svg" alt="" width="16" height="16"></span>
           </div>
         </div>
 
+        <!-- The pan's zoom slider (MainWindow, below the SpectrumWidget) -->
+        <div class="zoombar" aria-hidden="true"><i></i></div>
+
+        <!-- MainWindow::buildStatusBar in the workspace look. fold-N follows the
+             ChromeBarItems fold rungs: fold-1 leaves first. -->
         <div class="banner" aria-hidden="true">
           <div class="banner__group">
-            <svg class="banner__stack" viewBox="0 0 10 22" width="10" height="22"><ellipse cx="4.5" cy="3" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="10" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="17" rx="4.5" ry="3" fill="#404858"/></svg>
-            <svg class="banner__pan" viewBox="0 0 36 28" width="36" height="28"><polyline fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="1.6" stroke-linejoin="round" points="0,22 1,21 2,22 3,19 4,22 5,21 6,18 7,12 8,17 9,22 10,21 11,22 12,16 13,22 14,21 15,19 16,22 17,20 18,12 19,4 20,11 21,21 22,22 23,21 24,17 25,22 26,21 27,22 28,18 29,22 30,22"/><path d="M30 4v10M25 9h10" stroke="rgba(255,255,255,0.82)" stroke-width="2.2"/></svg>
+            <svg class="banner__pan" viewBox="0 0 36 28" width="36" height="28"><polyline fill="none" stroke="rgba(220,220,225,0.824)" stroke-width="1.6" stroke-linejoin="round" points="0,22 1,21 2,22 3,19 4,22 5,21 6,18 7,12 8,17 9,22 10,21 11,22 12,16 13,22 14,21 15,19 16,22 17,20 18,12 19,4 20,11 21,21 22,22 23,21 24,17 25,22 26,21 27,22 28,18 29,22 30,22"/><path d="M30 4v10M25 9h10" stroke="rgba(220,220,225,0.824)" stroke-width="2.2"/></svg>
             <span class="banner__chain fold-3"><b>CH 0</b><i>40m</i></span>
             <span class="banner__glyph">☰</span>
-            <span class="banner__dim banner__tnf fold-1">TNF</span>
-            <span class="banner__dim fold-1">CWX</span>
-            <span class="banner__dim fold-1">DVK</span>
-            <span class="banner__dim fold-1">FDX</span>
-            <span class="banner__sep fold-1">·</span>
+            <span class="banner__tnf fold-5">TNF</span>
             <span class="dash">
+              <span class="picker"><span class="picker__rx">RX</span><span class="picker__tag">A</span><span class="picker__who">You control</span><span class="picker__arrow">▾</span></span>
               <span class="badge badge--info"><svg viewBox="0 0 12 12"><path d="M 1,6 Q 3,1.5 5,6 T 9,6 L 11,6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-mode>LSB</span></span>
               <span class="badge badge--on"><svg viewBox="0 0 12 12"><path d="M 1,9 C 3,9 3,4 5,4 L 7,4 C 9,4 9,9 11,9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-bw>2.9k</span></span>
-              <span class="badge badge--info fold-2"><svg viewBox="0 0 12 12"><path d="M 7,1 L 3,7 L 5.5,7 L 5,11 L 9,5 L 6.5,5 L 7,1 Z" fill="currentColor"/></svg><span>M</span></span>
+              <span class="badge badge--info fold-4"><svg viewBox="0 0 12 12"><path d="M 7,1 L 3,7 L 5.5,7 L 5,11 L 9,5 L 6.5,5 L 7,1 Z" fill="currentColor"/></svg><span>M</span></span>
             </span>
           </div>
           <span class="banner__fill"></span>
-          <span class="station fold-4"><b>ANAN-G2</b><i>Saturn · v27</i></span>
+          <span class="station fold-site"><b>ANAN-G2</b><i>Saturn · v27</i></span>
           <span class="banner__fill"></span>
           <div class="banner__group">
             <span class="banner__ind fold-2"><b>CAT</b><i>Off</i></span>
             <span class="banner__sep fold-2">·</span>
             <span class="banner__ind fold-2"><b>TCI</b><i>Off</i></span>
             <span class="banner__sep fold-2">·</span>
-            <span class="systile fold-3"><span><b>PA</b><i>13.8V</i></span><span><b>CPU</b><i>9%</i></span></span>
-            <span class="banner__sep fold-3">·</span>
+            <span class="systile fold-1"><b>CPU</b><i>9%</i></span>
+            <span class="banner__sep fold-1">·</span>
             <span class="safety">
-              <span class="slot"><span class="badge badge--on">PA</span></span>
-              <span class="slot slot--ovl fold-3"><span class="ovld">OVERLOAD</span></span>
-              <span class="slot"><span class="badge badge--off">TX</span></span>
+              <span class="slot slot--ovl fold-site"><span class="ovld">OVERLOAD</span></span>
+              <span class="slot"><span class="badge badge--off"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg><span>TX</span></span></span>
             </span>
             <span class="banner__more">…</span>
           </div>
@@ -408,9 +434,18 @@
       </figure>
       <p class="app-caption">
         <i class="led led--green" aria-hidden="true"></i>
-        A simulated 40 m band, drawn live in your browser in the program's own layout. Click or tap
+        A simulated 40 m band, drawn live in your browser in the program's default look. Click or tap
         the waterfall to tune.
       </p>
+      <div class="wrap">
+        <figure class="screen screen--wide desk-shot" data-reveal><a href="/assets/img/desktop-workspace.webp" aria-label="Open the full desktop workspace screenshot"><img src="/assets/img/desktop-workspace.webp" width="2048" height="1177" alt="The NereusSDR desktop window: a 40 m panadapter and waterfall with a slice flag, an S-meter, receive and transmit applets in the side column, and the title and status bars" loading="lazy"></a><figcaption><b>The workspace.</b><span>One pan on 40 m beside the S-meter, receive and transmit applets, in the default look.</span></figcaption></figure>
+        <div class="desk-shots" data-reveal>
+          <figure class="screen desk-shots__tall"><a href="/assets/img/desktop-applets.webp" aria-label="Open the full applet column screenshot"><img src="/assets/img/desktop-applets.webp" width="900" height="2157" alt="The applet column: an analog S-meter, receive controls with filter presets and AGC, and transmit controls with power and SWR meters" loading="lazy"></a><figcaption><b>Applets</b><span>Dock, reorder or pop out each one.</span></figcaption></figure>
+          <figure class="screen"><a href="/assets/img/desktop-slice-flag.webp" aria-label="Open the full slice flag screenshot"><img src="/assets/img/desktop-slice-flag.webp" width="1512" height="804" alt="A slice flag on the pan showing antennas, filter width, frequency 7.185.000, a signal level bar and DSP, mode and VAX tabs" loading="lazy"></a><figcaption><b>The slice flag</b><span>Frequency, level, mode and DSP, right on the pan.</span></figcaption></figure>
+          <figure class="screen"><a href="/assets/img/desktop-tx-eq.webp" aria-label="Open the full TX EQ screenshot"><img src="/assets/img/desktop-tx-eq.webp" width="1600" height="730" alt="The TX EQ dialog with a preamp and ten band sliders from 32 Hz to 16 kHz" loading="lazy"></a><figcaption><b>TX EQ</b><span>Shape your transmit audio, graphic or parametric.</span></figcaption></figure>
+        </div>
+        <p class="capture-note">Screenshots of the desktop program on macOS with simulated station data. Controls available depend on your radio and Core.</p>
+      </div>
     </section>
 
     <!-- ============ Features ============ -->
@@ -464,9 +499,9 @@
             <div class="titlebar"><h3>Your desktop workspace</h3></div>
             <div class="applet__body">
               <h4>Build the panel you want.</h4>
-              <p>Mix meters, applets and individual controls in a vertical stack or position them on a Canvas. Dock a container, overlay it or float it onto another monitor. Vintage S-meter faces, cross-needle meters and the AM modulation monitor give your instruments their own character.</p>
+              <p>The workspace look is the default in 2026.10.1. Dock containers on any of the four edges, float them, or pop them out into their own windows, and show or hide each header. Workspace profiles save and recall whole layouts. Mix meters, applets and individual controls in a stack or on a Canvas; vintage S-meter faces, cross-needle meters and the AM modulation monitor give your instruments their own character.</p>
               <ul class="chips">
-                <li class="is-green">Canvas</li><li>Containers</li><li>Applets</li><li>S-meter</li><li>Cross-needle</li><li>Vintage faces</li><li>AM monitor</li>
+                <li class="is-green">Workspace look</li><li>Four-edge docking</li><li>Pop-outs</li><li>Profiles</li><li>Canvas</li><li>Applets</li><li>S-meter</li><li>Cross-needle</li><li>AM monitor</li>
               </ul>
             </div>
           </article>
@@ -484,8 +519,8 @@
             <div class="titlebar"><h3>Receiver audio</h3></div>
             <div class="applet__body">
               <h4>A listening place for every slice.</h4>
-              <p>Give each receiver its own gain, mute and listening position. Route slices to speakers or headphones, keeping a conversation in one ear or a second listening task on its own output.</p>
-              <ul class="chips"><li class="is-blue">Per-slice gain</li><li>Mute</li><li>Pan</li><li>Binaural</li><li class="is-green">Speakers / headphones</li></ul>
+              <p>Give each receiver its own gain, mute and listening position, and route slices to speakers or headphones. Each system plays and records through its own audio engine: Core Audio on the Mac, Windows audio and ASIO, PipeWire or PulseAudio on a Linux desktop, and ALSA direct on a headless Core. Device lists update by themselves, and the header has separate PC and RADIO volumes.</p>
+              <ul class="chips"><li class="is-blue">Per-slice gain</li><li>Pan</li><li class="is-green">Native engines</li><li>Core Audio</li><li>WASAPI</li><li>ASIO</li><li>PipeWire</li><li>ALSA</li><li>PC / RADIO</li></ul>
             </div>
           </article>
 
@@ -493,10 +528,19 @@
             <div class="titlebar"><h3>Station tools</h3></div>
             <div class="applet__body">
               <h4>Plays well with your other software.</h4>
-              <p>Spot Hub brings activity from DX clusters, RBN, POTA and reporters onto your panadapter for click-to-tune. Connect digital programs through TCI and virtual audio routing, and control Power Genius XL, Tuner Genius XL and RF-Kit RF2K-S from the console.</p>
+              <p>Logging, contest and digital-mode programs control the radio over CAT: up to four channels, each bound to its own slices, on TCP, a serial port or a virtual serial port, with a Hamlib rigctld port beside each. Connect digital programs through TCI and VAX audio, and bring DX cluster, RBN, POTA and reporter spots onto your panadapter. Control Power Genius XL, Tuner Genius XL and RF-Kit RF2K-S from the console and from every device signed in to the station.</p>
               <ul class="chips">
-                <li class="is-blue">TCI</li><li>VAX audio</li><li>DX cluster</li><li>RBN</li><li>POTA</li><li>PSK Reporter</li><li>FreeDV Reporter</li>
+                <li class="is-blue">CAT</li><li>rigctld</li><li class="is-blue">TCI</li><li>VAX audio</li><li>DX cluster</li><li>RBN</li><li>POTA</li><li>PSK Reporter</li><li>FreeDV Reporter</li>
               </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Rotor</h3></div>
+            <div class="applet__body">
+              <h4>Point the beam from any console.</h4>
+              <p>Turn a Yaesu GS-232A or GS-232B rotor on a serial port, or any rotor Hamlib's rotctld runs. The Core owns the rotor, so every window and the iPhone or iPad app show one heading. Use the Rotor applet's dial, drag the compass meter, or turn the beam to a spot from its bearing.</p>
+              <ul class="chips"><li class="is-blue">GS-232A/B</li><li>rotctld</li><li>Short / long path</li><li>Spot bearing</li><li>Core-owned</li></ul>
             </div>
           </article>
 
@@ -560,7 +604,7 @@
           <p>Connect your radio, get comfortable with the console, or set up a Core beside the station. Follow the guide for the job in front of you.</p>
         </header>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Operate your station</h3></div><div class="panel__body"><h4>Find the control you need.</h4><p>The user guide takes you through tuning, receivers, displays, audio, profiles and station tools on desktop and native mobile.</p><ul class="guide-links"><li><a href="/manual/">Read the user guide →</a></li><li><a href="/manual/01-desktop-connect.html">Start on the desktop →</a></li><li><a href="/manual/06-iphone-connect.html">Pair an iPhone or iPad →</a></li><li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade from 0.5.2 →</a></li><li><a href="/manual/11-troubleshooting.html">Troubleshoot operation →</a></li></ul></div></article>
+          <article class="panel"><div class="titlebar"><h3>Operate your station</h3></div><div class="panel__body"><h4>Find the control you need.</h4><p>The user guide takes you through tuning, receivers, displays, audio, profiles and station tools on desktop and native mobile.</p><ul class="guide-links"><li><a href="/manual/">Read the user guide →</a></li><li><a href="/manual/01-desktop-connect.html">Start on the desktop →</a></li><li><a href="/manual/06-iphone-connect.html">Pair an iPhone or iPad →</a></li><li><a href="/guides/upgrading-to-2026.10.1.html">Upgrade from 2026.10.0 →</a></li><li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade from 0.5.2 →</a></li><li><a href="/manual/11-troubleshooting.html">Troubleshoot operation →</a></li></ul></div></article>
           <article class="panel"><div class="titlebar"><h3>Run a station Core</h3></div><div class="panel__body"><h4>Put the processing where it belongs.</h4><p>Prepare a fresh Pi OS Lite or Armbian Trixie system, install the matching Core package, start the service and connect your console.</p><ul class="guide-links"><li><a href="/guides/install-core-sbc.html">Install Core on an SBC →</a></li><li><a href="/manual/01-desktop-connect.html#connect-to-another-computers-core">Connect to a remote Core →</a></li><li><a href="/manual/08-shared-core.html">Share the station →</a></li><li><a href="/guides/remote-access.html#self-hosting">Host your own RV service →</a></li></ul></div></article>
           <article class="panel"><div class="titlebar"><h3>Shape your transmitted audio</h3></div><div class="panel__body"><h4>Make your voice sound like you.</h4><p>Work through EQ and CFC, keep the settings with your transmit profile, and understand the feedback and diversity tools available to your radio.</p><ul class="guide-links"><li><a href="/guides/tx-eq-cfc.html">Use the EQ and CFC editors →</a></li><li><a href="/manual/14-voice-profiles.html">Set up voice profiles →</a></li><li><a href="/manual/18-puresignal-diversity.html">Use PureSignal and diversity →</a></li><li><a href="/manual/10-customize.html">Arrange controls and meters →</a></li></ul></div></article>
         </div>
@@ -575,15 +619,19 @@
           <p class="eyebrow">Status</p>
           <h2 id="status-title">A new chapter <strong>for your station.</strong></h2>
           <p>
-            2026.10.0 brings the Core, remote operation and mobile console together,
-            alongside a substantial desktop update. From a cross-platform console to a station you can operate across devices,
-            this is the biggest step forward since v0.5.2.
+            2026.10.1 builds on the shared station of 2026.10.0. Your logging and digital programs can drive it over CAT,
+            the Core turns your antenna, each system plays through its own audio engine, and the workspace look is
+            now the default.
           </p>
         </header>
 
         <div class="status">
           <ol class="releases" reversed data-reveal aria-label="Release history">
             <li class="is-latest">
+              <div><span class="ver">v2026.10.1</span><time data-release-history datetime="2026-10-17T22:03:26Z">17 Oct 2026</time></div>
+              <p>CAT with Hamlib rigctld, antenna rotor control, native audio engines, separate PC and RADIO volumes, and the workspace look by default. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.1">Read the release notes →</a></p>
+            </li>
+            <li>
               <div><span class="ver">v2026.10.0</span><time datetime="2026-10-06T00:46:30Z">6 Oct 2026</time></div>
               <p>A shared station Core, remote desktop operation, independent receivers, Canvas and containers, WDSP 2.10, and native mobile controls. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0">Read the release notes →</a></p>
             </li>
@@ -619,14 +667,14 @@
 
           <div data-reveal>
             <div class="next">
-              <div class="titlebar"><h3>New in 2026.10.0</h3></div>
+              <div class="titlebar"><h3>New in 2026.10.1</h3></div>
               <div class="next__body"><ol>
-                <li><b>Your station, across devices</b><span>A headless Core, desktop remote operation, shared receiver access and IPv4/IPv6 paths with RV, TURN and WebSocket alternatives.</span></li>
-                <li><b>A native mobile console</b><span>Touch tuning, filters, receive audio, voice PTT, TX profiles, EQ/CFC, station tools and an iPad layout. <a href="https://testflight.apple.com/join/61K3p3xn">Join the public TestFlight preview.</a></span></li>
-                <li><b>A workspace of your own</b><span>Independent receivers, 3D, TNF, diversity, WDSP NNR and PureSignal 3, Canvas and containers, configurable meters and native voice editors.</span></li>
+                <li><b>Your other programs, in control</b><span>CAT on up to four slice-bound channels over TCP, serial or a virtual serial port, with Hamlib rigctld beside each. Antenna rotor control for GS-232A/B and rotctld rotors, owned by the Core.</span></li>
+                <li><b>Sound through your own system</b><span>Core Audio, Windows audio and ASIO, PipeWire, PulseAudio and ALSA direct, with device lists that update by themselves, a Core speaker you choose from any window, and separate PC and RADIO volumes.</span></li>
+                <li><b>The workspace look</b><span>Containers dock on all four edges, float or pop out, with headers you show or hide and workspace profiles. Plus fixes for the display, transmit, PureSignal two-tone, remote audio and Core installs.</span></li>
               </ol></div>
             </div>
-            <p class="capture-note">CAT support follows in the next release.</p>
+            <p class="capture-note">Updating a station? Read the <a href="/guides/upgrading-to-2026.10.1.html">2026.10.1 upgrade note</a> first. Rotor control, CAT Control on the phone and the Core speaker need a 2026.10.1 Core; older Cores and apps still connect.</p>
           </div>
         </div>
       </div>
@@ -639,12 +687,12 @@
         <header class="section__head" data-reveal>
           <p class="eyebrow">Download</p>
           <h2 id="download-title">Get <strong>NereusSDR.</strong></h2>
-          <p>Desktop releases are free, with no account and no telemetry. Download 2026.10.0 for your desktop, install a headless Core at the station, or join the native iPhone and iPad public preview through TestFlight.</p>
+          <p>Desktop releases are free, with no account and no telemetry. Download 2026.10.1 for your desktop, install a headless Core at the station, or join the native iPhone and iPad public preview through TestFlight.</p>
         </header>
 
         <p class="dl-meta" data-reveal>
-          <span>Latest <b data-release-version>v2026.10.0</b>, released <time data-release-date datetime="2026-10-06T00:46:30Z">6 October 2026</time></span>
-          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0" data-release-notes>Release notes</a>
+          <span>Latest <b data-release-version>v2026.10.1</b>, released <time data-release-date datetime="2026-10-17T22:03:26Z">17 October 2026</time></span>
+          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.1" data-release-notes>Release notes</a>
           <a href="https://github.com/boydsoftprez/NereusSDR/releases">All releases</a>
         </p>
 
@@ -659,14 +707,14 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-apple-silicon.dmg">
-                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.0-macOS-apple-silicon.dmg</small><span class="dl__size">114.5 MB</span></a></li>
-              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-apple-silicon.pkg">
-                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.0-macOS-apple-silicon.pkg</small><span class="dl__size">111.4 MB</span></a></li>
-              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-intel.dmg">
-                <b>Intel · DMG</b><small>NereusSDR-2026.10.0-macOS-intel.dmg</small><span class="dl__size">110.4 MB</span></a></li>
-              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-intel.pkg">
-                <b>Intel · Installer</b><small>NereusSDR-2026.10.0-macOS-intel.pkg</small><span class="dl__size">107.4 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-apple-silicon.dmg">
+                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.1-macOS-apple-silicon.dmg</small><span class="dl__size">127.5 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-apple-silicon.pkg">
+                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.1-macOS-apple-silicon.pkg</small><span class="dl__size">124.3 MB</span></a></li>
+              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-intel.dmg">
+                <b>Intel · DMG</b><small>NereusSDR-2026.10.1-macOS-intel.dmg</small><span class="dl__size">123.5 MB</span></a></li>
+              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-macOS-intel.pkg">
+                <b>Intel · Installer</b><small>NereusSDR-2026.10.1-macOS-intel.pkg</small><span class="dl__size">120.5 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Signed with an Apple Developer ID and notarized, so it opens normally.</p>
           </article>
@@ -683,10 +731,10 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-Windows-x64-setup.exe">
-                <b>Installer</b><small>NereusSDR-2026.10.0-Windows-x64-setup.exe</small><span class="dl__size">110.5 MB</span></a></li>
-              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-Windows-x64-portable.zip">
-                <b>Portable ZIP</b><small>NereusSDR-2026.10.0-Windows-x64-portable.zip</small><span class="dl__size">112.3 MB</span></a></li>
+              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-Windows-x64-setup.exe">
+                <b>Installer</b><small>NereusSDR-2026.10.1-Windows-x64-setup.exe</small><span class="dl__size">123.4 MB</span></a></li>
+              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-Windows-x64-portable.zip">
+                <b>Portable ZIP</b><small>NereusSDR-2026.10.1-Windows-x64-portable.zip</small><span class="dl__size">125.2 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--amber" aria-hidden="true"></i>Not code-signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.</p>
           </article>
@@ -701,16 +749,16 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-x86_64.AppImage">
-                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.0-x86_64.AppImage</small><span class="dl__size">112.2 MB</span></a></li>
-              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-aarch64.AppImage">
-                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.0-aarch64.AppImage</small><span class="dl__size">133.1 MB</span></a></li>
+              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-x86_64.AppImage">
+                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.1-x86_64.AppImage</small><span class="dl__size">126.0 MB</span></a></li>
+              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-aarch64.AppImage">
+                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.1-aarch64.AppImage</small><span class="dl__size">146.7 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Built on Ubuntu 22.04 (x86_64) and 24.04 (ARM64). Mark the file executable, then run it.</p>
           </article>
         </div>
 
-        <p class="capture-note" data-reveal><strong>Headless Core packages:</strong> <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_arm64_trixie.deb">Debian Trixie · ARM64</a> for Pi OS Lite and compatible Armbian, <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_arm64.deb">Ubuntu · ARM64</a>, and <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_amd64.deb">Ubuntu · AMD64</a>. Follow the <a href="/guides/install-core-sbc.html">Core installation guide</a> for setup and signature verification. For iPhone and iPad, <a href="https://testflight.apple.com/join/61K3p3xn">join the public TestFlight preview</a>; mobile installation is separate from desktop and Core packages.</p>
+        <p class="capture-note" data-reveal><strong>Headless Core packages:</strong> <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_arm64_trixie.deb">Debian Trixie · ARM64</a> for Pi OS Lite and compatible Armbian, <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_arm64.deb">Ubuntu · ARM64</a>, and <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/nereusd_2026.10.1_amd64.deb">Ubuntu · AMD64</a>. Follow the <a href="/guides/install-core-sbc.html">Core installation guide</a> for setup and signature verification. For iPhone and iPad, <a href="https://testflight.apple.com/join/61K3p3xn">join the public TestFlight preview</a>; mobile installation is separate from desktop and Core packages.</p>
 
         <p class="radios__note" data-reveal>
           On first launch NereusSDR measures the fastest FFT plans for your processor. That can take up to
@@ -736,21 +784,21 @@
 <pre><code><span class="c"># macOS</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-macOS-apple-silicon.dmg.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-macOS-apple-silicon.dmg.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Linux</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-x86_64.AppImage.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-x86_64.AppImage.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Windows: PowerShell, with Gpg4win installed</span>
 curl.exe -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-Windows-x64-setup.exe.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.1</span>-Windows-x64-setup.exe.asc</code></pre>
               </div>
             </div>
           </div>
@@ -772,7 +820,7 @@ cmake --build build
               </div>
               <p class="panel__foot">
                 Or take the signed source tarball from the release:
-                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-source.tar.gz"><span data-version-swap>NereusSDR-2026.10.0</span>-source.tar.gz</a>
+                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.1/NereusSDR-2026.10.1-source.tar.gz"><span data-version-swap>NereusSDR-2026.10.1</span>-source.tar.gz</a>
               </p>
             </div>
           </div>
@@ -902,6 +950,7 @@ cmake --build build
           <ul>
             <li><a href="#guides">Operator guides</a></li>
             <li><a href="/manual/">User guide</a></li>
+            <li><a href="/guides/upgrading-to-2026.10.1.html">Upgrade to 2026.10.1</a></li>
             <li><a href="/guides/upgrading-to-2026.10.0.html">Upgrade to 2026.10.0</a></li>
             <li><a href="/guides/install-core-sbc.html">Install a station Core</a></li>
             <li><a href="/guides/tx-eq-cfc.html">TX EQ and CFC</a></li>

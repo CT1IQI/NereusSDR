@@ -159,11 +159,11 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Latest release from GitHub. The page ships with v2026.10.0 baked in and */
+  /* Latest release from GitHub. The page ships with v2026.10.1 baked in and */
   /* only switches when every download link can be matched.              */
   /* ------------------------------------------------------------------ */
 
-  var CACHE_KEY = 'nereussdr-latest-release-v2';
+  var CACHE_KEY = 'nereussdr-latest-release-v3';
 
   // A download link may only ever point at this repository's release files.
   var DOWNLOAD_PATH = '/' + REPO + '/releases/download/';
@@ -685,6 +685,29 @@
 
   var UI_FONT = 'system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif';
 
+  // The 40 m rows of the default band plan, "ARRL (US)"
+  // (resources/bandplans/arrl-us.json): low and high edges in Hz, label,
+  // license classes and color.
+  var BAND_PLAN = [
+    [7000000, 7025000, 'CW', 'E', 0x3060ff],
+    [7025000, 7040000, 'CW', 'E,G', 0x3060ff],
+    [7040000, 7070000, 'DATA DX', 'E,G', 0xc03030],
+    [7070000, 7125000, 'DATA', 'E,G', 0xc03030],
+    [7125000, 7175000, 'PHONE', 'E', 0xff8000],
+    [7175000, 7290000, 'PHONE', 'E,G', 0xff8000],
+    [7290000, 7300000, 'AM', 'E,G', 0xff8000]
+  ];
+  var BAND_SPOTS = [7030000, 7038600, 7040000, 7047500, 7070000, 7073000, 7074000, 7078000,
+    7080000, 7083000, 7171000, 7173000, 7177000, 7285000, 7290000];
+
+  // SpectrumWidget::lowestLicenceClass
+  function lowestClass(lic) {
+    if (lic.indexOf('T') >= 0) { return 'Tech'; }
+    if (lic.indexOf('G') >= 0) { return 'General'; }
+    if (lic === 'E') { return 'Extra'; }
+    return '';
+  }
+
   function initPan() {
     var pan = document.querySelector('[data-pan]');
     if (!pan) {
@@ -692,8 +715,10 @@
     }
     var specCanvas = pan.querySelector('[data-spectrum]');
     var wfCanvas = pan.querySelector('[data-waterfall]');
+    var timeCanvas = pan.querySelector('[data-wf-scale]');
     var specCtx = specCanvas.getContext('2d');
     var wfCtx = wfCanvas.getContext('2d', { alpha: false });
+    var timeCtx = timeCanvas ? timeCanvas.getContext('2d') : null;
     if (!specCtx || !wfCtx) {
       return;
     }
@@ -706,6 +731,7 @@
     var triEl = pan.querySelector('[data-vfo-tri]');
     var readout = pan.querySelector('[data-cursor]');
     var inert = pan.querySelector('[data-inert]');
+    var zoomBtns = pan.querySelector('[data-inert-zoom]');
     var vfoEl = pan.querySelector('[data-vfo]');
     var freqOut = vfoEl.querySelector('[data-vfo-freq]');
     var bwOut = vfoEl.querySelector('[data-vfo-bw]');
@@ -713,6 +739,7 @@
     var levelCanvas = vfoEl.querySelector('[data-vfo-level]');
     var levelCtx = levelCanvas.getContext('2d');
     var fbtnsEl = pan.querySelector('[data-vfo-fbtns]');
+    var pstatEl = pan.querySelector('[data-pstat]');
     var dashMode = document.querySelector('[data-dash-mode]');
     var dashBw = document.querySelector('[data-dash-bw]');
     var toggleBtn = inert ? inert.querySelector('.ovl__btn--toggle') : null;
@@ -723,14 +750,20 @@
     var WF_LO = -127;
     var WF_HI = -52;
     var ROW_MS = 55;
-    var DBM_STRIP_W = 36;
+    // SpectrumWidget: effectiveStripW() and waterfallStripWidth() are 36 px;
+    // spectrumLayout() gives the spectrum, frequency mapping and waterfall
+    // image plotW = width - 36.
+    var STRIP_W = 36;
     var DBM_ARROW_H = 14;
+    // bandPlanStripHeight(): max(6 + 4, height of the 11 px bold label + 2)
+    var BAND_H = 15;
 
     var lut = buildLut(WF_DEFAULT);
     var band = buildBand();
     var sim = makeSimulation(band);
 
     var W = 0;
+    var PW = 0;
     var specH = 0;
     var bins = 0;
     var wfRows = 0;
@@ -752,7 +785,7 @@
     var vfo = { f: 7236400, target: 7236400, mode: 'LSB', s: -127 };
 
     function fx(f) {
-      return (f - F0) / SPAN * W;
+      return (f - F0) / SPAN * PW;
     }
 
     function dbToY(db) {
@@ -778,28 +811,74 @@
       }
     }
 
-    // SpectrumWidget::drawFreqScale: centred labels every 25 kHz, two decimals.
+    // SpectrumWidget::drawFreqScale: centered labels every 25 kHz, two decimals,
+    // over the plot width.
     function buildRuler() {
       ruler.textContent = '';
-      var step = W < 440 ? 50000 : 25000;
+      var step = PW < 440 ? 50000 : 25000;
       for (var f = Math.ceil(F0 / step) * step; f < F1; f += step) {
-        if (fx(f) < 14 || fx(f) > W - 14) {
-          continue; // a centred label this close to the edge would be cut in half
+        if (fx(f) < 14 || fx(f) > PW - 14) {
+          continue; // a centered label this close to the edge would be cut in half
         }
         var s = document.createElement('span');
         s.textContent = (f / 1e6).toFixed(2);
-        s.style.left = (fx(f) / W * 100) + '%';
+        s.style.left = fx(f).toFixed(1) + 'px';
         ruler.appendChild(s);
+      }
+    }
+
+    // SpectrumWidget::drawTimeScale: the strip at the waterfall's right edge,
+    // rgba(10,10,24,220) with a #304050 left line, a tick and an "Ns" label
+    // every 5 s from 4 px below its top. The LIVE button is markup.
+    function drawTimeScale() {
+      if (!timeCtx) {
+        return;
+      }
+      var h = wfRows;
+      timeCanvas.width = Math.round(STRIP_W * dpr);
+      timeCanvas.height = Math.round(h * dpr);
+      var c = timeCtx;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.clearRect(0, 0, STRIP_W, h);
+      c.fillStyle = 'rgba(10, 10, 24, 0.863)';
+      c.fillRect(0, 0, STRIP_W, h);
+      c.strokeStyle = '#304050';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0.5, 0);
+      c.lineTo(0.5, h);
+      c.stroke();
+
+      var top = 4;
+      var labelH = h - top;
+      var totalSec = labelH * ROW_MS / 1000;
+      c.font = '11px ' + UI_FONT; // setPointSize(7), raised to 11 px
+      c.textAlign = 'left';
+      c.textBaseline = 'alphabetic';
+      var asc = c.measureText('0s').actualBoundingBoxAscent || 8;
+      for (var sec = 0; sec <= totalSec; sec += 5) {
+        var yy = top + Math.floor(sec / totalSec * labelH);
+        if (yy > h - 1 - 5) {
+          continue;
+        }
+        c.strokeStyle = '#507080';
+        c.beginPath();
+        c.moveTo(0, yy + 0.5);
+        c.lineTo(4, yy + 0.5);
+        c.stroke();
+        c.fillStyle = '#80a0b0';
+        c.fillText(sec + 's', 6, yy + Math.round(asc / 2));
       }
     }
 
     function setup() {
       var rect = pan.getBoundingClientRect();
       W = Math.max(1, Math.round(rect.width));
+      PW = Math.max(1, W - STRIP_W);
       specH = Math.max(40, Math.round(specWrap.getBoundingClientRect().height));
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       scale = W < 560 ? 0.8 : 1;
-      bins = clamp(W, 480, 2400);
+      bins = clamp(PW, 480, 2400);
       wfRows = Math.max(60, Math.round(wfWrap.getBoundingClientRect().height));
 
       specCanvas.width = Math.round(W * dpr);
@@ -824,6 +903,7 @@
       cur = new Float32Array(bins);
       rowImg = wfCtx.createImageData(bins, 1);
       buildRuler();
+      drawTimeScale();
       prefill();
       placeVfo();
       drawSpectrum(1);
@@ -870,11 +950,12 @@
     }
 
     // SpectrumWidget::drawDbmScale: right-edge strip with the up/down arrows
-    // and a label every 10 dB (adaptiveStepDb for an 85 dB range).
+    // and a label every 10 dB (adaptiveStepDb for an 85 dB range). 7 pt
+    // labels, raised to 11 px.
     function drawDbmStrip(c) {
-      var x0 = W - DBM_STRIP_W;
+      var x0 = PW;
       c.fillStyle = 'rgba(10, 10, 24, 0.863)';
-      c.fillRect(x0, 0, DBM_STRIP_W, specH);
+      c.fillRect(x0, 0, STRIP_W, specH);
       c.strokeStyle = '#304050';
       c.lineWidth = 1;
       c.beginPath();
@@ -882,7 +963,7 @@
       c.lineTo(x0 + 0.5, specH);
       c.stroke();
 
-      var half = DBM_STRIP_W / 2;
+      var half = STRIP_W / 2;
       var upCx = x0 + half / 2;
       var dnCx = x0 + half + half / 2;
       var aTop = 2;
@@ -903,66 +984,122 @@
 
       var step = RANGE / 5 >= 20 ? 20 : RANGE / 5 >= 10 ? 10 : RANGE / 5 >= 5 ? 5 : 2;
       var labelTop = DBM_ARROW_H + 4;
-      c.font = '7px ' + UI_FONT; // setPointSize(7), which Qt draws at 7 px on macOS
+      c.font = '11px ' + UI_FONT;
       c.textAlign = 'left';
-      c.textBaseline = 'middle';
-      for (var db = Math.ceil((REF - RANGE) / step) * step; db <= REF; db += step) {
-        var y = Math.round(dbToY(db));
-        if (y < labelTop || y > specH - 5) {
-          continue;
-        }
+      c.textBaseline = 'alphabetic';
+      var asc = c.measureText('-0').actualBoundingBoxAscent || 8;
+      function tick(db, y, base) {
         c.strokeStyle = '#507080';
         c.beginPath();
         c.moveTo(x0, y + 0.5);
         c.lineTo(x0 + 4, y + 0.5);
         c.stroke();
         c.fillStyle = '#80a0b0';
-        c.fillText(String(db), x0 + 6, y);
+        c.fillText(String(Math.round(db)), x0 + 6, base);
       }
+      for (var db = Math.ceil((REF - RANGE) / step) * step; db <= REF; db += step) {
+        var y = Math.floor(dbToY(db));
+        if (y < labelTop || y > specH - 1 - 5) {
+          continue;
+        }
+        tick(db, y, y + Math.round(asc / 2));
+      }
+    }
+
+    // SpectrumWidget::drawBandPlan (from AetherSDR): a strip along the
+    // spectrum's foot, each segment's color blended toward #0a0a14 by its
+    // license class, a separator at its left edge, a white bold label (with
+    // the lowest class when there is room) and white spot dots.
+    function drawBandPlan(c) {
+      var bandY = specH - BAND_H;
+      c.font = 'bold 11px ' + UI_FONT;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      BAND_PLAN.forEach(function (seg) {
+        var x1 = Math.floor(fx(Math.max(seg[0], F0)));
+        var x2 = Math.floor(fx(Math.min(seg[1], F1)));
+        if (x2 <= x1) {
+          return;
+        }
+        var lic = seg[3];
+        var blend = 0.6;
+        if (lic === 'E') { blend = 0.20; }
+        else if (lic === 'E,G') { blend = 0.40; }
+        else if (lic.indexOf('T') >= 0) { blend = 0.60; }
+        else if (lic === '') { blend = 0.50; }
+        var r = Math.floor(((seg[4] >> 16) & 255) * blend + 0x0a * (1 - blend));
+        var g = Math.floor(((seg[4] >> 8) & 255) * blend + 0x0a * (1 - blend));
+        var b = Math.floor((seg[4] & 255) * blend + 0x14 * (1 - blend));
+        c.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        c.fillRect(x1, bandY, x2 - x1, BAND_H);
+        c.strokeStyle = 'rgba(15, 15, 26, 0.784)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(x1 + 0.5, bandY);
+        c.lineTo(x1 + 0.5, bandY + BAND_H);
+        c.stroke();
+        if (x2 - x1 > 20) {
+          var cls = lowestClass(lic);
+          var label = cls && x2 - x1 > 60 ? seg[2] + ' ' + cls : seg[2];
+          c.save();
+          c.beginPath();
+          c.rect(x1, bandY, x2 - x1, BAND_H);
+          c.clip();
+          c.fillStyle = '#ffffff';
+          c.fillText(label, (x1 + x2) / 2, bandY + BAND_H / 2 + 0.5);
+          c.restore();
+        }
+      });
+      c.fillStyle = '#ffffff';
+      BAND_SPOTS.forEach(function (f) {
+        c.beginPath();
+        c.arc(Math.floor(fx(f)), bandY + Math.floor(BAND_H / 2), 4, 0, 6.2832);
+        c.fill();
+      });
     }
 
     function drawSpectrum(frac) {
       var c = specCtx;
       c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c.fillStyle = '#0a0a14';
+      // dataBackground(#0a0a14, "app-bg"): the workspace app background
+      c.fillStyle = '#08080a';
       c.fillRect(0, 0, W, specH);
 
-      // Grid: dotted minor lines every 5 kHz, major lines every 25 kHz and 10 dB.
+      // SpectrumWidget::drawGrid: m_hGridColor lines every 10 dB up from the
+      // bottom of the range, m_gridColor lines every 25 kHz (a span over
+      // 100 kHz), then m_gridFineColor dotted lines at a fifth of that step.
       var f;
       var x;
       c.lineWidth = 1;
+      c.strokeStyle = 'rgba(255, 255, 255, 0.157)';
+      c.beginPath();
+      for (var db = REF - RANGE + 10; db < REF; db += 10) {
+        var gy = Math.round(dbToY(db)) + 0.5;
+        c.moveTo(0, gy);
+        c.lineTo(PW, gy);
+      }
+      for (f = Math.ceil(F0 / 25000) * 25000; f < F1; f += 25000) {
+        x = Math.round(fx(f)) + 0.5;
+        c.moveTo(x, 0);
+        c.lineTo(x, specH);
+      }
+      c.stroke();
       c.strokeStyle = 'rgba(255, 255, 255, 0.078)';
       c.setLineDash([1, 2]);
       c.beginPath();
-      for (f = Math.ceil(F0 / 5000) * 5000; f <= F1; f += 5000) {
-        if (f % 25000 === 0) {
-          continue;
-        }
+      for (f = Math.ceil(F0 / 5000) * 5000; f < F1; f += 5000) {
         x = Math.round(fx(f)) + 0.5;
         c.moveTo(x, 0);
         c.lineTo(x, specH);
       }
       c.stroke();
       c.setLineDash([]);
-      c.strokeStyle = 'rgba(255, 255, 255, 0.157)';
-      c.beginPath();
-      for (var db = Math.ceil((REF - RANGE) / 10) * 10; db <= REF; db += 10) {
-        var gy = Math.round(dbToY(db)) + 0.5;
-        c.moveTo(0, gy);
-        c.lineTo(W, gy);
-      }
-      for (f = Math.ceil(F0 / 25000) * 25000; f <= F1; f += 25000) {
-        x = Math.round(fx(f)) + 0.5;
-        c.moveTo(x, 0);
-        c.lineTo(x, specH);
-      }
-      c.stroke();
 
       // Trace: #00e5ff at 1.5 px over a flat fill at 0.70 x 0.4 alpha.
       var trace = new Path2D();
       for (var i = 0; i < bins; i++) {
         var v = prev[i] + (cur[i] - prev[i]) * frac;
-        var tx = (i + 0.5) / bins * W;
+        var tx = (i + 0.5) / bins * PW;
         var ty = dbToY(v);
         if (i === 0) {
           trace.moveTo(0, ty);
@@ -970,25 +1107,33 @@
         trace.lineTo(tx, ty);
       }
       var fill = new Path2D(trace);
-      fill.lineTo(W, specH);
+      fill.lineTo(PW, specH);
       fill.lineTo(0, specH);
       fill.closePath();
+      c.save();
+      c.beginPath();
+      c.rect(0, 0, PW, specH);
+      c.clip();
       c.fillStyle = 'rgba(0, 229, 255, 0.28)';
       c.fill(fill);
       c.lineWidth = 1.5;
       c.lineJoin = 'round';
       c.strokeStyle = '#00e5ff';
       c.stroke(trace);
+      c.restore();
 
+      drawBandPlan(c);
       drawDbmStrip(c);
     }
 
     // The flag's S-meter strip, ported from VfoLevelBar::paintEvent
-    // (src/gui/widgets/VfoLevelBar.cpp): tick labels S1..+40 over a 14 px bar,
-    // cyan below S9 blending to green above it, dBm readout on the right.
+    // (src/gui/widgets/VfoLevelBar.cpp) in the workspace look: 11 px tick
+    // labels S1..+40 4 px down, a tick-label row of font height + 2, the bar
+    // below it, cyan below S9 blending to green above it, and the dBm readout
+    // in a reserved max(52, "-130 dBm" + 2) px column 4 px past the bar.
     function drawLevel(dbm) {
       var w = 240;
-      var h = 26;
+      var h = 33;
       var ratio = Math.min(window.devicePixelRatio || 1, 3);
       if (levelCanvas.width !== Math.round(w * ratio)) {
         levelCanvas.width = Math.round(w * ratio);
@@ -1001,13 +1146,14 @@
       var CEIL = -20;
       var S9 = -73;
       var TOP = 4;
-      var TICK_H = 8;
-      var DBM_W = 52;
-      var barW = w - DBM_W - 2;
+      var TICK_H = 15;
+      c.font = 'bold 11px ' + UI_FONT;
+      var dbmW = Math.max(52, Math.ceil(c.measureText('-130 dBm').width) + 2);
+      var barW = w - dbmW - 4;
       var ticks = [-121, -109, -97, -85, -73, -53, -33];
       var labels = ['S1', '3', '5', '7', '9', '+20', '+40'];
       c.fillStyle = '#6888a0';
-      c.font = '8px ' + UI_FONT;
+      c.font = '11px ' + UI_FONT;
       c.textBaseline = 'middle';
       for (var i = 0; i < ticks.length; i++) {
         var x = Math.floor((ticks[i] - FLOOR) / (CEIL - FLOOR) * (barW - 1));
@@ -1035,9 +1181,9 @@
         c.fillRect(1, barTop + 1, fillW, barH - 2);
       }
       c.fillStyle = dbm >= S9 ? '#00d860' : '#00b4d8';
-      c.font = 'bold 10px ' + UI_FONT;
+      c.font = 'bold 11px ' + UI_FONT;
       c.textAlign = 'left';
-      c.fillText(Math.round(dbm) + ' dBm', barW + 3, barTop + barH / 2);
+      c.fillText(Math.round(dbm) + ' dBm', barW + 4, barTop + barH / 2);
     }
 
     // S-meter reading: power summed across the passband, fast attack and slow decay.
@@ -1089,25 +1235,52 @@
         }
       } else {
         x = xv;
-        if (x + flagW > W) {
+        if (x + flagW > PW) {
           x = xv - flagW;
           onLeft = true;
         }
       }
-      x = clamp(x, 0, Math.max(0, W - flagW));
+      x = clamp(x, 0, Math.max(0, PW - flagW));
       vfoEl.style.transform = 'translateX(' + x.toFixed(1) + 'px) scale(' + scale + ')';
 
       // VfoWidget::positionFloatingButtons: 22 px left of the flag, or 2 px
       // past its right edge when the flag hangs to the left.
       var bx = onLeft ? x + flagW + 2 * scale : x - 22 * scale;
-      bx = clamp(bx, 0, W - 20 * scale);
+      bx = clamp(bx, 0, PW - 20 * scale);
       fbtnsEl.style.transform = 'translateX(' + bx.toFixed(1) + 'px) scale(' + scale + ')';
+      maskStatus([[x, 0, flagW, vfoEl.offsetHeight * scale], [bx, 0, 20 * scale, 20 * scale]]);
 
       // The VFO triangle hangs from the flag's bottom edge.
       var triTop = Math.min(Math.round(vfoEl.offsetHeight * scale), specH - 10);
       triEl.style.transform = 'translate(' + xv.toFixed(1) + 'px, ' + triTop + 'px)';
 
       freqOut.textContent = fmtVfo(vfo.f);
+    }
+
+    // PanadapterApplet::applyStatusOverlayMask: the CH / TX strip is cut out
+    // wherever the flag or its lock button covers it, so the flag shows whole.
+    function maskStatus(rects) {
+      if (!pstatEl) {
+        return;
+      }
+      var sx = pstatEl.offsetLeft;
+      var sy = pstatEl.offsetTop;
+      var sw = pstatEl.offsetWidth;
+      var sh = pstatEl.offsetHeight;
+      var d = 'M0 0H' + sw + 'V' + sh + 'H0Z';
+      var cut = false;
+      rects.forEach(function (r) {
+        var x0 = Math.max(0, r[0] - sx);
+        var y0 = Math.max(0, r[1] - sy);
+        var x1 = Math.min(sw, r[0] + r[2] - sx);
+        var y1 = Math.min(sh, r[1] + r[3] - sy);
+        if (x1 > x0 && y1 > y0) {
+          d += 'M' + x0.toFixed(1) + ' ' + y0.toFixed(1) + 'H' + x1.toFixed(1) +
+            'V' + y1.toFixed(1) + 'H' + x0.toFixed(1) + 'Z';
+          cut = true;
+        }
+      });
+      pstatEl.style.clipPath = cut ? "path(evenodd, '" + d + "')" : '';
     }
 
     function setTarget(f, mode, snapNow) {
@@ -1152,7 +1325,8 @@
     }
 
     function isChrome(target) {
-      return vfoEl.contains(target) || (inert && inert.contains(target));
+      return vfoEl.contains(target) || (inert && inert.contains(target)) ||
+        (zoomBtns && zoomBtns.contains(target));
     }
 
     // Cursor readout: "%.4f MHz", 12 px right of the pointer and above it,
@@ -1165,7 +1339,11 @@
       var rect = pan.getBoundingClientRect();
       var x = clamp(e.clientX - rect.left, 0, rect.width);
       var y = clamp(e.clientY - rect.top, 0, rect.height);
-      readout.textContent = ((F0 + x / rect.width * SPAN) / 1e6).toFixed(4) + ' MHz';
+      if (x > PW) {
+        readout.classList.remove('is-on');
+        return; // over the dBm and time scale strips
+      }
+      readout.textContent = ((F0 + x / PW * SPAN) / 1e6).toFixed(4) + ' MHz';
       var bw = readout.offsetWidth;
       var bh = readout.offsetHeight;
       var rx = x + 12;
@@ -1187,7 +1365,11 @@
         return;
       }
       var rect = pan.getBoundingClientRect();
-      tuneTo(F0 + clamp(e.clientX - rect.left, 0, rect.width) / rect.width * SPAN);
+      var x = e.clientX - rect.left;
+      if (x > PW) {
+        return;
+      }
+      tuneTo(F0 + clamp(x, 0, PW) / PW * SPAN);
     });
 
     vfoEl.addEventListener('keydown', function (e) {

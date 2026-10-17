@@ -18,7 +18,7 @@ This chapter covers first-time setup, pairing, saved Cores, reconnecting, and th
 ## Install the public preview
 
 1. On your iPhone or iPad, open the [public preview invitation](https://testflight.apple.com/join/61K3p3xn). Install Apple's TestFlight app if prompted, then follow the invitation to install NereusSDR. The app requires iOS or iPadOS 17.4 or later.
-2. Install the published 2026.10.0 desktop application or headless Core on the station computer connected to your radio. Use the [SBC installation guide](https://nereussdr.com/guides/install-core-sbc.html) for a Raspberry Pi or compatible Armbian system.
+2. Install the published 2026.10.1 desktop application or headless Core on the station computer connected to your radio. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. An older Core still connects, but grays those two tools with a message such as "This Core does not control a rotor. Updating the Core may help." Use the [SBC installation guide](https://nereussdr.com/guides/install-core-sbc.html) for a Raspberry Pi or compatible Armbian system.
 3. Start the Core, open pairing and connect the app using the steps below. Your Core must be running and reachable; the app does not include a demo radio.
 
 ## Start the Core
@@ -79,7 +79,7 @@ Use **Remove Core** for a deliberate reset or when this phone should no longer h
 ### Keep alternative addresses for one Core
 
 Open the saved Core row's **⋯ > Addresses**. The list shows addresses kept on
-this phone, with **Last worked** beside the last successful destination. The
+this phone, with **Worked last** beside the last successful destination. The
 phone tries the destinations in order, starting with that one. These are
 alternative routes to the same paired identity, not additional paired Cores.
 
@@ -95,6 +95,9 @@ alternative routes to the same paired identity, not additional paired Cores.
    explains the requirement. Removing an address does not revoke pairing.
 4. The **Learned from the Core** group is maintained from the Core's advertised
    and proven direct destinations. Those rows are read-only and have no Remove.
+   An address the Core stops advertising leaves this group, including when it
+   reports that it has none. The address in use goes once a connection on
+   another address is made, and the phone never removes its only address.
    A Core paired through remote access can have no manually kept addresses.
 
 The saved row also offers **Remove Core**. Read the confirmation and choose it
@@ -131,7 +134,7 @@ Before operating, confirm all of the following from the connected band:
 - The toolbar names the intended Core and shows a live link indication.
 - Spectrum and waterfall update, and a slice flag is present.
 - The speaker control opens **Sound**; the current phone route is the one you expect.
-- **Modes** shows the selected slice and current mode. A control that is unavailable may be greyed with a reason because the Core does not describe or support that setting.
+- **Modes** shows the selected slice and current mode. A control that is unavailable may be grayed with a reason because the Core does not describe or support that setting.
 - The **TX** badge is set on the slice you intend to use before you consider PTT. Pairing and connecting never select the correct transmit slice on your behalf.
 
 For the receive, touch, audio, and transmit procedures, continue to [Operate from an iPhone](07-iphone-operate.md). For receiver ownership and handoff, see [Share a Core with other devices](08-shared-core.md).

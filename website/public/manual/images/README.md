@@ -5,9 +5,10 @@ Original PNGs are preserved byte for byte. [Capture provenance](capture-provenan
 records each original’s dimensions, SHA-256, build, capture method and state.
 These builds differ from the original reviewed source baseline, `d1608a3de75e`,
 and the bounded desktop reconciliation baseline, `df6590ff12ae`.
-The EQ/CFC figures show the earlier editors. They do not show the candidate's
-mode buttons, pending count reset, width controls or edit history; those
-selected-release captures, Core Settings and Canvas captures remain pending.
+The 2 October EQ/CFC originals show the earlier editors. The 14 October
+workspace-look EQ/CFC captures (below) show the current mode buttons, width
+fields and edit history; the pending count reset is not pictured. Selected-release
+Core Settings and Canvas captures remain pending.
 Screenshots illustrate the stated controls; they are not release compatibility
 or live operating verification.
 
@@ -34,7 +35,7 @@ were actual capture states, not requirements for the procedures.
 | [desktop-tx-profile-original.png](desktop-tx-profile-original.png) | TX Profile page with Default active; no Save/Delete operation. |
 | [desktop-puresignal-original.png](desktop-puresignal-original.png) | PS and MOX off, pump inactive; no feedback calibration. |
 | [desktop-vax-original.png](desktop-vax-original.png) | VAX cards off, no consumers. Backend text is build/platform-specific; no external audio route is demonstrated. |
-| [desktop-tci-server-original.png](desktop-tci-server-original.png) | This-window server stopped with localhost binding, separate Core server options. |
+| [desktop-tci-server-original.png](desktop-tci-server-original.png) | This-window server stopped with localhost binding, separate Core server options (replaced in chapter 9 by the 15 October workspace-look original below; kept unmodified). |
 | [desktop-spot-hub-original.png](desktop-spot-hub-original.png) | Identity setup with callsign/grid empty. |
 | [desktop-freedv-source-original.png](desktop-freedv-source-original.png) | FreeDV source stopped, Auto-start off; no reporter service connection. |
 
@@ -49,13 +50,62 @@ repository and website compatibility.
 | `desktop-rx.jpg` | 1 mode; 2 tuning step; 3 filter display/presets; 4 AGC/AUTO; 5 RIT/XIT. |
 | `desktop-tx.jpg` | 1 RF Power; 2 Tune Pwr; 3 TUNE; 4 MOX; 5 monitor output/volume; 6 processing; 7 profile; 8 TX bandwidth. |
 
+## Workspace-look recapture, 14 October 2026
+
+The workspace look is now the default. Six desktop figures were recaptured with
+`tests/visual/capture.py --jobs 4 --profiles mac-1512x869@2` and the offscreen
+`nereus_visual_preview` tool at git `6350e45ce109d36d41c5f43b8c739d8ad8cb93d9`
+(clean tree; the sidecars record it). The tool builds the real window with no
+radio and fixed illustrative data, so these show layout and wording, not a
+connected station, and no window appeared on screen. The 2 October originals above
+stay byte for byte as preserved evidence, with their hashes checked; the manual
+now uses the new files where one exists.
+
+| New original | Scene | Replaces in the manual |
+| --- | --- | --- |
+| [desktop-rx-workspace-original.png](desktop-rx-workspace-original.png) | `look-two-band`, crop (2355,455)-(3024,965) device px | RX applet crop under `desktop-rx.svg` and `desktop-rx.jpg` (callouts 1 to 5 re-placed; SVG embeds this crop, not the full window) |
+| [desktop-tx-eq-workspace-original.png](desktop-tx-eq-workspace-original.png) | `look-dialog-tx-eq` | `desktop-tx-eq-original.png` |
+| [desktop-cfc-workspace-original.png](desktop-cfc-workspace-original.png) | `look-dialog-tx-cfc` | `desktop-cfc-original.png` |
+| [desktop-puresignal-workspace-original.png](desktop-puresignal-workspace-original.png) | `look-dialog-pure-signal` | `desktop-puresignal-original.png` |
+| [desktop-spot-hub-workspace-original.png](desktop-spot-hub-workspace-original.png) | `look-dialog-spot-hub`, Settings tab | `desktop-spot-hub-original.png` |
+| [desktop-freedv-source-workspace-original.png](desktop-freedv-source-workspace-original.png) | `look-dialog-spot-hub`, FreeDV tab | `desktop-freedv-source-original.png` |
+
+`desktop-audio-outputs.png` (not a preserved original) was replaced in place
+from `look-dialog-setup-outputs`, trimmed to the page content (the Settings tree removed).
+
+Not recaptured, still the 0.5.2 classic look: the unreferenced
+`desktop-audio-devices-original.png` and `desktop-vax-original.png`.
+
+## Connected-window recapture, 15 October 2026
+
+Four more figures come from the same tool at git
+`5ad9b0737ed74207edb5b2091487fccd40eff7c7` (every sidecar records `git_dirty`
+false), profile `mac-1512x869@2`, folder `captures/clean/mac-1512x869@2`.
+The `look-connected` window is the preview shown as if connected: a TX applet,
+the **You control** flag and the ANAN-G2 banner, still with fixed illustrative
+data and no radio. The 2 October originals stay byte for byte.
+
+| New original | Scene | Replaces in the manual |
+| --- | --- | --- |
+| [desktop-overview-workspace-original.png](desktop-overview-workspace-original.png) | `look-connected`, the full window, unmodified | `desktop-overview.svg` and `.jpg` (7 callouts re-placed; the SVG embeds a JPEG copy of this window, the `.jpg` is a 1512 px render) |
+| [desktop-vfo-workspace-original.png](desktop-vfo-workspace-original.png) | `look-connected--flag@3x.png`, the tool's own crop of slice A's flag | `desktop-vfo.svg` and `.jpg` (4 callouts re-placed) |
+| [desktop-tx-profile-workspace-original.png](desktop-tx-profile-workspace-original.png) | `look-dialog-setup-tx-profile-active`, crop (404,0)-(1800,520) px, Settings tree removed | `desktop-tx-profile-original.png` in chapter 14 |
+| [desktop-tx-workspace-original.png](desktop-tx-workspace-original.png) | `look-connected-tx--right-panel`, crop (0,78)-(612,1012) px: TX applet title through **SWR Prot** | `desktop-tx.svg` and `.jpg` (8 callouts re-placed; the SVG embeds a JPEG copy, q88) |
+| [desktop-tci-server-workspace-original.png](desktop-tci-server-workspace-original.png) | `look-dialog-remote-setup-tci-server`, crop (404,0)-(1800,1520) px, Settings tree and the groups below **The Core's TCI server** removed | `desktop-tci-server-original.png` in chapter 9 |
+
+The two rows above come from git `e874587d9f96b39737a84b4ff3f7f4df1d7354f8` (sidecars `git_dirty` false), folders `captures/clean-tx` and `captures/clean-tci`, same profile.
+
+`desktop-modes-audio.png` (not a preserved original) was replaced in place from
+`look-dialog-setup-digital-modes-full`, crop (404,0)-(1800,2436) px, Settings
+tree removed.
+
 ## Native audio captures
 
 Rendered on 9 October 2026 by the native audio engines plan's widget and phone-panel tests: the Setup pages offscreen on a Mac with fake device lists, and the Sound panel in the iOS simulator with scripted Core state. No sound device was opened and no radio was connected, so they show wording and layout, not a working stream. The Outputs and Digital modes captures are trimmed to their content.
 
 | Image | State illustrated |
 | --- | --- |
-| [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker greyed, Rescan devices greyed. |
+| [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker grayed, Rescan devices grayed. |
 | [desktop-modes-audio.png](desktop-modes-audio.png) | Audio > Digital modes on a Mac: four VAX cards off, TCI settings. |
 | [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. |
 

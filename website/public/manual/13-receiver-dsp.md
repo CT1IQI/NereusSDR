@@ -45,7 +45,7 @@ The detailed entry point is **Setup > DSP > NR/ANF**. These controls apply to th
 | --- | --- | --- |
 | **NR1** | The VFO popup has **Taps**, **Delay**, **Gain**, **Leak** and **Position** (**Pre-AGC** / **Post-AGC**). The numeric units for the first four are not defined by this interface. | Make one small change and compare the same signal. Do not infer a control meaning from its name. |
 | **NR2** | The popup has **Gain Method** (Linear, Log, Gamma, Trained), **NPE Method** (OSMS, MMSE, NSTAT), **AE Filter**, and **Noise post proc**. Setup provides **T1** (-5.0 to +5.0, default -0.5), **T2** (0.0 to 2.0, default 0.20), **Position**, and post-processing **Enable**, **Level**, **Factor**, **Rate** and **Taper**. The interface describes T1 as noise-estimator asymmetry; it calls T2 a training parameter without a further operator definition. | Compare AE Filter on/off on the same audio. Change one cascade value at a time and reverse it if speech artifacts worsen. |
-| **NR3** | RNNoise with **Position** and **Use fixed gain for input samples**. The Core-wide model selector and **Models...** asset dialog are described below. | Read **Status** after a model request. Keep the last available method if the Core refuses the change. |
+| **NR3** | RNNoise with **Position** and **Use fixed gain for input samples**. The Core-wide model selector and **Models…** dialog are described under [Choose the NR3 model](#choose-the-nr3-model). | Read **Status** after a model request. Keep the last available method if the Core refuses the change. |
 | **NR4** | **Reduction** (0-20 dB), **Smoothing** (0-100), **Whitening** (0-100), **Rescale** (0-12), **SNRthresh** (-10 to +10 dB), and **Algorithm** (Algo 1/2/3). | Compare one field at a time. The interface does not describe the audible distinction between the three algorithms. |
 | **DFNR** | **Attenuation Limit** (0-100 dB) and **Post-Filter Beta**. The quick popup reaches 1.00; Setup limits Beta to 0.30. The Core/build status explains whether it can run. | Read the actual value at the entry point you use. Do not assume an unavailable control is enabled by its parent NR selection. |
 | **MNR** | macOS MMSE-Wiener noise reduction. **Strength**, **Aggressiveness**, **Floor**, **Alpha**, **Bias**, **Gsmooth** and **Reset** are available in the popup and Setup. | Read the platform/readiness state, begin with **Reset** if you need a known comparison, and reverse any change that degrades speech. |
@@ -58,6 +58,13 @@ For the neural methods, compare against the same short speech passage and note t
 
 DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener method. Their readiness paths differ. DFNR depends on build/runtime support and Core resources, MNR on the Core platform, and NNR on Core-managed Standard and Premium model slots. A phone requests Core-side processing; it does not run these receiver methods locally.
 
+### Choose the NR3 model
+
+1. Open **File > Settings... > DSP > NR/ANF > NR3**. The **RNNoise Model (Global)** group holds the model selector. The model belongs to the Core and applies to every receiver, in local and remote windows alike.
+2. Choose a model from the selector. The Core offers its bundled large and small models and any you have added.
+3. To add, save or review the Core's NR3 models, choose **Models…** to open **NR3 Models**.
+4. Read the status line under the selector. If it says the model list could not be loaded right now, wait for the Core and reopen the page before changing anything.
+
 ### Select or repair an NNR model
 
 1. Open **Setup > DSP > NR/ANF > NNR**. Read the **Standard model** and
@@ -67,12 +74,12 @@ DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener met
 2. If a selected model is missing or incompatible, choose a bundled model or
    a valid compatible Core asset from the appropriate selector. A saved name
    is not proof that the Core can run the file.
-3. To inspect or transfer an asset, choose **Models...** to open **NNR Model
+3. To inspect or transfer an asset, choose **Models…** to open **NNR Model
    Files**. The table shows Label, Format, Encoding, Size, Identity and
    Compatibility. Select the row and expand **Details** for validation errors.
    **Refresh files** reloads the Core list; **Import...** transfers a local
    asset to the Core; **Export...** saves the selected Core asset locally.
-   These actions do not download models from a network catalogue.
+   These actions do not download models from a network catalog.
 4. Select the intended compatible model, then inspect the pending/active
    readbacks. The pending choice takes effect through **Apply models and
    reconnect**. Do this off air: it reconnects the radio and the Core refuses
@@ -129,7 +136,7 @@ The active slice's filter edges are independent from the stored preset bank. Use
 
 To edit a preset bank, open **Setup > DSP > Filter Presets**. The bank is a Core/station setting, including when accessed from a remote desktop. Choose the **DSP Mode** whose rows you intend to edit. The table has ten slots per mode and shows **Name**, **Low (Hz)**, **High (Hz)**, **Width (Hz)** and **Reorder**. Edit a row's name or edge values and finish editing the field to save the row. Width is read from the edge values. Reorder controls change the order in which the presets are presented. Confirm the rows again after changing the mode selector.
 
-Use **Reset Selected Row** to restore the selected slot, **Reset All Rows for This Mode** to restore that mode's bank, or **Reset Every Mode to Thetis Defaults** to reset the full bank. These actions discard custom bank values; inspect the selected mode/row before reset and verify the table after the confirmation. A stored bank edit is not itself a request to retune every receiver.
+Use **Reset Selected Row** to restore the selected slot, **Reset All Rows for This Mode** to restore that mode's bank, or **Reset Every Mode to Defaults** to reset the full bank. These actions discard custom bank values; inspect the selected mode/row before reset and verify the table after the confirmation. A stored bank edit is not itself a request to retune every receiver.
 
 Use **Shift-click** on a receive filter preset when you want a one-time **Match RX** operation. It applies the receive preset and copies the resulting passband once to the TX audio filter. For AM, SAM, DSB, FM and DRM the TX range becomes zero to the absolute high edge; other modes use the absolute RX edges in ascending order. The RX change happens first. If the TX settings write is refused, the RX preset remains applied and the TX filter does not change. There is no continuous RX-follow-TX checkbox. On phone, tap **Match RX** in the TX panel or the Modes transmit section to perform the same one-time conversion. See [chapter 14](14-voice-profiles.md) for other TX filter controls.
 
@@ -148,10 +155,10 @@ To choose a setting for the current mode:
 1. Start off air. Read the current mode group, RX row and values. The Buffer Size group is locked while transmitting; a remote Core can also refuse a change while keyed.
 2. If an adjacent signal is entering the receiver passband, first set appropriate filter edges as described in [Set filter edges and edit the shared preset bank](#set-filter-edges-and-edit-the-shared-preset-bank). If you still need sharper skirts, raise **Filter Size (taps)** by one available step and compare the same adjacent-signal condition. Change **Buffer Size (IQcomp)** only when its sharper response is worth the extra interaction delay.
 3. If tuning or mode changes feel delayed, compare **Low Latency** with the current filter type. Keep the buffer and tap count fixed during that comparison so the result has one cause.
-4. Read back the changed row. When the active slice mode matches the edited group, wait for the DSP rebuild and check **Time to last change**. A setting for another mode takes effect when a slice uses that mode.
+4. Read back the changed row. Every receiver whose mode is in the edited group takes the change at once; wait for the DSP rebuild and check **Time to last change**. A setting for a mode group that no receiver is in takes effect when a receiver uses that mode.
 5. If sharpness, latency, CPU behavior or audio worsens, restore the recorded value and read it back again. Warning icons indicate differences among mode groups, not a failure.
 
-The defaults are 64 samples / 4096 taps / **Low Latency** for SSB/AM, 256 RX and 128 TX samples / 4096 taps / **Low Latency** for FM, 64 / 4096 / **Low Latency** for CW RX, and 64 / 4096 / **Low Latency** for Digital RX/TX. CW has no TX row.
+The defaults are 64 samples / 4096 taps / **Low Latency** for SSB/AM, 64 RX and 64 TX samples / 4096 taps / **Low Latency** for FM, 64 / 4096 / **Low Latency** for CW RX, and 64 / 4096 / **Low Latency** for Digital RX/TX. CW has no TX row. Every receiver starts with the values for its mode.
 
 **Enable impulse caching** keeps filter responses in memory to speed later channel rebuilds at the cost of memory. **Keep impulse cache on disk between launches** saves and reloads the cache, which can avoid the first rebuild cost after restart but can create a large cache file. Both take effect on the next radio connect or channel rebuild. **High-resolution filter characteristics in filter graph** shows the computed FIR response instead of a simplified box-shaped passband; it changes the graph, not the selected filter.
 
