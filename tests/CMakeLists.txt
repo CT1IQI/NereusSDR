@@ -2147,10 +2147,23 @@ nereus_add_test(tst_device_rate_matcher)
 # all four and alone takes about 330 s there, past the 240 s watchdog the
 # Linux CI job sets for the rest, and 540 s stays under the TIMEOUT so the
 # crash handler can still print the stacks.
+#
+# 2026-10-16 CI speed round: 214 s on the Linux runner as one entry. The
+# ten-minute simulations run as entries of their own (the test's main()):
+# _drift1 and _drift2, one offset each on two threads (PROCESSORS 2), the
+# hiatus after a real drift as _reacquire, blockWriterRecoversAfterHiatus's
+# rows as _hiatus1 to _hiatus3, and the rest as tst_device_rate_matcher.
+# Each entry keeps the limits above.
 if(TEST tst_device_rate_matcher)
     set_tests_properties(tst_device_rate_matcher PROPERTIES TIMEOUT 600)
     set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
         "QTEST_FUNCTION_TIMEOUT=540000")
+    nereus_split_test(tst_device_rate_matcher ENV NEREUS_DEVICE_RATE_MATCHER_GROUP
+        GROUPS drift1 drift2 reacquire hiatus1 hiatus2 hiatus3)
+    # The entries exist whenever the test does (nereus_split_test above).
+    foreach(_drm_group drift1 drift2)
+        set_tests_properties(tst_device_rate_matcher_${_drm_group} PROPERTIES PROCESSORS 2)
+    endforeach()
 endif()
 # The same matcher's packet writer on a link: clocks that agree, packets
 # that come up to 20 ms late, and the receiver's eight-packet queue behind
@@ -3174,10 +3187,18 @@ target_include_directories(tst_workspace_colour_sweep PRIVATE ${CMAKE_CURRENT_SO
 # with four preview captures running beside it. QtTest's function watchdog (300 s
 # by default, 240 s on the Linux CI job) would abort it, so this test
 # carries its own, and TIMEOUT is about twice the loaded measurement.
+#
+# 2026-10-16 CI speed round: 549 s on the Linux runner as one entry, the
+# longest test of its shard by far. The scenes run as six entries,
+# tst_workspace_colour_sweep_scenes1 to _scenes6, a sixth of the list each
+# (kSceneEntries in the test), and the other functions as
+# tst_workspace_colour_sweep. Each entry keeps the limits above.
 if(TEST tst_workspace_colour_sweep)
     set_tests_properties(tst_workspace_colour_sweep PROPERTIES TIMEOUT 1800 PROCESSORS 2)
     set_property(TEST tst_workspace_colour_sweep APPEND PROPERTY ENVIRONMENT
         "QTEST_FUNCTION_TIMEOUT=1700000")
+    nereus_split_test(tst_workspace_colour_sweep ENV NEREUS_COLOUR_SWEEP_GROUP
+        GROUPS scenes1 scenes2 scenes3 scenes4 scenes5 scenes6)
 endif()
 # The colour round's items by meaning, and the applets' lit states posed
 # after the live pass (OPERATE, PS-A, the tuner antenna, the PureSignal badge).
@@ -8825,6 +8846,11 @@ nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
+# 79 s by itself, nearly every case a window of its own, and past the 120 s
+# limit in a loaded run; three entries of the same binary (the limit is not
+# raised; groups in the test's main()).
+nereus_split_test(tst_gui_session_coordinator
+    ENV NEREUS_GUI_SESSION_COORDINATOR_GROUP GROUPS startup replacement)
 # The headless Core (nereusd) and the desktop Core serve the same things,
 # except for the differences the test lists with their reasons.
 nereus_add_test(tst_core_parity fakes/LoopbackTransport.cpp EXTRA_LABELS session)
@@ -8863,14 +8889,15 @@ target_compile_definitions(tst_unbuilt_features PRIVATE NEREUS_BUILD_TESTS)
 # R-R3-49 load round: 24 s quiet, up to 87 s loaded, and past the 120 s
 # limit in a suite run at load 50 to 110. markingOneFeatureBuiltShowsItsSurfacesOnly
 # (a window per listed feature, about two thirds of the time) runs its rows
-# as tst_unbuilt_features_each1 to _each3, every third feature each, the
+# as tst_unbuilt_features_each1 to _each6, every sixth feature each (three
+# entries timed out in a hosted CI shard, CI speed round 2026-10-17), the
 # rest as tst_unbuilt_features (the test's main()). Load findings 4:
 # the rest passed 120 s above load 330, so emptiedSetupPageIsNotShownOrFound
 # (every Setup page) runs as tst_unbuilt_features_setup and four cases that
 # build windows as _windows1 and _windows2 (the limit is not raised).
 if(TEST tst_unbuilt_features)
     nereus_split_test(tst_unbuilt_features ENV NEREUS_UNBUILT_FEATURES_GROUP
-        GROUPS each1 each2 each3 setup windows1 windows2)
+        GROUPS each1 each2 each3 each4 each5 each6 setup windows1 windows2)
 endif()
 # R3 unfinished controls, Task 3 (R-R3-49, R-R3-21): the container function
 # and band buttons act on the container's own slice; the ones with nothing
@@ -8923,6 +8950,10 @@ nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp fakes/
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# 88 s by itself and past the 120 s limit in a loaded run; three entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_gui_connection_controller
+    ENV NEREUS_GUI_CONNECTION_CONTROLLER_GROUP GROUPS selector reconnect)
 # iPhone app Task 18 (R-IOS-08): the desktop pairs with a Core. Its own
 # device key, one tap and the code against a real StationServer over the
 # loopback (IPv4 and IPv6), every refusal, then a sign-in by key.
@@ -10348,44 +10379,17 @@ if(TEST tst_remote_media_controller)
     set_tests_properties(tst_remote_media_controller PROPERTIES TIMEOUT 300)
 endif()
 # Parity Tasks 27-29 fix wave (R-R3-49): the audio functions (the test's
-# kAudioFunctions) run as their own ctest entry, the same binary with
-# NEREUS_REMOTE_MEDIA_GROUP=audio, and the first entry runs the rest, so
-# neither carries the other's time against the 120 s limit (the whole run
-# reached 110 to 117 s under load). The second entry takes the first's
-# labels, limit and environment, with its own home.
-if(TEST tst_remote_media_controller)
-    get_test_property(tst_remote_media_controller LABELS _rmc_labels)
-    get_test_property(tst_remote_media_controller TIMEOUT _rmc_timeout)
-    get_test_property(tst_remote_media_controller ENVIRONMENT_MODIFICATION _rmc_env_mod)
-    add_test(NAME tst_remote_media_controller_audio COMMAND tst_remote_media_controller)
-    set_tests_properties(tst_remote_media_controller_audio PROPERTIES
-        LABELS "${_rmc_labels}"
-        TIMEOUT ${_rmc_timeout})
-    if(_rmc_env_mod)
-        set_property(TEST tst_remote_media_controller_audio
-            PROPERTY ENVIRONMENT_MODIFICATION ${_rmc_env_mod})
-    endif()
-    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
-        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
-            "QT_QPA_PLATFORM=offscreen")
-    endif()
-    if(NOT WIN32)
-        set(_rmc_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_media_controller_audio")
-        file(MAKE_DIRECTORY "${_rmc_home}")
-        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
-            "NEREUS_TEST_HOME=${_rmc_home}")
-        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
-            "HOME=${_rmc_home}")
-        if(APPLE)
-            set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
-                "CFFIXED_USER_HOME=${_rmc_home}")
-        endif()
-    endif()
-    set_property(TEST tst_remote_media_controller APPEND PROPERTY ENVIRONMENT
-        "NEREUS_REMOTE_MEDIA_GROUP=rest")
-    set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
-        "NEREUS_REMOTE_MEDIA_GROUP=audio")
-endif()
+# kAudioFunctions) run apart from the rest, the same binary with
+# NEREUS_REMOTE_MEDIA_GROUP naming the group, so neither carries the
+# other's time against the limit (the whole run reached 110 to 117 s under
+# load). CI speed round, 2026-10-17: as two entries, the rest passed the
+# 300 s limit in a hosted Linux shard running four tests at once (250 s
+# the run before) and the audio entry took 171 to 204 s, so five entries:
+# the audio functions as _audio and _audio2, every other function as the
+# rest, _part2 and _part3 (the test's main() places them; the limit is not
+# raised).
+nereus_split_test(tst_remote_media_controller ENV NEREUS_REMOTE_MEDIA_GROUP
+    GROUPS audio audio2 part2 part3)
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
 # side of the transmit verbs (copies, epochs, releases) on its own.

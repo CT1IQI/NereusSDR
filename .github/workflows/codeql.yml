@@ -1,9 +1,9 @@
 name: "CodeQL"
 
-# Scans main after each merge and weekly, not each pull request. A scan
-# holds a hosted Linux runner for about 75 minutes, and on pull requests
-# those scans filled the runners the required Linux builds wait on. A
-# finding still shows up within one merge.
+# Every push to main and once a week, not on pull requests (CI speed round,
+# 2026-10-16, approved by J.J. Boyd): CodeQL is not a required check, and on
+# every pull request it took a full Linux build's worth of runner time
+# beside the build jobs that are.
 on:
   push:
     branches: [main]
