@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF  The rest entry ran past ctest's 300 s
+//                                    on the Linux CI runner (no hang: every
+//                                    wait is bounded). The display rows
+//                                    feed eight I/Q blocks a poll
+//                                    (kFeedBlocksPerPoll), so a frame no
+//                                    longer waits several polls for its
+//                                    FFT, and the three restart backoff
+//                                    cases join the audio entry.
+//                                    AI-assisted via Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF  The pixel-grant rows place their pans
 //                                    with applyLayout so each fills the
 //                                    600 px stack; the crop row's 4 kHz
@@ -407,6 +416,16 @@ void captureRemoteMediaMessages(QtMsgType, const QMessageLogContext& context,
 }
 
 namespace {
+// I/Q blocks a display test hands the Core per poll of a QTRY wait. One
+// block per poll (QTRY polls every 50 ms) fed a few thousand samples a
+// poll, far below the stream's 192 kHz, so each display frame waited out
+// several polls for its FFT to fill: about 0.3 to 0.6 s a frame, most of
+// the time of the display rows, and enough over the suite to pass ctest's
+// limit on the CI runner (runs 38974441798 and 38974523656). Eight blocks
+// fill an 8192-point FFT in one poll; the waits stay bounded by frames,
+// not counted in a fixed time.
+constexpr int kFeedBlocksPerPoll = 8;
+
 class ClosingGuiControlTransport final : public Test::LoopbackTransport {
 public:
     ClosingGuiControlTransport() : LoopbackTransport(QStringLiteral("client")) {}
@@ -3348,8 +3367,10 @@ private slots:
         QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);
         QVector<float> iq(2048, 0.001f);
         const auto feed = [&] {
-            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            }
         };
         const auto drawn = [&] {
             return threeD ? widget->dssRowsPushedForTest()
@@ -3563,8 +3584,10 @@ private slots:
         }
         QVector<float> iq(2048, 0.001f);
         const auto feed = [&] {
-            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, movedSlice->streamIndex()), Q_ARG(QVector<float>, iq));
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, movedSlice->streamIndex()), Q_ARG(QVector<float>, iq));
+            }
         };
         QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= 3), 10000);
         QCOMPARE(wideLocks, 0);
@@ -3727,8 +3750,10 @@ private slots:
         QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);
         QVector<float> iq(2048, 0.001f);
         const auto feed = [&] {
-            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            }
         };
         const auto drawn = [&] {
             return threeD ? widget->dssRowsPushedForTest()
@@ -9797,9 +9822,14 @@ private slots:
         gui.setMiniDisplaySlices({sliceId});
         QTRY_COMPARE(daemon.activeEndpointCount(), 1);
         const QVector<float> iq(4096, 0.01f);
+        const auto feedRx = [&] {
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            }
+        };
         QTRY_VERIFY_WITH_TIMEOUT(([&] {
-            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            feedRx();
             return !frames.isEmpty();
         }()), 5'000);
         const QJsonObject rxContext = lastControl(contexts, QStringLiteral("context"));
@@ -9950,8 +9980,7 @@ private slots:
         SliceModel* remoteOther = remote.sliceById(otherId);
         QVERIFY(remoteOther);
         const auto receiveRx = [&] {
-            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            feedRx();
             return std::any_of(frames.begin(), frames.end(), [](const auto& delivered) {
                 return !delivered.at(5).toBool();
             });
@@ -14477,6 +14506,12 @@ const QStringList kAudioFunctions{
     QStringLiteral("aFailedCaptureHeldByAnotherDemandRetriesOnceForAKey"),
     QStringLiteral("aMediaLossDuringProgramSilenceLeavesTheNextKeyItsLead"),
     QStringLiteral("headphonesWordingIsPlain"),
+    // 2026-10-16: the three restart backoff cases start real audio over the
+    // real session and wait out the 1, 2 and 4 s steps, about 30 s together
+    // that the rest entry carried.
+    QStringLiteral("repeatedAudioRestartsBackOff"),
+    QStringLiteral("aPlaybackFailureEndsAWaitingRestart"),
+    QStringLiteral("directSilenceFallsBackOnceWhileAudioRestartsBackOff"),
     QStringLiteral("transmitSilenceWaitsForTheUnkeyAndResumesAtOnce"),
     QStringLiteral("transmitSilenceFromAnOlderCoreBacksOffAsBefore"),
     QStringLiteral("otherRestartsWhileTransmittingBackOffAsBefore"),
