@@ -104,6 +104,15 @@ The workspace look is now the default.
   11 px.
 - The S-Meter has a checkbox in Containers and comes back on Reset Default
   Layout.
+- Ticking an applet in Containers > Applets also shows the container that
+  holds it, whether that container was hidden, disabled, hidden on receive or
+  transmit, or hidden by a macro, and brings its window where you can reach
+  it. The tick reads on only while the applet can be seen.
+- Containers > Hidden also lists containers hidden on receive or transmit and
+  containers hidden by a macro. Choosing one shows it again.
+- An applet that cannot be used right now, such as the amplifier, tuner,
+  RF-Kit or RADE applet, is grayed in its container with the reason under its
+  title, instead of being hidden.
 - Fixed two crashes: a pop-out growing during a drag between monitors on
   Windows, and removing a popped-out container.
 
@@ -628,6 +637,10 @@ Advanced, and each control appears on one page only.
   while transmitting. Before, the next receive, or the next connect, used the
   transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
   preamp stayed off.
+- A floating container window that would be shown with its header off every
+  screen is moved back where it can be reached: when it is shown again, at the
+  end of a transmit, or when a monitor is added, removed or resized. Before,
+  the Rotor could read as ticked while its window sat off every screen.
 - A Core sends its spectrum and waterfall to remote windows and phones from a
   thread of its own, so they keep flowing while the desktop app that runs the
   Core is busy drawing. Before, a Windows desktop Core with the screen locked

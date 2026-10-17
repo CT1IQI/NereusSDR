@@ -98,10 +98,14 @@ check selection and ownership before repeating the change.
 
 1. Open **Containers**. In its **Applets** section, check the applets you
    want visible. The panel's **☰** menu provides the same visibility choices.
+   Checking an applet whose container is hidden shows that container too and
+   brings its window where you can reach it. A check reads on only while the
+   applet can be seen.
 2. If an entry is unavailable, read its reason or check the corresponding
    station feature. For example, the amplifier and tuner applets depend on their
    enabled accessory connection. The **Rotor** applet is never grayed in the menu. A checked preference does not make an unavailable
-   device appear.
+   device appear. An unavailable applet stays in its container, grayed, with
+   the reason under its title.
 3. Applets live in containers. A container's header carries **↗**
    (tooltip **Pop out**); click it to move the container, with its applets,
    into its own window. **Pop Out** is also in the container's right-click
@@ -164,11 +168,14 @@ There is no **Lock** in this look. A container whose header is hidden has
 nothing to grab, so it cannot be moved by accident, and a container saved as
 locked opens unlocked. Every container and window starts where you left it, at
 the size you left it, on the monitor you left it on; if that monitor is not
-connected the window opens on the main window's screen.
+connected the window opens on the main window's screen. A window that would
+be shown with its header off every screen, or is left there when a monitor is
+added, removed or resized, is moved back where you can reach its header.
 
 **Containers > Hidden** lists everything that was taken off the screen (a
 header's **✕**, **Hide container (retain placement)**, a closed floating window
-or an applet you unticked) so you can bring it back where it was. It reads
+or an applet you unticked, and containers hidden on receive, on transmit or by
+a macro) so you can bring it back where it was. It reads
 **Nothing hidden** when the list is empty. **Containers > Reset Default Layout**
 removes the containers you added and restores the standard layout, with the
 S-Meter showing first; it sits next to **Edit Container** in the menu.
