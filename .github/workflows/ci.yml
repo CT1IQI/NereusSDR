@@ -1066,12 +1066,24 @@ jobs:
           #
           # CCACHE_BIN: see "Locate ccache (Windows)". Unset, the build
           # runs without the compiler cache.
+          #
+          # With the compiler cache, this leg builds without the shared
+          # precompiled header (NEREUS_USE_PCH=OFF; CI speed round,
+          # 2026-10-17). With it, a warm cache missed 768 of the 769
+          # objects that use the header and hit every other object (run
+          # 39014596234: 39% hits, a 24-minute build), while Linux, with
+          # the same header and cache settings, hit them. Without the
+          # header each of those objects caches like the rest. A cold
+          # cache costs more without it, so the leg keeps the header when
+          # ccache is missing. Desktop builds and the release workflow keep
+          # it as they are.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
             "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG" \
             ${CCACHE_BIN:+"-DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN"} \
             ${CCACHE_BIN:+"-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN"} \
+            ${CCACHE_BIN:+-DNEREUS_USE_PCH=OFF} \
             -DNEREUS_GPU_SPECTRUM=ON \
             -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
 
@@ -1098,24 +1110,11 @@ jobs:
       # so the test objects compile while the app links instead of after.
       # The tests need `all` too: nereusd, nereus_pairing_peer and
       # nereus_rendezvous_peer are in it.
-      #
-      # Windows diagnostic, temporary (CI speed round, 2026-10-17): with a
-      # warm cache every Windows object built with the shared precompiled
-      # header missed (768 of 769) while every other object hit; on Linux
-      # the same objects hit. CCACHE_DEBUG keeps ccache's hashed inputs and
-      # log for each compile, and "ccache debug (Windows)" uploads those of
-      # the header and of one object that uses it, so two runs can be
-      # compared. Pull requests only. Remove once the cause is found.
       - name: Build
         if: env.HEAVY == 'true'
         id: build
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = Windows ] && [ -n "${CCACHE_BIN:-}" ] \
-              && [ "${{ github.event_name }}" = pull_request ]; then
-            export CCACHE_DEBUG=1
-            export CCACHE_DEBUGDIR="$RUNNER_TEMP/ccache-debug"
-          fi
           case "$RUNNER_OS" in
             Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
             macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
@@ -1322,32 +1321,6 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ccache-notests
           key: ${{ steps.notests-restore.outputs.cache-primary-key }}
-
-      # Temporary; see "Build".
-      - name: ccache debug (Windows)
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' && github.event_name == 'pull_request' }}
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/ccache-debug-pick"
-          find "$RUNNER_TEMP/ccache-debug" -type f \
-              \( -path '*nereus_library_pch.dir/cmake_pch.hxx.gch.*' \
-                 -o -path '*NereusCore.dir/src/core/antenna/AmateurBands.cpp.obj.*' \) \
-              -exec cp {} "$RUNNER_TEMP/ccache-debug-pick/" \;
-          ls -l "$RUNNER_TEMP/ccache-debug-pick"
-          for f in "$RUNNER_TEMP"/ccache-debug-pick/*.ccache-log; do
-            echo "::group::$(basename "$f")"
-            grep -E "Result:|manifest|Manifest|precompiled|Detected|too new|Disabling|Hash|result key" "$f" | head -80 || true
-            echo "::endgroup::"
-          done
-
-      - name: Upload ccache debug (Windows)
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && env.CCACHE_BIN != '' && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ccache-debug-windows-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ccache-debug-pick
-          retention-days: 7
-          if-no-files-found: warn
 
   # --------------------------------------------------------------------
   # Linux build and tests on the self-hosted runners.

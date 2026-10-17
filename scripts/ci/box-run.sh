@@ -41,7 +41,17 @@ case "${1:-}" in
             echo "Using $image, already on this machine."
         else
             echo "Building $image from .github/docker/Dockerfile."
-            docker build --pull --label org.nereussdr.ci=1 -t "$image" .github/docker
+            # Jobs that start together on a new Dockerfile all build it,
+            # and every one but the first to finish fails with "image ...
+            # already exists" (run 39027844137). An image that exists by
+            # then is the same build, so that job uses it.
+            if ! docker build --pull --label org.nereussdr.ci=1 -t "$image" .github/docker; then
+                if docker image inspect "$image" >/dev/null 2>&1; then
+                    echo "Another job built $image meanwhile; using it."
+                else
+                    exit 1
+                fi
+            fi
         fi
         echo "NEREUS_BOX_IMAGE=$image" >> "$GITHUB_ENV"
         # Drop images of older Dockerfiles that no container uses; one in
