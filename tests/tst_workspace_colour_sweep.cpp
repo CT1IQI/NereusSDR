@@ -24,6 +24,8 @@
 // NEREUS_COLOUR_SWEEP_SCENES (comma-separated globs) limits the scenes;
 // NEREUS_COLOUR_SWEEP_REPORT names a TSV file the findings are written to;
 // NEREUS_COLOUR_SWEEP_IMAGES names a folder the grabs are saved in.
+// NEREUS_COLOUR_SWEEP_GROUP=scenes1 to scenes6 runs one sixth of the scenes
+// (main() below); ctest runs the six as entries side by side.
 //
 // Modification history (NereusSDR):
 //   2026-10-09 - Written for the colour round on Settings pages and
@@ -55,6 +57,9 @@
 //   2026-10-14 - Treat the alpha colour dialog's current-colour preview as
 //                 the user-owned fill colour it displays. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16 - The scenes run as six ctest entries, a sixth each, so
+//                 CI runs them side by side (CI speed round). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -101,6 +106,7 @@
 #include "models/RadioModel.h"
 #include "models/TunerModel.h"
 #include "visual/PreviewScenes.h"
+#include "TestFunctionGroups.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::RemoteWindowHarness;
@@ -598,6 +604,30 @@ QVector<Finding> analyse(PaletteCheck& palette, const QString& name, const QImag
     return out;
 }
 
+// The scenes run as kSceneEntries ctest entries, scenes1 to scenes6
+// (tests/CMakeLists.txt), each the same binary with
+// NEREUS_COLOUR_SWEEP_GROUP naming it. 2026-10-16 CI speed round: the
+// whole walk took 549 s on the Linux runner, one entry alone on its shard.
+constexpr int kSceneEntries = 6;
+constexpr const char* kSceneGroupVariable = "NEREUS_COLOUR_SWEEP_GROUP";
+
+// The part of `scenes` this run checks: all of them, or for entry scenesK
+// the K-th of kSceneEntries consecutive runs of the list, so each scene
+// still follows the one it follows in a whole walk except at a cut, and
+// together the entries cover every scene once.
+QVector<Preview::Scene> scenePart(const QVector<Preview::Scene>& scenes)
+{
+    const QString group = qEnvironmentVariable(kSceneGroupVariable);
+    for (int k = 0; k < kSceneEntries; ++k) {
+        if (group == QStringLiteral("scenes%1").arg(k + 1)) {
+            const qsizetype begin = scenes.size() * k / kSceneEntries;
+            const qsizetype end = scenes.size() * (k + 1) / kSceneEntries;
+            return scenes.mid(begin, end - begin);
+        }
+    }
+    return scenes;
+}
+
 bool sceneSelected(const QString& name)
 {
     const QString filter = qEnvironmentVariable("NEREUS_COLOUR_SWEEP_SCENES");
@@ -808,6 +838,7 @@ private slots:
                 scenes.append(s);
             }
         }
+        scenes = scenePart(scenes);
         QVERIFY(!scenes.isEmpty());
 
         PaletteCheck palette;
@@ -1082,5 +1113,22 @@ const GreyTextAntialiasing greyTextAntialiasing;
 } // namespace
 #endif
 
-QTEST_MAIN(TstWorkspaceColourSweep)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstWorkspaceColourSweep test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // settingsAndDialogsUseThePalette runs as entries scenes1 to scenes6, a
+    // sixth of the scenes each (scenePart above); the rest as
+    // tst_workspace_colour_sweep (tests/CMakeLists.txt).
+    QList<NereusSDR::TestFunctionGroups::Group> groups;
+    for (int k = 0; k < kSceneEntries; ++k) {
+        groups.append({QStringLiteral("scenes%1").arg(k + 1),
+                       {QStringLiteral("settingsAndDialogsUseThePalette")}});
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), kSceneGroupVariable, groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_workspace_colour_sweep.moc"

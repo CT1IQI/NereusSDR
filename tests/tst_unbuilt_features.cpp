@@ -71,6 +71,9 @@
 //   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the microphone card's rows
 //                                    are on Setup > Audio > Microphone.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-17  J.J. Boyd / KG4VCF  CI speed round: marking one built
+//                                    runs as six entries, not three.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1552,9 +1555,12 @@ int main(int argc, char** argv)
     // a fresh window and its Setup pages for each listed feature (115 s
     // alone at load 64 to 177). Its rows, one per feature and built here
     // from the list its _data function reads, run as three ctest entries,
-    // tst_unbuilt_features_each1 to _each3, every third feature each; the
-    // rest as tst_unbuilt_features (tests/CMakeLists.txt).
-    constexpr int kEachEntries = 3;
+    // tst_unbuilt_features_each1 to _each6, every sixth feature each; the
+    // rest as tst_unbuilt_features (tests/CMakeLists.txt). CI speed round,
+    // 2026-10-17: with three entries, 20 rows each, _each1 and _each3
+    // passed 19 rows and timed out at 120 s in a hosted Linux shard
+    // running four tests at once (_each2 passed in 119.6 s), so six.
+    constexpr int kEachEntries = 6;
     QList<NereusSDR::TestFunctionGroups::Group> groups;
     for (int k = 0; k < kEachEntries; ++k) {
         groups.append({QStringLiteral("each%1").arg(k + 1), {}});

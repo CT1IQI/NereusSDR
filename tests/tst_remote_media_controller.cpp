@@ -229,11 +229,16 @@
 //               from before the holder was named: the window asks once and
 //               is refused, as it always was. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: CI speed round: the test runs as five ctest entries, not
+//               two (TestFunctionGroups): the audio functions in two, every
+//               other function in three. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
 #include <QComboBox>
 #include <QAbstractItemView>
+#include "TestFunctionGroups.h"
 #include "gui/RemoteAudioWidget.h"
 #include "gui/widgets/GuardedSlider.h"
 #include <QStandardItemModel>
@@ -15151,10 +15156,10 @@ namespace {
 
 // The audio functions: the speakers, headphones, lossless trial and the
 // microphone uplink (each starts real audio and a real DTLS/SRTP link, and
-// together they take about half the run). NEREUS_REMOTE_MEDIA_GROUP=audio
-// runs exactly these; =rest runs every other test function; unset runs
-// everything. A name here that is not a test function stops the run, so a
-// rename cannot quietly drop a test from both entries.
+// together they take about half the run). They run as two ctest entries,
+// every other function as three (main()); unset, NEREUS_REMOTE_MEDIA_GROUP
+// runs everything. A name here that is not a test function stops the run,
+// so a rename cannot quietly drop a test from every entry.
 const QStringList kAudioFunctions{
     QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
@@ -15220,26 +15225,6 @@ const QStringList kAudioFunctions{
     QStringLiteral("aTransportFailureDuringAGapRestartsAtOnce"),
 };
 
-// The test functions QtTest would run: private slots with no arguments,
-// other than the four fixtures and the _data functions.
-QStringList testFunctions(const QMetaObject* meta)
-{
-    QStringList names;
-    for (int i = meta->methodOffset(); i < meta->methodCount(); ++i) {
-        const QMetaMethod method = meta->method(i);
-        const QString name = QString::fromLatin1(method.name());
-        if (method.methodType() != QMetaMethod::Slot
-            || method.access() != QMetaMethod::Private || method.parameterCount() != 0
-            || name.endsWith(QStringLiteral("_data"))
-            || name == QStringLiteral("initTestCase") || name == QStringLiteral("cleanupTestCase")
-            || name == QStringLiteral("init") || name == QStringLiteral("cleanup")) {
-            continue;
-        }
-        names.append(name);
-    }
-    return names;
-}
-
 } // namespace
 
 int main(int argc, char** argv)
@@ -15251,33 +15236,38 @@ int main(int argc, char** argv)
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TestRemoteMediaController test;
     QTEST_SET_MAIN_SOURCE_PATH
-    QStringList arguments = app.arguments();
-    const QString group = qEnvironmentVariable("NEREUS_REMOTE_MEDIA_GROUP");
-    // A run that names its own functions (or options) runs as asked.
-    if (!group.isEmpty() && arguments.size() == 1) {
-        const QStringList all = testFunctions(test.metaObject());
-        for (const QString& name : kAudioFunctions) {
-            if (!all.contains(name)) {
-                qCritical("kAudioFunctions names %s, which is not a test function",
-                          qPrintable(name));
-                return 1;
-            }
+    // CI speed round, 2026-10-17: as two entries, the audio functions and
+    // the rest, the rest took 250 s and then passed the 300 s limit in a
+    // hosted Linux shard running four tests at once, and the audio
+    // functions took 171 to 204 s. So five entries, each function in one by
+    // its place in the list, so a new function lands in one with no list to
+    // edit: the audio functions alternate between
+    // tst_remote_media_controller_audio and _audio2, and every other
+    // function, in declaration order, goes in turn to
+    // tst_remote_media_controller (the rest), _part2 and _part3
+    // (tests/CMakeLists.txt).
+    constexpr int kAudioEntries = 2;
+    constexpr int kOtherEntries = 3;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{
+        {QStringLiteral("audio"), {}}, {QStringLiteral("audio2"), {}},
+        {QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}};
+    for (int i = 0; i < kAudioFunctions.size(); ++i) {
+        groups[i % kAudioEntries].entries.append(kAudioFunctions.at(i));
+    }
+    int other = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        if (kAudioFunctions.contains(name)) {
+            continue;
         }
-        if (group == QStringLiteral("audio")) {
-            arguments += kAudioFunctions;
-        } else if (group == QStringLiteral("rest")) {
-            for (const QString& name : all) {
-                if (!kAudioFunctions.contains(name)) {
-                    arguments += name;
-                }
-            }
-        } else {
-            qCritical("NEREUS_REMOTE_MEDIA_GROUP must be audio or rest, not %s",
-                      qPrintable(group));
-            return 1;
+        // Every third stays in the rest, so the rest is never empty.
+        const int slot = other++ % kOtherEntries;
+        if (slot > 0) {
+            groups[kAudioEntries + slot - 1].entries.append(name);
         }
     }
-    return QTest::qExec(&test, arguments);
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_REMOTE_MEDIA_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 
 #include "tst_remote_media_controller.moc"

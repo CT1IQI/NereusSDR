@@ -9,6 +9,8 @@
 // RF-Kit for the windows and phones signed in to it, at the typed address; a
 // window on a remote Core owns none. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-17: run as three ctest entries (TestFunctionGroups). J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCloseEvent>
@@ -23,6 +25,7 @@
 #include <QScopeGuard>
 
 #include "OperatorWording.h"
+#include "TestFunctionGroups.h"
 #include "core/AppSettings.h"
 #include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
@@ -1045,5 +1048,34 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestGuiSessionCoordinator)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestGuiSessionCoordinator test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 79 s by itself on a hosted CI runner, nearly every case a window of
+    // its own, and past ctest's 120 s with every case still passing when
+    // the runner ran four tests at once (CI run 38999633360). Two groups
+    // run as their own ctest entries, tst_gui_session_coordinator_startup
+    // and _replacement (tests/CMakeLists.txt); the rest as
+    // tst_gui_session_coordinator. The limit is not raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_GUI_SESSION_COORDINATOR_GROUP",
+        {{QStringLiteral("startup"),
+          {QStringLiteral("configuredDeferredLocalBootstrapOwnsSlicesWithRunOff"),
+           QStringLiteral("catStartsWhenCoreListenerCannotOpen"),
+           QStringLiteral("desktopReclaimKeepsCoreRadioChoice"),
+           QStringLiteral("hostedLostP1LinkComesBackInPlace"),
+           QStringLiteral("desktopHostRetiresBeforeModelWithoutStartingBackgroundOnReplacement"),
+           QStringLiteral("checkedQuitKeepsBackgroundIntentAndProfileUntilModelRetirement")}},
+         {QStringLiteral("replacement"),
+          {QStringLiteral("localWindowOwnsTheRotorAndARemoteWindowNever"),
+           QStringLiteral("replacesWholeSessionAndRetiresQueuedPickerAndProxy"),
+           QStringLiteral("constructedWindowBindsNotchCreateOnce"),
+           QStringLiteral("initializationCannotRetireItsOwnModel"),
+           QStringLiteral("invalidTargetAndTransmitStateLeaveCurrentSessionUntouched"),
+           QStringLiteral("radioSwitchWaitsForTransmitToReceiveHandover")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_gui_session_coordinator.moc"
