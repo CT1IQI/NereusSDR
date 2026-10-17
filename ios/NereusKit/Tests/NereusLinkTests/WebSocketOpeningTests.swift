@@ -101,21 +101,94 @@ import Testing
         let listener = try SilentTLSListener(address: address)
         let port = try await listener.start()
         defer { listener.stop() }
+        // Time stands still from the dial until the listener holds the
+        // opening. On a real clock a busy runner spent a 400 ms deadline
+        // before the opening's task ran (main's run 39036605824): it
+        // failed before the dial, and nothing reached the listener.
+        let clock = HeldDeadlineClock()
+        let dialed = clock.now
+        let deadline = dialed + WebSocketLinkTransport.openDeadline
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: address, port: port), trust: .pairing,
-                                               openDeadline: .milliseconds(400))
-        // Without a bound the opening would wait for ever; the test closes
-        // it after 10 s, which fails as "closed", not "no reply".
+                                               openDeadline: WebSocketLinkTransport.openDeadline,
+                                               proxyResolver: SystemProxyResolver(), deadlineClock: clock)
+        let opening = Task { try await transport.open { _ in } }
+        // Without a bound the opening would wait for ever; the backstop
+        // closes it, which fails as "closed", not "no reply".
         let backstop = Task {
-            try await Task.sleep(for: .seconds(10))
+            try await Task.sleep(for: TestBackstop.hang)
             transport.close()
         }
         defer { backstop.cancel() }
-        let clock = ContinuousClock()
-        let started = clock.now
-        await #expect(throws: LinkTransportError.failed("no reply")) {
-            _ = try await transport.open { _ in }
+        let giveUp = ContinuousClock.now + TestBackstop.hang
+        while (listener.receivedRequests.isEmpty || clock.armedDeadlines.isEmpty) && ContinuousClock.now < giveUp {
+            try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(clock.now - started < .seconds(5))
         #expect(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
+        // The attempt arms what is left of the deadline counted from the dial.
+        #expect(clock.armedDeadlines == [deadline])
+        clock.advance(to: deadline)
+        await #expect(throws: LinkTransportError.noReply) {
+            _ = try await opening.value
+        }
+    }
+
+    /// The app's deadline runs on the connection's queue once its delay has
+    /// passed, never before. A busy runner may run it late, so only the
+    /// lower bound is checked; the backstop only stops a broken timer.
+    @Test func theAppsDeadlineRunsOnItsQueueAfterItsDelay() async throws {
+        let queue = DispatchQueue(label: "NereusSDR.tests.opening-deadline")
+        let onQueue = DispatchSpecificKey<Bool>()
+        queue.setSpecific(key: onQueue, value: true)
+        let fired = LockedFiring()
+        let clock = ContinuousClock()
+        let armed = clock.now
+        SystemOpeningDeadlineClock().run(after: .milliseconds(50), on: queue) {
+            fired.record(clock.now - armed, onQueue: DispatchQueue.getSpecific(key: onQueue) == true)
+        }
+        let giveUp = clock.now + TestBackstop.hang
+        while fired.value == nil && clock.now < giveUp {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let firing = try #require(fired.value, "the deadline never ran")
+        #expect(firing.elapsed >= .milliseconds(50))
+        #expect(firing.onQueue, "the deadline ran off the connection's queue")
+    }
+
+    private final class LockedFiring: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: (elapsed: Duration, onQueue: Bool)?
+        var value: (elapsed: Duration, onQueue: Bool)? { lock.withLock { stored } }
+        func record(_ elapsed: Duration, onQueue: Bool) { lock.withLock { stored = (elapsed, onQueue) } }
+    }
+
+    /// Time moves only when the test moves it; a deadline armed on it runs
+    /// on its queue once time reaches it.
+    private final class HeldDeadlineClock: OpeningDeadlineClock, @unchecked Sendable {
+        private struct Armed {
+            let due: ContinuousClock.Instant
+            let queue: DispatchQueue
+            let action: @Sendable () -> Void
+        }
+
+        private let lock = NSLock()
+        private var current = ContinuousClock().now
+        private var armed: [Armed] = []
+
+        var now: ContinuousClock.Instant { lock.withLock { current } }
+        var armedDeadlines: [ContinuousClock.Instant] { lock.withLock { armed.map(\.due) } }
+
+        func run(after delay: Duration, on queue: DispatchQueue, _ action: @escaping @Sendable () -> Void) {
+            lock.withLock { armed.append(Armed(due: current + delay, queue: queue, action: action)) }
+        }
+
+        func advance(to instant: ContinuousClock.Instant) {
+            let due = lock.withLock { () -> [Armed] in
+                current = max(current, instant)
+                let due = armed.filter { $0.due <= current }
+                armed.removeAll { $0.due <= current }
+                return due
+            }
+            due.forEach { $0.queue.async(execute: $0.action) }
+        }
     }
 }

@@ -10,10 +10,11 @@ enum SystemProxyWebSocketOpening {
         target: URL,
         timeout: Duration,
         startedAt: ContinuousClock.Instant = ContinuousClock().now,
+        now: @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
         resolver: SystemProxyResolver,
         attempt: @Sendable (SystemProxyRoute, Duration) async throws -> Value
     ) async throws -> Value {
-        try await run(target: target, timeout: timeout, startedAt: startedAt,
+        try await run(target: target, timeout: timeout, startedAt: startedAt, now: now,
                       resolve: { target, timeout in try await resolver.resolve(for: target, timeout: timeout) },
                       attempt: attempt)
     }

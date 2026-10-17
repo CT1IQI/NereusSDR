@@ -44,6 +44,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     private let openDeadline: Duration
     private let proxyResolver: SystemProxyResolver
     private let traffic: TrafficCounter
+    private let deadlineClock: any OpeningDeadlineClock
     private let queue = DispatchQueue(label: "NereusSDR.link.websocket")
 
     // Everything below is read and written under `lock`.
@@ -82,16 +83,18 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     init(endpoint: StationEndpoint, trust: StationTrust, openDeadline: Duration,
-         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared) {
+         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared,
+         deadlineClock: any OpeningDeadlineClock = SystemOpeningDeadlineClock()) {
         self.endpoint = endpoint
         self.trust = trust
         self.openDeadline = openDeadline
         self.proxyResolver = proxyResolver
         self.traffic = traffic
+        self.deadlineClock = deadlineClock
     }
 
     public func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
-        let startedAt = ContinuousClock().now
+        let startedAt = deadlineClock.now
         guard endpoint.port != 0 else {
             throw LinkTransportError.failed("no port")
         }
@@ -108,7 +111,8 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
         }
         let task = Task { [self] in
             try await SystemProxyWebSocketOpening.run(
-                target: url, timeout: openDeadline, startedAt: startedAt, resolver: proxyResolver
+                target: url, timeout: openDeadline, startedAt: startedAt,
+                now: { [deadlineClock] in deadlineClock.now }, resolver: proxyResolver
             ) { route, remaining in
                 try await self.openAttempt(route: route, timeout: remaining, events: continuation)
             }
@@ -147,7 +151,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
 
     private func openAttempt(route: SystemProxyRoute, timeout: Duration,
                              events continuation: AsyncStream<LinkTransportEvent>.Continuation) async throws -> Data {
-        let deadline = ContinuousClock().now + timeout
+        let deadline = deadlineClock.now + timeout
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { throw LinkTransportError.failed("no port") }
         let id = lock.withLock { () -> Int in
             attemptID += 1
@@ -202,14 +206,12 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
                     self?.stateChanged(state, on: connection)
                 }
                 connection.start(queue: queue)
-                let remaining = deadline - ContinuousClock().now
+                let remaining = deadline - deadlineClock.now
                 guard remaining > .zero else {
                     failAttempt(.noReply, on: connection)
                     return
                 }
-                let (seconds, attoseconds) = remaining.components
-                let nanoseconds = Int(seconds) * 1_000_000_000 + Int(attoseconds / 1_000_000_000)
-                queue.asyncAfter(deadline: .now() + .nanoseconds(nanoseconds)) { [weak self] in
+                deadlineClock.run(after: remaining, on: queue) { [weak self] in
                     self?.openDeadlinePassed(on: connection)
                 }
             }

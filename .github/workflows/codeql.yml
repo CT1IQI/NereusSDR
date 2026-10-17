@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       security-events: write
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
 
     strategy:
       fail-fast: false
@@ -55,6 +57,28 @@ jobs:
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev
+
+      # The pinned dependency downloads, as ci.yml's build job takes them
+      # (see "Dependency downloads" there): main's cache, anything missing
+      # fetched with retries and checked (SHA-256, pinned commit), and the
+      # git repositories sent to the verified mirrors. Main's CodeQL runs
+      # at a0b381e79 and 4066a86b6 (2026-10-17) failed on a 504 from
+      # gitlab.xiph.org cloning rnnoise. ci.yml saves the cache; not here.
+      - name: Restore dependency downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        run: |
+          mirrors="$RUNNER_TEMP/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
