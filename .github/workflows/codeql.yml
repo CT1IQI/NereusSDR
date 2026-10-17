@@ -1,9 +1,11 @@
 name: "CodeQL"
 
+# Scans main after each merge and weekly, not each pull request. A scan
+# holds a hosted Linux runner for about 75 minutes, and on pull requests
+# those scans filled the runners the required Linux builds wait on. A
+# finding still shows up within one merge.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     - cron: "0 6 * * 1"
