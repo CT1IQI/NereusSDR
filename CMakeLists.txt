@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 2026.10.0 LANGUAGES C CXX)
+project(NereusSDR VERSION 2026.10.1 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -1342,6 +1342,7 @@ set(CORE_SOURCES
     src/core/session/media/DaemonAudioSource.cpp
     src/core/session/media/DaemonAudioSender.cpp
     src/core/session/media/DaemonAudioSendThread.cpp
+    src/core/session/media/DaemonDisplaySendThread.cpp
     # R-R3-23: the audio-context wire codec Core and GUI share (minor 7 and 8).
     src/core/session/media/RemoteAudioContext.cpp
     src/core/session/media/RemoteIqCodec.cpp

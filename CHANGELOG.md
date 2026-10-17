@@ -104,6 +104,15 @@ The workspace look is now the default.
   11 px.
 - The S-Meter has a checkbox in Containers and comes back on Reset Default
   Layout.
+- Ticking an applet in Containers > Applets also shows the container that
+  holds it, whether that container was hidden, disabled, hidden on receive or
+  transmit, or hidden by a macro, and brings its window where you can reach
+  it. The tick reads on only while the applet can be seen.
+- Containers > Hidden also lists containers hidden on receive or transmit and
+  containers hidden by a macro. Choosing one shows it again.
+- An applet that cannot be used right now, such as the amplifier, tuner,
+  RF-Kit or RADE applet, is grayed in its container with the reason under its
+  title, instead of being hidden.
 - Fixed two crashes: a pop-out growing during a drag between monitors on
   Windows, and removing a popped-out container.
 
@@ -615,6 +624,28 @@ Advanced, and each control appears on one page only.
   a direct secure WebSocket (WSS) at once. Where UDP between the window and
   the Core is blocked but TCP port 443 works, it used to wait 40 to 85
   seconds first. Audio and display kept flowing on the relay meanwhile.
+- When a remote window's audio and displays move to a new connection, as after
+  the network drops and comes back, the window asks the Core again for
+  everything the move lost: receive audio, the headphones mix, the transmit
+  monitor, streams for programs on this computer and pan displays. Before, the
+  receive audio could stay silent until you muted and unmuted, and a display
+  being set up could stall.
+- In a remote window, a pan whose span the Core narrowed no longer asks for a
+  larger FFT as if you had zoomed in. It sizes the FFT from the span it asked
+  for, the same span it sends.
+- A remote window's VAX receive audio has fewer repeat dropouts. After a gap
+  it keeps a larger reserve, up to a quarter second, so the next short pauses
+  in the network link are not heard, and its pitch holds steady through them.
+  Before, each pause was a gap a program such as WSJT-X heard, and the pitch
+  could move by up to about 25 Hz, enough to cost FT8 decodes. The larger
+  reserve moves WSJT-X's DT by up to about 0.12 s.
+- When a Core stops naming a direct address, a desktop window and the iPhone
+  and iPad app now drop it, also from the addresses they reached the Core on.
+  That includes a Core reporting that it has none, as after IPv6 is turned off
+  on it. The address the current connection uses goes once a connection on
+  another address is made. Before, a Core's empty list was ignored and an
+  address it had named stayed, so a dead address was dialed on every
+  reconnect.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
 - On Linux, a window closed while maximized or full screen comes back with
@@ -623,6 +654,27 @@ Advanced, and each control appears on one page only.
   because another program, such as an Android emulator, holds the same IPv4
   port. Before, the other program could get the traffic and the connection
   timed out.
+- The receive S-ATT no longer ends up at its transmit value when you key again
+  while the radio is still finishing an unkey, or disconnect from the radio
+  while transmitting. Before, the next receive, or the next connect, used the
+  transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
+  preamp stayed off.
+- Changing band while transmitting no longer saves the transmit attenuation,
+  or on HPSDR boards the preamp the key turned off, as the receive values of
+  the band you left. The S-ATT readout keeps showing the transmit value until
+  you unkey, and the unkey puts back the new band's receive S-ATT and sends it
+  to the radio. Before, the readout jumped to the new band's value while the
+  radio stayed on the transmit value, and the unkey put back the old band's
+  value on the new band.
+- A floating container window that would be shown with its header off every
+  screen is moved back where it can be reached: when it is shown again, at the
+  end of a transmit, or when a monitor is added, removed or resized. Before,
+  the Rotor could read as ticked while its window sat off every screen.
+- A Core sends its spectrum and waterfall to remote windows and phones from a
+  thread of its own, so they keep flowing while the desktop app that runs the
+  Core is busy drawing. Before, a Windows desktop Core with the screen locked
+  sent them only 2 to 4 times a second. The RADE waveform meters still pause
+  while it is busy.
 
 ## [2026.10.0] - 2026-10-05
 

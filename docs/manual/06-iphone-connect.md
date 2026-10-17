@@ -95,6 +95,9 @@ alternative routes to the same paired identity, not additional paired Cores.
    explains the requirement. Removing an address does not revoke pairing.
 4. The **Learned from the Core** group is maintained from the Core's advertised
    and proven direct destinations. Those rows are read-only and have no Remove.
+   An address the Core stops advertising leaves this group, including when it
+   reports that it has none. The address in use goes once a connection on
+   another address is made, and the phone never removes its only address.
    A Core paired through remote access can have no manually kept addresses.
 
 The saved row also offers **Remove Core**. Read the confirmation and choose it

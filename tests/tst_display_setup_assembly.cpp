@@ -242,13 +242,13 @@ private slots:
         SetupDialog dialog(&model);
         dialog.show();
         const QList<QStringList> groups = {
-            {"FFT & Engine", "FFT size", "STATION"},
-            {"FFT & Engine", "Frame rate", "STATION"},
+            {"FFT & Engine", "FFT size", "CORE"},
+            {"FFT & Engine", "Frame rate", "CORE"},
             {"FFT & Engine", "This computer", "THIS COMPUTER"},
-            {"Transmit Display", "FFT", "STATION"},
-            {"Transmit Display", "Panadapter", "STATION"},
+            {"Transmit Display", "FFT", "CORE"},
+            {"Transmit Display", "Panadapter", "CORE"},
             {"Transmit Display", "Transmit scale", "THIS COMPUTER"},
-            {"Transmit Display", "Waterfall", "STATION"},
+            {"Transmit Display", "Waterfall", "CORE"},
             {"Transmit Display", "Waterfall Amplitude Scale", "THIS COMPUTER"},
             {"Multimeter", "Signal Units", "THIS COMPUTER"},
             {"Multimeter", "Signal History", "THIS COMPUTER"}};

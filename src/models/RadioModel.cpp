@@ -27260,8 +27260,9 @@ void RadioModel::teardownConnection()
     // comes first, as in Thetis, and unkeys whatever holds MOX: a MOX-button
     // key would otherwise survive the disconnect with nothing holding it
     // (its manual key is cleared further down with the session's TUN
-    // state). The TX-to-RX walk's hardware flip runs now, while the
-    // connection is still live, so the radio gets the MOX bit off.
+    // state). The TX-to-RX walk starts now, while the connection is still
+    // live; its hardware flip (hardwareFlipped(false)) follows on the walk's
+    // timers after this call returns (issue #434 follow-up).
     // RADE end-of-over callsigns (review Important 2): no end-of-over tail
     // on a disconnect. The unkey walks as it did before the tail existed,
     // so the amplifier's UNKEY (txAboutToEnd) and the TX channel's drain
@@ -27378,9 +27379,11 @@ void RadioModel::teardownConnection()
     }
 
     // Issue #177 — clear any in-flight TUN-off bookkeeping.  If we are
-    // tearing down mid-walk, MoxController::rxReady will never fire (timers
-    // are stopped) so the deferred completion would otherwise stay armed
-    // across the next connect.  Clearing the latch + m_isTuning matches
+    // tearing down mid-walk, MoxController::rxReady comes only after this
+    // call returns, on the walk's timers (issue #434 follow-up), so the
+    // deferred completion would otherwise stay armed across the next
+    // connect; with the latch clear, that rxReady finds nothing to do.
+    // Clearing the latch + m_isTuning matches
     // Thetis chkTUN_CheckedChanged's _tuning=false reset (console.cs:30122
     // [v2.10.3.13]) at session end.
     m_pendingTuneOff = false;

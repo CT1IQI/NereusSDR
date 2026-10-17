@@ -7,6 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 - Bench fix (JJ's Rotor window created at (0,1337) on a
+//                 1512 x 982 screen): a floating window is given a place
+//                 where its header can be reached every time it is shown,
+//                 when a screen comes, goes or changes, and when its applet
+//                 is ticked under Containers > Applets
+//                 (keepWindowReachable, bringAppletOnScreen). Containers >
+//                 Hidden lists containers hidden on receive (or transmit)
+//                 and by a macro, as effectiveVisible hides them
+//                 (hiddenByOwnFlags), and shows them again. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - A floating window is never wider or taller than all the
 //                 screens together: the size a document, a remembered
 //                 place or the content's height gives it is fitted to
@@ -646,9 +656,13 @@ bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
                         [](const ContentEntry &entry) { return entry.visible; })) {
         return false;
     }
-    return document.visible && document.config.value("enabled").toBool(true) &&
-           !document.config.value("hiddenByMacro").toBool(false) &&
-           document.config.value(m_transmitting ? "showOnTx" : "showOnRx").toBool(true);
+    return !hiddenByOwnFlags(document);
+}
+bool ContainerManager::hiddenByOwnFlags(const ContainerDocument &document) const
+{
+    return !document.visible || !document.config.value("enabled").toBool(true) ||
+           document.config.value("hiddenByMacro").toBool(false) ||
+           !document.config.value(m_transmitting ? "showOnTx" : "showOnRx").toBool(true);
 }
 void ContainerManager::setTransmitting(bool transmitting)
 {
@@ -664,6 +678,14 @@ void ContainerManager::setTransmitting(bool transmitting)
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 {
+    if (event->type() == QEvent::Show) {
+        // Bench fix: whatever shows a window (a reconcile, the end of a
+        // transmit, Containers > Hidden, the main window restored), it is
+        // shown where its header can be taken hold of.
+        if (auto *form = qobject_cast<FloatingContainer *>(watched); form && m_floatingForms.value(form->id()) == form) {
+            keepWindowReachable(form->id());
+        }
+    }
     if (watched == m_dockParent && !m_paneSettled
         && (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
         // Still on the way to its first settled size.
@@ -2433,6 +2455,13 @@ void ContainerManager::watchScreen(QScreen* screen)
         // A monitor whose resolution or place changed: the limit only.
         connect(screen, &QScreen::geometryChanged, this, &ContainerManager::refreshWindowSizeLimits,
                 Qt::UniqueConnection);
+        // And its windows as for a screen that came or went: a window left
+        // where its header cannot be reached is brought back. Queued, as
+        // those are, so the change has been applied.
+        connect(screen, &QScreen::geometryChanged, this, &ContainerManager::screensChanged,
+                static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
+        connect(screen, &QScreen::availableGeometryChanged, this, &ContainerManager::screensChanged,
+                static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
     }
 }
 
@@ -2645,6 +2674,61 @@ void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remem
     m_displaced.insert(id);
 }
 
+void ContainerManager::bringAppletOnScreen(const QString& typeId)
+{
+    if (!m_store || typeId.isEmpty()) {
+        return;
+    }
+    const WorkspaceDocument document = m_store->snapshot();
+    for (const auto& d : document.containers) {
+        const bool holds = std::any_of(d.contents.cbegin(), d.contents.cend(),
+                                       [&typeId](const ContentEntry& entry) { return entry.typeId == typeId; });
+        if (!holds) {
+            continue;
+        }
+        FloatingContainer* form = m_floatingForms.value(d.id);
+        if (const ContainerWidget* c = container(d.id); c && c->isFloating() && form && form->isVisible()) {
+            keepWindowReachable(d.id);
+            form->raise();
+        }
+        return;
+    }
+}
+
+void ContainerManager::keepWindowReachable(const QString& id)
+{
+    ContainerWidget* c = container(id);
+    FloatingContainer* form = m_floatingForms.value(id);
+    if (!c || !form || !c->isFloating() || c->geometryInteractionActive()
+        || GuiApplication::applicationQuitInProgress() || m_screens->screens().isEmpty()
+        || headerReachable(form->geometry())) {
+        return;
+    }
+    // The app's own move: nothing is remembered or committed for it.
+    QScopedValueRollback<bool> guard(m_reconciling, true);
+    const QRect remembered = m_rememberedGeometry.value(id, form->geometry());
+    const std::optional<SavedScreen> screen = m_rememberedScreen.value(id);
+    if (windowIsHome(remembered, screen, true)) {
+        // Its own place is on a screen: back there.
+        m_displaced.remove(id);
+        form->move(remembered.topLeft());
+    } else {
+        form->setGeometry(displacedWindowRect(id, remembered, screen, form->size()));
+        m_displaced.insert(id);
+    }
+    qCDebug(lcContainer) << "Window" << id << "brought where its header can be reached:" << form->geometry();
+}
+
+void ContainerManager::keepWindowsReachable()
+{
+    const QStringList ids = m_floatingForms.keys();
+    for (const QString& id : ids) {
+        if (FloatingContainer* form = m_floatingForms.value(id); form && form->isVisible()) {
+            keepWindowReachable(id);
+        }
+    }
+}
+
 void ContainerManager::screensChanged()
 {
     refreshWindowSizeLimits();
@@ -2664,6 +2748,9 @@ void ContainerManager::screensChanged()
         placeFloatingWindow(d.id, m_rememberedGeometry.value(d.id, d.geometry),
                             m_rememberedScreen.value(d.id, d.screen), form, false, true);
     }
+    // A window at its own place is left there only while its header can be
+    // reached (one the system moved off the screens comes back).
+    keepWindowsReachable();
 }
 
 
@@ -2914,7 +3001,10 @@ QVector<ContainerManager::HiddenItem> ContainerManager::hiddenItems() const
     const WorkspaceDocument document = m_store->snapshot();
     for (const auto& d : document.containers) {
         const QString name = d.name.isEmpty() ? d.id : d.name;
-        if (!d.visible || !d.config.value("enabled").toBool(true)) {
+        // Every flag that takes the container off the screen, as
+        // effectiveVisible reads them (hidden on receive, or on transmit
+        // while transmitting, and hidden by a macro included).
+        if (hiddenByOwnFlags(d)) {
             items.append({d.id, {}, name});
         }
         for (const auto& entry : d.contents) {
@@ -2937,6 +3027,14 @@ bool ContainerManager::showHiddenContainer(const QString& id)
         if (d.id == id) {
             d.visible = true;
             d.config["enabled"] = true;
+            // Only a flag that hides it is written.
+            if (d.config.value("hiddenByMacro").toBool(false)) {
+                d.config["hiddenByMacro"] = false;
+            }
+            const char *shownNow = m_transmitting ? "showOnTx" : "showOnRx";
+            if (!d.config.value(shownNow).toBool(true)) {
+                d.config[shownNow] = true;
+            }
             found = true;
         }
     }

@@ -52,7 +52,8 @@ A container provides an inherited source, and supported meters may select an
 explicit slice/session in Properties. Missing, stale or foreign sources show an
 unavailable reading rather than values from a different receiver or station.
 Clock and MMIO sources remain independent. An unavailable applet or unsupported
-legacy object keeps its place and configuration for later recovery.
+legacy object keeps its place and configuration for later recovery. An
+unavailable applet is shown grayed, with the reason under its title.
 
 ## With the workspace look on
 
