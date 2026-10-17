@@ -146,8 +146,8 @@
     },
     {
       "output": "manual/verification.md",
-      "output_sha256": "aae53611eb3d9c55bda9e41851402766ae885f20ffe5d7a545f3bc04b98ffb4d",
-      "sha256": "aae53611eb3d9c55bda9e41851402766ae885f20ffe5d7a545f3bc04b98ffb4d",
+      "output_sha256": "896426294a93b8794463d11d1a92904141812fad48e572ea8df7dc9a4e5f3a47",
+      "sha256": "896426294a93b8794463d11d1a92904141812fad48e572ea8df7dc9a4e5f3a47",
       "source": "docs/manual/verification.md"
     }
   ],
