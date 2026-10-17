@@ -598,6 +598,12 @@ Advanced, and each control appears on one page only.
   drawn as text instead of color emoji.
 - On the Mac, a remote window can no longer hang when its microphone stops
   while Core Audio is slow to answer at startup.
+- On the Mac, the microphone no longer takes up to about two minutes to start
+  after launch. NereusSDR now sets its own Mic Mode to Standard at each
+  launch, so macOS does not apply Voice Isolation to it; Voice Isolation or
+  Wide Spectrum picked for NereusSDR in Control Center is back at Standard at
+  the next launch. The first window can appear up to about a second later
+  while this is done.
 - On a Mac with a Protocol 2 radio, the transmit sender no longer waits on a
   Core Audio lookup when the radio connects. Under load that lookup took a
   quarter of a second to nearly two seconds, and no transmit samples went out

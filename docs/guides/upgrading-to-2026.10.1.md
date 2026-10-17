@@ -40,6 +40,11 @@ normally so the new version can migrate them once.
   headers show or hide with an eye button, and there is no container **Lock**
   with this look. Locks you saved earlier open unlocked. Your saved layout is
   copied the first time you start, so nothing is lost.
+- **On the Mac, the Mic Mode goes to Standard.** NereusSDR sets its own Mic
+  Mode to Standard at each launch, which ends the long wait for the microphone
+  after launch. If you picked Voice Isolation or Wide Spectrum for NereusSDR
+  in Control Center, it is back at Standard. The first window can appear up to
+  about a second later.
 - **Attenuator and preamp are remembered.** They are saved and sent to the
   radio each time you connect. Connecting never keys the radio.
 - **Each receiver keeps more of its own settings.** L/R pan, binaural,
