@@ -11,7 +11,7 @@ A Core serves multiple paired phones and computers, but receiver capacity is fin
 
 ## Inspect shared administration from a desktop
 
-For a saved Core, open **File > Settings… > Cores > Your Cores**, select it,
+For a saved Core, open **File > Settings... > Cores > Your Cores**, select it,
 and use **Overview**, **Radio** and **Devices**. Inspection does not connect
 this window. Radio/device administration applies only to the Core currently
 connected in this window; disconnected entries show the unavailable reason.
@@ -46,7 +46,7 @@ When all receivers are in use and opening another slice requires one, the Core p
 3. Read the impact note: taking a receiver closes the slice on that device and tells its operator who took it. Taking a slice has the same ownership consequence for that slice. Tap the named action to proceed or cancel the sheet to preserve the other session.
 4. Wait for the Core's response. Confirm the new slice is yours and that the other device has received the notice. If refused, use the Core's explanation and coordinate a release rather than repeating the request.
 
-A receiver takeover is not a transmit takeover. When this phone already holds transmit, its **TX** badge can select the newly controlled slice without keying. Without that ownership, the badge can be refused even though the slice is now yours. The Core can highlight the badge after refusing a first key on a taken slice. In this phone version that prompt does not provide a complete route to acquire another device's transmit ownership. Keep that handoff receive-only; see the starting states in [phone voice operation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone).
+A receiver takeover is not a transmit takeover. When this phone already holds transmit, its **TX** badge can select the newly controlled slice without keying. Without that ownership, the badge can be refused even though the slice is now yours. The Core can highlight the badge after refusing a first key on a taken slice. To take another device's transmit ownership, use **Take transmit** in the phone's TX panel or in the refusal notice; see the starting states in [phone voice operation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone).
 
 ## Understand shared-change confirmations
 
@@ -129,17 +129,17 @@ remain separate actions after the session is admitted.
 
 ## Coordinate a second-device handoff
 
-A handoff separates receiver control, listening, and transmit ownership. Agree which operator is taking each role before either changes it. In the covered phone build, a receiver handoff is supported but a general desktop-to-phone transmit takeover is not exposed. The steps below therefore transfer reception. They do not promise that the phone can key afterward.
+A handoff separates receiver control, listening, and transmit ownership. Agree which operator is taking each role before either changes it. The steps below transfer reception. They do not promise that the phone can key afterward: taking transmit is a separate step, the phone's **Take transmit** button.
 
 **Example: the iPhone takes control of the desktop's existing slice A.**
 
 1. The desktop operator unkeys and confirms receive. The iPhone operator checks **Setup > Devices** to identify the desktop and its slice, then selects that slice's **Take control** action on the band.
 2. The phone operator waits for the control request to succeed. The desktop operator checks its flag or **Slices on this Core** chooser for the changed controller. Taking control of an existing slice can leave the desktop listening to it. Do not confuse this with reclaiming an occupied receiver to create a new slice: that separate resource request can close the other operator's slice, and its confirmation names that consequence.
 3. The iPhone operator confirms the slice appears as owned, checks frequency, mode and filter, and tests receive audio. The desktop operator can continue using any unaffected receiver/slice.
-4. Both operators leave transmit in receive and identify its holder separately. The phone operator can inspect the **TX** mark in **Setup > Devices**. The desktop operator reads its TX status/holder and slice chooser. **Setup > Devices** is a phone path. Unkeying the desktop does not release its transmit ownership; tapping the phone's slice badge does not take that ownership.
+4. Both operators leave transmit in receive and identify its holder separately. The phone operator can inspect the **TX** mark in **Setup > Devices**. The desktop operator reads its TX status/holder and slice chooser. **Setup > Devices** is a phone path. Unkeying the desktop does not release its transmit ownership; to take it, the phone operator presses **Take transmit** and confirms in the sheet.
 5. To return receiver control, the phone operator stops tuning and tells the desktop operator it is ready. The desktop operator opens **Slices on this Core**, selects A, and chooses **Take control**, or uses the offered **Take back** notice. Both wait for the result. The desktop verifies its control mark and frequency/mode; the phone verifies that its flag is read-only/listening again. No invented phone **Release** action is required.
 
-If this phone already holds transmit independently, it can choose the returned/taken slice's TX badge and follow the ordinary voice procedure. If another device holds transmit, this source version cannot complete that takeover from the phone. Do not key another slice merely to manufacture ownership. For a fresh unheld transmitter, a human PTT on an original owned slice is the supported first-key path, with all normal RF and microphone prerequisites; it is not an ownership-only button.
+If this phone already holds transmit independently, it can choose the returned/taken slice's TX badge and follow the ordinary voice procedure. If another device holds transmit, press **Take transmit** in the TX panel and confirm in the sheet (**Take transmit**, or **Unkey and take over** if that device is on the air). Taking does not key. For a fresh unheld transmitter, a human PTT on an original owned slice is the first-key path, with all normal RF and microphone prerequisites.
 
 If a device goes away unexpectedly, its connection row can show it as away/stale. Do not revoke it merely to clear a stale mark; first establish whether that operator is reconnecting. Link loss unkeys transmit, but the Core may continue to list a paired identity for later reconnection.
 
@@ -147,19 +147,21 @@ If a device goes away unexpectedly, its connection row can show it as away/stale
 
 A Core computer with a sound card can play the receive audio through its own speaker, for listening where the Core sits. The **Core speaker** is shared: its volume, mute and device are the Core's, and a change from any desktop window or phone reaches every window and the phone. Each slice's AF level and mute still apply on top of it.
 
-On a desktop connected to a remote Core, open **File > Settings… > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there. In a remote window the **Radio speaker** card's note starts **This is the radio's own speaker, at the Core.** That card sets the radio's speaker output, not the Core computer's sound card.
+On a desktop connected to a remote Core, open **File > Settings... > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there. In a remote window the **Radio speaker** card's note starts **This is the radio's own speaker, at the Core.** That card sets the radio's speaker output, not the Core computer's sound card.
 
 1. Set **Volume** and, to silence it, tick **Mute Core speaker**. The change shows in every other window and on the phone.
-2. Choose **Device**. **(the Core's default)** follows the Core computer's own default, **(none)** plays nothing, and each sound card plugged into the Core is listed by name. A card plugged in later appears by itself. Open **Device details** for **Driver** (**ALSA, direct** on a Core with no desktop), **Sample rate**, **Channels**, **Buffer size**, **Delay** and **Negotiated**.
+2. Choose **Device**. **(the Core's default)** follows the Core computer's own default, **(none)**, listed when the Core's computer runs a desktop, plays nothing, and each sound card plugged into the Core is listed by name. A card plugged in later appears by itself. Open **Device details** for **Driver** (**ALSA, direct** on a Core with no desktop), **Sample rate**, **Channels**, **Buffer size**, **Delay** and **Negotiated**.
 3. Read the note under the controls: **This is the speaker at the Core, for listening where the Core sits. Changes here reach every window and the phone. Each slice's AF level and mute still apply.**
 
 When the chosen card is gone or busy the Core keeps playing on its default and the card says so in amber: **<card> is not connected at the Core. Playing on the Core's default, <default card>, until it comes back.** or **<card> is in use by another program at the Core.** With no other card it says **<card> is not connected at the Core, and the Core has no other sound card, so it is silent until it comes back.** With no card at all it says **No sound card is plugged into the Core. Plug in a USB sound card or speaker and it shows up here by itself.** The choice is never changed for you.
 
 A Core computer that starts into a desktop uses its sound cards for the desktop. The card says **The Core's computer runs a desktop, which uses its sound cards. Pick one here to play the Core speaker on it.** or, once you picked one, **The desktop can't play through <card> while the Core has it.**
 
-The controls are greyed with **Connect to the Core to change these.** when the Core's settings are not available to this window, and an older Core that cannot set its speaker greys them with **This Core can't set its speaker from here. Update the Core.**
+The controls are grayed with **Connect to the Core to change these.** when the Core's settings are not available to this window, and an older Core that cannot set its speaker grays them with **This Core can't set its speaker from here. Update the Core.**
 
 On the phone the same controls are in the **Sound** panel; see [Operate from an iPhone](07-iphone-operate.md#route-receive-audio-on-the-phone). The phone has no card when the Core is not playing on a sound card.
+
+The antenna rotor is also the Core's, and it is shared like the Core speaker. Set it up once under **File > Settings... > CAT & Network > Rotor**; the **Rotor** applet and a **Rotator** meter item in every window connected to that Core show and turn the same rotor. The phone has its own rotor page for the same Core rotor.
 
 ## Release, stop listening, or disconnect
 

@@ -4,7 +4,7 @@
 
 Choose the package for your computer from this release's **Assets**. Start
 with the [user guide](https://nereussdr.com/manual/)
-for desktop and mobile operation, or the [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html)
+for desktop and mobile operation, or the [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
 when updating an existing station. Update the Core and desktop together.
 
 ### Linux desktop

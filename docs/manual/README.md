@@ -1,14 +1,14 @@
 # NereusSDR User Manual
 
-Working draft, 4 October 2026. Desktop instructions for Core Settings, audio
-choices, Canvas, EQ/CFC and transmit ownership have been reconciled with the
-2026.10 release candidate. Other procedures retain their reviewed development
-source baseline. This is an operator draft, with release captures and live
+This manual describes NereusSDR 2026.10.1. Desktop instructions for Core
+Settings, audio choices, the workspace look, Canvas, EQ/CFC, CAT, rotor control
+and transmit ownership follow that release. Other procedures retain their
+reviewed development source baseline, with some release captures and live
 station checks still pending.
 
 The native iPhone/iPad app is available as a
 [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). Mobile installation
-is separate from the published 2026.10.0 desktop and Core packages. Install
+is separate from the 2026.10.1 desktop and Core packages. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. Install
 TestFlight on your device, open the invitation and follow its installation steps.
 The app requires your own running NereusCore station. These chapters retain
 their documented source and capture baselines; public availability does not
@@ -55,20 +55,20 @@ when you need a specific answer.
 | [4. Work with slices and panadapters](04-slices.md) | Add and select slices, arrange the display, and understand which controls apply to a slice or the radio. |
 | [5. Set up and transmit](05-transmit.md) | Choose a microphone source and profile, adjust levels and transmit processing, set power, and use PTT, MOX, and TUNE. |
 | [6. Connect the iPhone or iPad](06-iphone-connect.md) | Set up the Core, pair the app, connect on your home network, and connect away from home. |
-| [7. Operate from the iPhone or iPad](07-iphone-operate.md) | Navigate the tabs, tune with touch controls, adjust receive settings, select audio, and transmit. |
+| [7. Operate from the iPhone or iPad](07-iphone-operate.md) | Navigate the tabs, tune with touch controls, adjust receive settings, select audio, transmit, turn a rotor, and reach CAT Control. |
 | [8. Use several devices](08-shared-core.md) | See who owns each slice and transmit, take over when needed, and understand changes that affect other operators. |
 | [9. Digital audio and external applications](09-tools.md) | Route and test VAX/TCI audio, connect clients, and distinguish desktop-local from Core-hosted routes. |
-| [10. Display, meters and layout](10-customize.md) | Adjust FFT, spectrum, waterfall, grid, history, 3D, TX display, meters and custom containers. |
+| [10. Display, meters and layout](10-customize.md) | Use each pan's Display pill and the Setup pages behind it: FFT, spectrum, levels, waterfall, history, 3D, TX display, meters and custom containers. |
 | [11. Troubleshoot operation](11-troubleshooting.md) | Follow checks for connection failures, missing audio, unexpected tuning behavior, and refused transmit requests. |
 | [12. Control reference](12-reference.md) | Look up controls, menu paths, shortcuts, and NereusSDR terminology. |
 | [13. Receiver DSP and filter setup](13-receiver-dsp.md) | Adjust AGC, blankers, noise-reduction methods/models, notches, filter presets and DSP options. |
 | [14. Voice processing and profiles](14-voice-profiles.md) | Configure microphone/TX profiles, EQ, compression, leveler, expander, VOX and modulation monitoring. |
 | [15. RADE and FreeDV operation](15-rade-freedv.md) | Receive and transmit RADE voice, interpret decode status, and use the FreeDV Reporter. |
-| [16. Spots and reporters](16-spots-reporters.md) | Configure spot sources, filter and display results, and tune from station lists. |
+| [16. Spots and reporters](16-spots-reporters.md) | Configure spot sources, filter and display results, tune from station lists, and turn the beam to a spot. |
 | [17. Hardware, antennas and calibration](17-hardware-antennas-calibration.md) | Configure radio/ALEX/HL2/OC controls and supported level, PA and wattmeter calibration. |
 | [18. PureSignal and diversity](18-puresignal-diversity.md) | Configure supported feedback calibration and two-ADC diversity, and check status/results. |
-| [19. Amplifiers and tuners](19-amplifiers-tuners.md) | Configure and operate supported PGXL, TGXL and RF-Kit accessories with their interlocks and readbacks. |
-| [20. Phone preferences and session care](20-phone-preferences.md) | Choose touch/audio routes, manage background listening, screen/sleep/data use and time-outs, and recover interruptions. |
+| [19. Amplifiers and tuners](19-amplifiers-tuners.md) | Configure and operate supported PGXL, TGXL and RF-Kit accessories with their interlocks and readbacks, and set up and turn a rotor. |
+| [20. Phone preferences and session care](20-phone-preferences.md) | Choose touch/audio routes, manage background listening, screen/sleep/data use and time-outs, choose whether tuning to a spot turns the beam, and recover interruptions. |
 
 ## Follow a complete operating workflow
 

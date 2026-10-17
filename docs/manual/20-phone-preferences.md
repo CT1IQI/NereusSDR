@@ -21,7 +21,7 @@ receiver ownership. The settings below refine those workflows.
 
 The toolbar **Display** sheet is a quick control surface for its named pan.
 It says **Pan N · this phone** and changes that pan's local waterfall and
-spectrum presentation. **Palette**, waterfall level mode, **Colour gain** and
+spectrum presentation. **Palette**, the waterfall level choice (**Clarity**, **Auto**, **Floor**, **Manual** or **Scale**), **Color gain** and
 **Black level** affect waterfall contrast. **Fill**, **Line**, and **Spectrum
 height** affect the trace. **Top** and **Range** move the visible dBm scale.
 Read the scale labels and trace after each change. **CTUN** changes the
@@ -36,14 +36,16 @@ badge on each group:
 | Group | What it changes and how to check |
 | --- | --- |
 | **Band plan** | Choose from plans advertised by the Core. This changes the Core's plan for desktop and all devices. **Size** changes the plan's visual size on this phone. Check the selected plan and strip at the bottom of the band. |
-| **Core display groups** | The Core describes its analyzer groups and owns offered Sizing, FFT size, Hz/bin target, window, and frame-rate settings. These are shared. **Sizing** (Auto, Hz/bin, or Fixed) chooses whether the zoom, the Hz/bin target, or Size sets the FFT size; the control that is not in charge is gray and the page says which choice frees it. The two averaging times start at 1 ms where the Core offers that. Check the badge and bin-width readout; an older Core shows them grayed with an explanation. |
-| **Waterfall** | Choose palette and, when available, **Clarity**, **Auto**, **Noise floor**, or **Manual** levels. **High level** and **Low level** are manual endpoints; Core levels can arrive later. **Colour gain** and **Black level** refine contrast. |
+| **Core display groups** | The Core describes its analyzer groups and owns offered Sizing, FFT size, Hz/bin target, window, and frame-rate settings. These are shared. **Sizing** (Auto, Hz/bin, or Fixed) chooses whether the zoom, the Hz/bin target, or Size sets the FFT size; a control that is not in charge is gray (in **Auto** both are) and the page says which choice frees it. The two averaging times start at 1 ms where the Core offers that. Check the badge and bin-width readout; an older Core shows them grayed with an explanation. |
+| **Waterfall** | Choose palette and the levels: **Clarity**, **Auto**, **Floor**, **Manual** or **Scale** (Clarity, Auto and Floor work only when the Core sends display extras). **High level** and **Low level** are manual endpoints; Core levels can arrive later. **Color gain** and **Black level** refine contrast. |
 | **Waterfall: more** | Set detector/averaging when those are not in Core groups, update period, opacity, stop-on-transmit, timestamps/time zone, look-back depth, filter and zero-line overlays, or a custom gradient. Copy buttons transfer the visible scale endpoints to levels or back. The footer reports retained history for the current period. |
 | **Spectrum / Spectrum: more** | Set fill, gradient, line width, spectrum height, trace/passband color and strength, classic peak hold, and zero line. Older-Core pages can expose detector, averaging, and decimation locally when supported. Calibration is disabled because the Core has already applied radio calibration. |
 | **Grid & Scales / Grid & Scales: more** | Set grid visibility/step and dBm top/bottom; show the dBm scale and choose frequency-label alignment. If the Core supplies a noise-floor estimate, the bottom can follow it and optionally preserve the range. |
 | **Noise floor / Peaks** | The noise-floor line and shift, active peak hold, and peak blobs require Core display extras. Classic peak hold is separate. Follow the disabled reason if extras are unavailable. |
-| **On the band / Colours / View** | Toggle cursor frequency, bin width, frame rate, and strongest-signal readout; choose its corner and update rate. Set local grid, marker, line, and label colors. Extended view is available only when described by the Core; CTUN is a pan view setting. |
+| **On the band / Colors / View** | Toggle cursor frequency, bin width, frame rate, and strongest-signal readout; choose its corner and update rate. Set local grid, marker, line, and label colors. Extended view is available only when described by the Core; CTUN is a pan view setting. |
 | **Transmit display** | Local transmit scale top/range, waterfall levels/palette, and DUP. **The Core's transmit display** contains station analyzer settings and affects devices viewing it. Check its badge and returned values. |
+
+A 2026.10.1 Core also lists its own **Spectrum**, **Levels**, **Waterfall**, **View**, **Peaks & Markers**, **FFT & Engine**, **Transmit Display** and **Multimeter** pages under **Setup > Display**; see [chapter 10](10-customize.md) for what each holds.
 
 For a weak-signal view, select the correct pan, set waterfall **Levels** to
 **Manual**, and adjust High/Low around the current noise and signal. Use a copy
@@ -121,9 +123,12 @@ leveler shape the transmitted voice. Use [voice processing and
 profiles](14-voice-profiles.md) for those controls rather than searching for an
 iOS voice-effect switch.
 
-The implemented **Standard** audio quality is Opus at 24 kbit/s with audio up
-to 8 kHz. **High** remains greyed with the reason that the Core does not offer
-it. The presence of that row is not an additional usable quality setting.
+Under **Audio quality**, **High** is Opus at 48 kbit/s with audio up to
+20 kHz and costs about 24 MB an hour. **Save data** is Opus at 24 kbit/s with
+audio up to 8 kHz, about 13 MB an hour. **Lossless** passes the Core's audio
+unchanged, for digital modes, and needs about 1.6 Mbit/s (about 720 MB an
+hour). If the network cannot carry Lossless, the audio stays on Opus and the
+page says so. The choice is saved on this phone.
 
 ## Recover from headphone removal or an audio interruption
 
@@ -181,15 +186,17 @@ choices for Wi-Fi and cellular are stored separately.
 
 | Mode | Requested band | Estimate displayed by the app |
 | --- | --- | --- |
-| **Full** | 30 frames/s, full detail. | About 60 MB/hour. |
-| **Balanced** | 15 frames/s. | About 35 MB/hour. |
-| **Saver** | 5 frames/s, half the detail. | About 20 MB/hour. |
-| **Audio only** | Sound without a band view. | About 13 MB/hour. |
+| **Full** | 30 frames/s, full detail. | About 70 MB/hour. |
+| **Balanced** | 15 frames/s. | About 45 MB/hour. |
+| **Saver** | 5 frames/s, half the detail. | About 30 MB/hour. |
+| **Audio only** | Sound without a band view. | About 24 MB/hour. |
 
 Wi-Fi offers Full and Balanced. Cellular also offers Saver and Audio only.
 These rates are requests, and the displayed data amounts are estimates, not
-measurements or a billing guarantee. The page also estimates an additional
-13 MB for each hour of talking. Use its counters and your cellular account's
+measurements or a billing guarantee. The figures include High audio. The page
+also estimates an additional 24 MB for each hour of talking at High, 13 MB at
+Save data, or 720 MB while the microphone connection carries Lossless (if it
+cannot, the microphone uses High). Use its counters and your cellular account's
 usage information when planning an actual allowance.
 
 1. Choose the Wi-Fi mode for normal station or home use.
@@ -232,12 +239,16 @@ transmissions; the station desktop also has its own time-out setting. A Core
 watchdog remains part of transmit supervision. A time-out reason means the
 over ended, so return to receive and check the state before keying again.
 
-The Headset button, Bluetooth PTT Pair, Action button and **Buttons key a
+The Headset button, the **Bluetooth PTT button** and its **Pair** button, the Action button and **Buttons key a
 locked phone** controls are disabled in the covered app. Only on-screen PTT
 keys from this phone. Do not configure an accessory around those labels or
 assume that pairing a Bluetooth audio device gives it a working PTT button.
 In a debug build, a **PTT button test** may appear; it logs button behavior
 and never keys the radio.
+
+## Turn the beam when you tune to a spot
+
+Open **Tools** and find **Rotor setting**, marked **This phone**. **Turn the beam when I tune to a spot** is off by default. With it off, tuning to a spot never moves the rotor and only **Turn beam** on a spot's details does. Turn it on to have a tune to a spot also turn the beam to it. It needs a 2026.10.1 Core with a rotor set up; see [the Rotor page](07-iphone-operate.md#turn-the-antenna-with-the-rotor-page).
 
 ## Inspect app information and collect evidence
 

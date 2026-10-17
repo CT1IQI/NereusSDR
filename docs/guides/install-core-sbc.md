@@ -50,7 +50,7 @@ sudo apt install -y ca-certificates curl gnupg avahi-daemon nano
 
 Use the matching Trixie package from the selected
 [release's Assets](https://github.com/boydsoftprez/NereusSDR/releases).
-The example below installs 2026.10.0. Copy the whole command block into the
+The example below installs 2026.10.1. Copy the whole command block into the
 terminal. It downloads the public signing key over HTTPS, checks its full
 fingerprint, then verifies the signed checksum list and the package before
 installing. Verification uses a temporary keyring.
@@ -58,7 +58,7 @@ installing. Verification uses a temporary keyring.
 ```sh
 (
 set -eu
-release_version=2026.10.0
+release_version=2026.10.1
 core_package="nereusd_${release_version}_arm64_trixie.deb"
 release_url="https://github.com/boydsoftprez/NereusSDR/releases/download/v${release_version}"
 GNUPGHOME=$(mktemp -d)
@@ -120,6 +120,45 @@ sudo nereusd status
 
 The service now starts automatically at boot. First start generates and caches
 FFTW plans; give it time to become ready.
+
+## Core speaker and serial accessories
+
+The Core can play received audio on the SBC's own sound card, and it can turn
+a rotor or run serial CAT on a USB serial adapter. Linux gives both devices to
+groups the Core does not belong to, so each needs a small systemd drop-in.
+
+- **Sound card.** The `.deb` package ships the audio drop-in
+  (`/usr/lib/systemd/system/nereusd.service.d/audio.conf`), so there is
+  nothing to add. An older install without it needs
+  `/etc/systemd/system/nereusd.service.d/audio.conf` holding
+  `[Service]` and `SupplementaryGroups=audio`.
+- **Serial adapter.** The `.deb` package does not ship the serial grant. Until
+  you add it, the Core cannot open `/dev/ttyUSB*` or `/dev/ttyACM*`, so a
+  GS-232 rotor and serial CAT will not connect. Create
+  `/etc/systemd/system/nereusd.service.d/serial.conf` with the two lines
+  `[Service]` and `SupplementaryGroups=dialout`, then run
+  `sudo systemctl daemon-reload` and `sudo systemctl restart nereusd`. The
+  `dialout` name is right for Raspberry Pi OS and Armbian; the Pi 4 and Rock
+  installer scripts write both drop-ins for you.
+- **Choose the Core speaker.** In any window signed in to the Core, open
+  **Audio > Outputs** and use the **Core speaker** card, or use the Sound panel
+  on the iPhone or iPad. The Core speaker needs a 2026.10.1 Core.
+- **Check the card's mixer.** A sound card can be open and playing while its
+  own mixer has the output switched off. On a board with a DAC, check that its
+  DAC switches are on (`alsamixer` or `amixer -c <card>`). NereusSDR does not
+  change a card's mixer.
+- **Real-time priority.** Some vendor kernels, the Rock 5C's among them,
+  refuse real-time scheduling to every service while the system's CPU
+  controller is on, and on Debian any login switches it on. The Core then logs
+  "Raised thread priority was refused" and its audio threads run at normal
+  priority. The Rock installer writes a drop-in,
+  `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`, meant
+  to keep logins from switching the controller on; this is not yet confirmed
+  on a Rock. It takes effect for logins after it is written, so restart the
+  Rock once after installing. To see
+  whether the controller is on, look for `cpu` in
+  `cat /sys/fs/cgroup/cgroup.subtree_control`. Check how heavily the board is
+  loaded if audio breaks up.
 
 ## 5. Pair a console
 

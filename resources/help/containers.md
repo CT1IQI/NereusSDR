@@ -2,7 +2,9 @@
 
 Containers hold an ordered stack of meter faces and existing applet views. Open
 **Containers > Edit Container** or the container's **Container Settings…** menu
-to edit its name, appearance, sources and Contents.
+to edit its name, appearance, sources and Contents. For RADE digital voice, add
+**Microphone waveform** or **Decoded speech waveform** from **Available**; each
+shows the container's slice when it is in a RADE mode (the microphone one draws only when that slice is the transmit slice) and only watches audio already running.
 
 ## Arrange the workspace
 
@@ -50,7 +52,8 @@ A container provides an inherited source, and supported meters may select an
 explicit slice/session in Properties. Missing, stale or foreign sources show an
 unavailable reading rather than values from a different receiver or station.
 Clock and MMIO sources remain independent. An unavailable applet or unsupported
-legacy object keeps its place and configuration for later recovery.
+legacy object keeps its place and configuration for later recovery. An
+unavailable applet is shown grayed, with the reason under its title.
 
 ## With the workspace look on
 
@@ -77,8 +80,9 @@ let go where you want it:
 
 * near an edge of the main window, a box shows where it will land, and it
   docks there;
-* over the spectrum, it sits free where you dropped it, on an 8 pixel grid
-  (hold **Alt** to place it freely);
+* over the spectrum, it sits free where you dropped it; with
+  **Containers > Align to 8 px Grid** on, it settles on an 8 pixel grid (hold
+  **Alt** to place it freely);
 * outside the main window, it becomes a window of its own.
 
 This works the same for a docked container, a free one and a popped-out window,

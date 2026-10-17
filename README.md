@@ -19,6 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
 | Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
 | Connect an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
@@ -30,6 +31,48 @@ The [user guide](https://nereussdr.com/manual/) brings the operating instruction
 together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
+
+## What's new in 2026.10.1
+
+- **CAT and Hamlib rigctld.** Logging, contest and digital-mode programs
+  control NereusSDR over four slice-bound CAT channels, on TCP, serial or a
+  virtual serial port, with a separate rigctld port for Hamlib programs. A
+  remote window can run its own rigctld, so WSJT-X on that computer tunes and
+  keys the window, with its audio from NereusSDR TX.
+- **Antenna rotor control.** Turn a Yaesu GS-232A/B or Hamlib `rotctld` rotor
+  through the Core, from a Rotor applet, the iPhone or iPad app, or a spot.
+- **Native audio engines.** Each system uses its own audio system, device lists
+  update by themselves, and a Core speaker can be chosen from any window. The
+  header has separate PC and RADIO volumes.
+- **The workspace look is the default.** Show or hide container headers,
+  arrange and dock on all four edges, pop containers out, and switch between
+  workspace profiles.
+- **Receivers come back as you left them.** After a relaunch every receiver
+  returns with its own pan, squelch, APF, FM and AGC-T settings, and receivers
+  B, C and D run on the values they show.
+- **A Display pill on every pan.** Each panadapter has its own Display pill with
+  Spectrum, Levels, Waterfall, View and FFT tabs, and Setup's Display pages set
+  the defaults every pan starts from. A pan you adjust keeps its own value until
+  you reset it. Waterfall levels are one choice: Clarity, Auto, Floor, Manual or
+  Scale.
+- **PureSignal Bench and two-tone measurements.** The PureSignal applet and
+  Bench read the same correction and feedback instruments, AmpView has a
+  cursor readout, and a two-tone test measures IMD3 and IMD5 on the display.
+- **RADE waveform meters.** Add a microphone waveform and a decoded-speech
+  waveform to any container to watch RADE audio, on the desktop or a remote
+  desktop. Experimental RADE2-U and RADE2-L modes stay off until you turn them
+  on.
+- **Fixes.** Display and waterfall, two-tone and PureSignal, remote audio, and
+  Core installs. Protocol 1 radios get their transmit packets from a thread of
+  their own, aimed at Hermes Lite 2 PTT dropping through a Pi Core; that is
+  not yet confirmed on a keyed radio. See the [release notes](CHANGELOG.md).
+
+**Current version: 2026.10.1.** Packages are listed on the
+[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
+[2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
+before updating a station, and update the Core and desktop together. Rotor
+control, CAT Control on the phone and the Core speaker need a 2026.10.1 Core;
+older Cores and apps still connect.
 
 ## What's new in 2026.10.0
 
@@ -43,10 +86,9 @@ It is our first **calendar-versioned release**. `2026.10.0` is the first
 release in October 2026; another release that month becomes `2026.10.1`.
 The first release in a new month starts at `.0`. Releases ship when ready.
 
-**Current version: 2026.10.0.** Packages are listed on the
-[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
-[upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) before updating
-an existing station, and update the Core and desktop together.
+Coming from 0.5.2, read the
+[2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html)
+first.
 
 ## One station, several ways to operate
 
@@ -127,6 +169,10 @@ Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
   `scripts/radxa/README.md`. To check a kernel:
   `zcat /proc/config.gz | grep RT_GROUP_SCHED`. To see whether the controller
   is on, look for `cpu` in `cat /sys/fs/cgroup/cgroup.subtree_control`.
+
+A rotor or serial CAT on the Core also needs the `dialout` group, through a
+`serial.conf` drop-in that the `.deb` packages do not ship. The
+[SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) has it.
 
 #### The system setting the Core's installer changes
 
@@ -248,6 +294,9 @@ if you want to host the remote-access service yourself.
   CFC frequency selection and undo/redo. PureSignal 3 adds correction assets,
   status and AmpView. AM/SAM/DSB transmit and the AM modulation monitor add
   carrier, envelope and positive/negative modulation readings.
+- **Workspace look.** Headers show or hide with the eye button, an Arrange
+  mode lets you move containers, containers dock on all four edges, pop-out
+  windows have a pin, and workspace profiles save whole layouts.
 - **Applets, Canvas and meters.** Stack or float containers, or arrange
   applets, meters and fifteen individual controls on an editable Canvas.
   Move, resize, layer and lock objects, preview changes, and Apply or Cancel.
@@ -255,6 +304,11 @@ if you want to host the remote-access service yourself.
   bring readings together. Supported objects can follow the selected receiver
   or stay with a fixed receiver. Existing layouts and external MMIO bindings
   survive migration and portable layout exchange.
+- **Native audio and CAT.** Each system plays and records through its own
+  audio system (Core Audio, Windows audio and ASIO, PipeWire or PulseAudio,
+  and ALSA direct on the headless Core) with device lists that update live.
+  The header has separate PC and RADIO volumes. CAT runs on four slice-bound
+  channels, with Hamlib rigctld for loggers.
 - **Audio and digital applications.** Choose receiver mixes, station and
   radio speaker/headphone output, microphone sources and VAX audio buses.
   TCI provides WebSocket control/audio for external applications. Spots from
@@ -264,7 +318,8 @@ if you want to host the remote-access service yourself.
 - **Station accessories.** Operate PGXL, TGXL and RF-Kit RF2K-S through the
   Core, with device authority and tuner sequencing. Hardware controls follow
   the connected radio's capabilities, including attenuation, preamp,
-  microphone inputs and ADC overload indication.
+  microphone inputs and ADC overload indication. Turn a GS-232A/B or Hamlib
+  `rotctld` rotor through the Core, from the Rotor applet, the iPhone or a spot.
 
 ## Radios and downloads
 
@@ -272,6 +327,7 @@ NereusSDR supports radios using **OpenHPSDR Protocol 1 or Protocol 2**:
 
 - Apache Labs ANAN-G2/Saturn, ANAN-7000DLE, ANAN-8000DLE, ANAN-200D,
   ANAN-100D, ANAN-100, ANAN-10E and other compatible ANAN models.
+- Anvelina Pro 3.
 - Hermes Lite 2.
 - OpenHPSDR Metis, Hermes, Angelia, Orion and Orion MkII hardware.
 
@@ -328,13 +384,12 @@ installers do not have an Authenticode signature and may prompt through SmartScr
 
 PureSignal two-tone runs have an open transmit-stream continuity issue.
 Receive restoration after unkeying still needs physical-radio validation.
-Waterfall brightness can change when selecting a receiver and switching
-between Core and Clarity level ownership. These items remain under investigation.
+These items remain under investigation.
 The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusSDR/issues/235),
 [#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
 [#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
 
-CAT/rigctld follows in the next release. CW transmit/keyer/QSK, FM pre-emphasis,
+CAT/rigctld and rotor control arrived in 2026.10.1. CW transmit/keyer/QSK, FM pre-emphasis,
 legacy skin import and WAV/IQ recording remain future work. Radio-specific and
 on-air checks are recorded in the [feature verification documents](docs/architecture/).
 
