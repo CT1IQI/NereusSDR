@@ -19,6 +19,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : openRole() gives the bus its stream event sink before
+//                 it opens, so a device lost during or right after the
+//                 open reaches the supervisor; each bus has a generation
+//                 never used before, taken by the role once it opens.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1084,7 +1090,8 @@ void AudioEngine::reinitForSampleRate(int newWireRateHz)
 std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                                                 bool capture,
                                                 bool* inUse,
-                                                std::optional<AudioRole> role)
+                                                std::optional<AudioRole> role,
+                                                std::function<void(const AudioStreamEvent&)> eventSink)
 {
     if (inUse != nullptr) {
         *inUse = false;
@@ -1096,6 +1103,9 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
     // Fix wave follow-up: a test never opens this computer's real devices.
     if (m_deviceBusFactoryForTest) {
         std::unique_ptr<IAudioBus> fake = m_deviceBusFactoryForTest(cfg, capture);
+        if (fake && eventSink) {
+            fake->setStreamEventSink(std::move(eventSink));
+        }
         if (!fake || !fake->open(toAudioFormat(cfg))) {
             return nullptr;
         }
@@ -1155,6 +1165,11 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                 qCWarning(lcAudio) << "Audio output not created on" << audioEngineLabel(engine);
                 return nullptr;
             }
+            // Before open(): a device lost from the moment the bus watches
+            // it reaches the sink (most buses drop an event with no sink).
+            if (eventSink) {
+                bus->setStreamEventSink(std::move(eventSink));
+            }
             if (!bus->open(toAudioFormat(cfg))) {
                 qCWarning(lcAudio) << "IAudioBus open failed:" << bus->errorString();
                 if (inUse != nullptr) {
@@ -1171,6 +1186,9 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
         }
     }
     auto bus = std::make_unique<PortAudioBus>();
+    if (eventSink) {
+        bus->setStreamEventSink(std::move(eventSink));
+    }
     PortAudioConfig pcfg;
     pcfg.direction     = capture ? AudioDirection::Input
                                  : AudioDirection::Output;
@@ -1975,7 +1993,7 @@ void AudioEngine::tearDownAudioDevices()
         m_catalogue.reset();
     }
     for (quint64& generation : m_roleBusGeneration) {
-        ++generation;
+        generation = ++m_lastBusGeneration;
     }
     m_roleOpenEngine.fill(std::nullopt);
     for (QString& id : m_roleOpenDeviceId) {
@@ -2032,16 +2050,16 @@ bool AudioEngine::backendOpensOneStreamAtATime(AudioEngineKind engine) const
     return false;
 }
 
-std::function<void(const AudioStreamEvent&)> AudioEngine::makeStreamEventSink(AudioRole role)
+std::function<void(const AudioStreamEvent&)> AudioEngine::makeStreamEventSink(AudioRole role,
+                                                                           quint64 generation)
 {
     // The bus may call this on its device thread: it only posts.
-    const quint64 generation = m_roleBusGeneration[roleIndex(role)];
     return [this, role, generation](const AudioStreamEvent& event) {
         QMetaObject::invokeMethod(
             this,
             [this, role, generation, event]() {
                 if (!m_streamSupervisor || m_roleBusGeneration[roleIndex(role)] != generation) {
-                    return;   // the bus that sent it has been replaced or closed
+                    return;   // the bus that sent it has been replaced or closed, or never opened
                 }
                 m_streamSupervisor->onStreamEvent(role, event);
             },
@@ -2106,7 +2124,7 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         }
     }
     if (closeFirst) {
-        ++m_roleBusGeneration[idx];
+        m_roleBusGeneration[idx] = ++m_lastBusGeneration;
         m_roleOpenEngine[idx].reset();
         m_roleOpenDeviceId[idx].clear();
         std::unique_ptr<IAudioBus> old;
@@ -2124,13 +2142,19 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         old.reset();
     }
 
+    // The bus has its sink before it opens, so a device lost during the
+    // open, or before the bus is in the slot, reaches the supervisor (a
+    // bus drops an event it has no sink for).  Its generation is new; the
+    // role takes it only once the bus has opened, so the events of a
+    // failed open are dropped and the bus playing now keeps its own.
+    const quint64 busGeneration = ++m_lastBusGeneration;
     bool inUse = false;
-    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse, role);
+    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse, role,
+                                             makeStreamEventSink(role, busGeneration));
     const bool opened = bus != nullptr;
     QString backendName;
     if (opened) {
-        ++m_roleBusGeneration[idx];
-        bus->setStreamEventSink(makeStreamEventSink(role));
+        m_roleBusGeneration[idx] = busGeneration;
         backendName = bus->backendName();
         std::unique_ptr<IAudioBus> old;
         {
@@ -2203,7 +2227,7 @@ void AudioEngine::closeRole(AudioRole role)
         return;
     }
     const std::size_t idx = roleIndex(role);
-    ++m_roleBusGeneration[idx];
+    m_roleBusGeneration[idx] = ++m_lastBusGeneration;
     m_roleOpenEngine[idx].reset();
     m_roleOpenDeviceId[idx].clear();
     bool wasOpen = false;

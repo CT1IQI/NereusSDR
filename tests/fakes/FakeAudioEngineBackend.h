@@ -36,6 +36,10 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: setListsOnDemand(). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: setOutputLostInOpen(): the next output made for a device
+//               id loses its device inside open(), and later ones fail to
+//               open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #pragma once
@@ -214,6 +218,11 @@ public:
             std::lock_guard<std::mutex> lock(m_mutex);
             bus->setAudioWorkgroupDevice(m_workgroupDevices.value(request.deviceId, 0));
             bus->setOpenResult(!m_failingOutputs.contains(request.deviceId));
+            if (const auto lost = m_lostInOpen.find(request.deviceId); lost != m_lostInOpen.end()) {
+                bus->setLosesDeviceInOpenForTest(lost.value());
+                m_lostInOpen.erase(lost);
+                m_failingOutputs.append(request.deviceId);   // gone: it opens no more
+            }
             m_outputRequests.push_back(request);
             m_outputAlive.push_back(alive);
             m_lastOutput = bus.get();
@@ -291,6 +300,14 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_failingOutputs = std::move(deviceIds);
+    }
+    // The next output made for this request device id loses its device
+    // inside open() (FakeMatcherAudioBus::setLosesDeviceInOpenForTest),
+    // and every later one fails to open, as a device that went away.
+    void setOutputLostInOpen(const QString& deviceId, FakeMatcherAudioBus::NoSinkEvent noSink)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_lostInOpen.insert(deviceId, noSink);
     }
     void setCallbackFrames(int frames) { m_callbackFrames = frames; }
     void setFadeTimeMs(int ms) { m_fadeTimeMs = ms; }
@@ -470,6 +487,7 @@ private:
     std::shared_ptr<std::atomic<int>> m_closedUnfaded = std::make_shared<std::atomic<int>>(0);
     std::vector<std::shared_ptr<std::atomic<bool>>> m_outputAlive;
     QStringList m_failingOutputs;
+    QHash<QString, FakeMatcherAudioBus::NoSinkEvent> m_lostInOpen;
     int m_callbackFrames = 128;
     int m_fadeTimeMs = 0;
     std::atomic<bool> m_oneStreamAtATime{false};

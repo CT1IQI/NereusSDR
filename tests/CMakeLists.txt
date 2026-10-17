@@ -2103,6 +2103,13 @@ target_compile_definitions(tst_port_audio_on_demand PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_audio_engine_native_routing fakes/FakeCaptureChild.cpp)
 target_compile_definitions(tst_audio_engine_native_routing PRIVATE NEREUS_BUILD_TESTS)
 
+# R-AUD-03, R-AUD-08: a chosen device lost while its bus opens leaves
+# Playing on every engine (the engine sets the bus's event sink before the
+# open), and a failed open's events never reach the next bus.  Fake
+# engines only.
+nereus_add_test(tst_audio_engine_loss_in_open)
+target_compile_definitions(tst_audio_engine_loss_in_open PRIVATE NEREUS_BUILD_TESTS)
+
 # R-R3-36 Task 1: capture helper record protocol. Framing, bounded
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)

@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : makeBus() sets a stream event sink before the open;
+//                 makeStreamEventSink() takes the bus's generation, and
+//                 m_lastBusGeneration hands each one out once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-15 : isVaxTxBusOpen(); openVaxOutputs() opens the VAX TX
 //                 device in a remote window too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1627,10 +1632,13 @@ private:
     // because another program holds the device (R-AUD-11).
     // `role`, when given, is the role the output plays (an ASIO use names
     // it to the helper, Task 17).
+    // `eventSink`, when given, is the bus's stream event sink, set before
+    // it opens.
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
                                        bool capture,
                                        bool* inUse = nullptr,
-                                       std::optional<AudioRole> role = std::nullopt);
+                                       std::optional<AudioRole> role = std::nullopt,
+                                       std::function<void(const AudioStreamEvent&)> eventSink = {});
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
@@ -1687,9 +1695,11 @@ private:
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
     AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
-    // The bus's stream events, posted to this thread; dropped once the
-    // role's bus has been replaced or closed.
-    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role);
+    // The stream events of the bus given `generation`, posted to this
+    // thread; dropped unless the role's generation is still that one (the
+    // bus opened and has not been replaced or closed).
+    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role,
+                                                                     quint64 generation);
     AudioOpenResult openMicRole(AudioEngineKind engine,
                                 const std::optional<AudioDeviceInfo>& device,
                                 const AudioDeviceConfig& config);
@@ -1771,9 +1781,13 @@ private:
     AudioEngineKind m_defaultEngine{AudioEngineKind::PortAudio};
     std::unique_ptr<AudioDeviceCatalog> m_catalogue;
     std::unique_ptr<AudioStreamSupervisor> m_streamSupervisor;
-    // Per role: bumped on every open and close, so a late stream event
-    // from a replaced bus is dropped; the engine of the open bus.
+    // Per role: a new generation on every open and close, so a late
+    // stream event from a replaced bus is dropped; the engine of the open
+    // bus.  Every generation comes from m_lastBusGeneration, so none is
+    // given twice: a bus has its own before it opens, and the role takes
+    // it once the bus has opened.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
+    quint64 m_lastBusGeneration{0};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
     // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
     void noteSpeakersWorkgroup(const IAudioBus* bus);
