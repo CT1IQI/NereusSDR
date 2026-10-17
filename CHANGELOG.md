@@ -639,6 +639,13 @@ Advanced, and each control appears on one page only.
   Before, each pause was a gap a program such as WSJT-X heard, and the pitch
   could move by up to about 25 Hz, enough to cost FT8 decodes. The larger
   reserve moves WSJT-X's DT by up to about 0.12 s.
+- When a Core stops naming a direct address, a desktop window and the iPhone
+  and iPad app now drop it, also from the addresses they reached the Core on.
+  That includes a Core reporting that it has none, as after IPv6 is turned off
+  on it. The address the current connection uses goes once a connection on
+  another address is made. Before, a Core's empty list was ignored and an
+  address it had named stayed, so a dead address was dialed on every
+  reconnect.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
 - On Linux, a window closed while maximized or full screen comes back with
