@@ -16,6 +16,9 @@
 //   2026-10-11  J.J. Boyd / KG4VCF. Run as nine ctest entries
 //                (TestFunctionGroups), past the 120 s limit as one under
 //                load. AI-assisted via Anthropic Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF. A reveal that grows the layout docks
+//                another device's slice keyed to the pan it makes, flag and
+//                stream. AI-assisted via Anthropic Claude Code.
 
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
@@ -2040,6 +2043,50 @@ private slots:
         QCOMPARE(f.remaining->centerFrequency(), f.viewCentre);
     }
 
+    // D is the phone's, keyed by the phone to pan-1, which layout 1 does not
+    // show, so D sits on no pan here and keeps its key. A reveal that grows
+    // the window makes pan-1, and D goes onto it with its flag and its
+    // stream, as the hidden pan that held D used to when a layout took it up.
+    void aRevealGrowDocksASliceKeyedToThePanItMakes()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        PlacedListen f;
+        prepareListenedSlice(f, true);
+        if (QTest::currentTestFailed()) { return; }
+        placeListenedSlice(f);
+        if (QTest::currentTestFailed()) { return; }
+        PanadapterApplet* kept = f.stack->panadapter(QStringLiteral("pan-0"));
+        QVERIFY(kept);
+        const int dId = f.model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(dId >= 0);
+        SliceModel* d = f.model->sliceById(dId);
+        d->setFrequency(f.model->sliceById(f.aId)->frequency() + 3'000'000.0);
+        f.model->sliceOwnership()->setOwner(dId, f.phone);
+        QVERIFY(!kept->associatedSlices().contains(dId));
+        // E: the phone's, on no pan of this window's; revealing it grows the
+        // window to two pans.
+        const int eId = f.model->addSlice(QStringLiteral("pan-7"));
+        QVERIFY(eId >= 0);
+        f.model->sliceById(eId)->setFrequency(
+            f.model->sliceById(f.aId)->frequency() + 2'000'000.0);
+        f.model->sliceOwnership()->setOwner(eId, f.phone);
+        f.window->revealSliceInWindowForTest(eId);
+        QCOMPARE(f.stack->currentLayoutId(), QStringLiteral("2v"));
+        PanadapterApplet* made = f.stack->panadapter(QStringLiteral("pan-1"));
+        QVERIFY(made);
+        QVERIFY(made->associatedSlices().contains(dId));
+        QVERIFY(!kept->associatedSlices().contains(dId));
+        QCOMPARE(d->panKey(), QStringLiteral("pan-1"));
+        QVERIFY(flagOn(f.stack->spectrum(QStringLiteral("pan-1")), dId));
+        QVERIFY(!flagOn(f.remaining, dId));
+        QVERIFY(d->streamIndex() >= 0);
+        const QList<QString> fed = f.model->fftRouter()->pansForReceiver(d->streamIndex());
+        QVERIFY2(fed.contains(QStringLiteral("pan-1")),
+                 qPrintable(QStringLiteral("stream %1 feeds %2")
+                                .arg(d->streamIndex()).arg(fed.join(QLatin1Char(',')))));
+        QVERIFY(!fed.contains(QStringLiteral("pan-0")));
+    }
+
     void aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
@@ -3206,6 +3253,7 @@ int main(int argc, char** argv)
          {QStringLiteral("layout"),
           {QStringLiteral("layoutChangeKeepsListeningToASliceOnARemainingPan"),
            QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
+           QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
            QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),
            QStringLiteral("aListenedSliceWhosePanIsGoneKeepsItsOwnShift")}},
          {QStringLiteral("placed"),

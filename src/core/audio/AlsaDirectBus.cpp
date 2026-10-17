@@ -181,8 +181,7 @@ struct AlsaDirectBus::Impl {
             }
             s = sink;
             if (!s) {
-                // The engine sets its sink after open() returns; a loss in
-                // between waits for it.
+                // With no sink set yet, the loss waits for one.
                 pendingEvent = event;
                 return;
             }

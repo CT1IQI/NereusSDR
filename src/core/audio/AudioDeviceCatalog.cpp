@@ -24,6 +24,13 @@
 //               only once something asks for it (wantOlderDrivers, a read
 //               of its devices, Rescan). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: start(FirstList::InBackground) returns at once; the first
+//               list arrives through the main thread's queue.  The window
+//               starts it so; the Core and the tests still wait.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-17: firstListWaitLeftMs(), timed from a start in the
+//               background.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -34,6 +41,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -382,12 +390,13 @@ AudioDeviceCatalog::~AudioDeviceCatalog()
     stop();
 }
 
-void AudioDeviceCatalog::start()
+void AudioDeviceCatalog::start(FirstList firstList)
 {
     if (m_thread) {
         return;
     }
     m_listed = false;
+    m_backgroundStart.invalidate();
     m_state = std::make_shared<State>();
     m_state->backends = m_backends;
     m_state->claims = m_claims;
@@ -426,11 +435,18 @@ void AudioDeviceCatalog::start()
 
     {
         std::lock_guard<std::mutex> lock(m_state->firstMutex);
-        m_state->waitingForFirst = true;
+        m_state->waitingForFirst = firstList == FirstList::Wait;
     }
     m_thread->start();
     Worker* target = m_worker;
     QMetaObject::invokeMethod(target, [target] { target->relist(); }, Qt::QueuedConnection);
+    if (firstList == FirstList::InBackground) {
+        // 2026-10-16: the window never waits.  The list arrives through the
+        // main thread's queue, as after a start that gave up waiting.  A
+        // reader may wait for it what this start would have.
+        m_backgroundStart.start();
+        return;
+    }
 
     std::optional<Listing> first;
     {
@@ -516,6 +532,7 @@ void AudioDeviceCatalog::stop()
     m_worker = nullptr;
     m_state.reset();
     m_listed = false;
+    m_backgroundStart.invalidate();
 }
 
 void AudioDeviceCatalog::setDebounceIntervalForTest(int ms)
@@ -604,6 +621,14 @@ std::optional<AudioDeviceInfo> AudioDeviceCatalog::defaultDevice(AudioBackendId 
 bool AudioDeviceCatalog::hasListed() const
 {
     return m_listed;
+}
+
+int AudioDeviceCatalog::firstListWaitLeftMs() const
+{
+    if (m_listed || !m_backgroundStart.isValid()) {
+        return 0;
+    }
+    return int(std::max<qint64>(0, kStartWaitMs - m_backgroundStart.elapsed()));
 }
 
 void AudioDeviceCatalog::rescanOlderDrivers()

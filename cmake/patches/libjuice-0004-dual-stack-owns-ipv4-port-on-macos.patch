@@ -18,9 +18,11 @@ port is held first, the dual-stack socket binds onto it, and the hold is
 closed. A port 0 bind lets the system pick the IPv4 port and tries again,
 up to 16 times, when that port is taken for IPv6. An explicit port taken for
 IPv4 fails with EADDRINUSE, so a port range moves on to its next port. If no
-IPv4 socket can be made, the bind is unchanged. Other systems refuse the
-colliding bind already and are unchanged. libjuice upstream (v1.7.4 and
-master on 2026-10-16) has the same src/udp.c and no option for this.
+IPv4 socket can be made, the bind is unchanged. Linux already refuses the
+colliding bind with EADDRINUSE and never picks a port held for IPv4 (checked
+2026-10-16 on Linux 6.12); Windows was not checked. Both are unchanged.
+libjuice upstream (v1.7.4 and master on 2026-10-16) has the same src/udp.c
+and no option for this.
 
 --- a/src/udp.c
 +++ b/src/udp.c
@@ -35,7 +37,7 @@ master on 2026-10-16) has the same src/udp.c and no option for this.
  #include "udp.h"
  #include "addr.h"
  #include "log.h"
-@@ -42,8 +46,84 @@
+@@ -42,6 +46,84 @@
  	uint16_t next = begin + count++ % (diff + 1);
  	mutex_unlock(&mutex);
  	return next;
@@ -76,6 +78,7 @@ master on 2026-10-16) has the same src/udp.c and no option for this.
 +static int bind_dual_stack(socket_t sock, struct sockaddr *addr, socklen_t addrlen) {
 +	const uint16_t wanted = addr_get_port(addr);
 +	const int attempts = wanted == 0 ? DUAL_STACK_PICK_ATTEMPTS : 1;
++	int err = SEADDRINUSE;
 +	for (int i = 0; i < attempts; ++i) {
 +		uint16_t port = 0;
 +		socket_t hold = hold_ipv4_port(wanted, &port);
@@ -92,35 +95,34 @@ master on 2026-10-16) has the same src/udp.c and no option for this.
 +
 +		addr_set_port(addr, port);
 +		int ret = bind(sock, addr, addrlen);
-+		int err = sockerrno;
++		err = sockerrno;
 +		closesocket(hold);
 +		if (ret == 0)
 +			return 0;
 +
-+		errno = err;
 +		if (wanted != 0 || err != SEADDRINUSE)
 +			break;
 +
 +		JLOG_DEBUG("UDP port %hu is free for IPv4 only, picking another", port);
 +	}
 +
++	// Set last, so that no call above changes it
 +	addr_set_port(addr, wanted);
++	errno = err;
 +	return -1;
- }
++}
 +#endif
- 
++
 +static int bind_socket(socket_t sock, struct sockaddr *addr, socklen_t addrlen) {
 +#if defined(__APPLE__)
 +	if (addr->sa_family == AF_INET6 && addr_is_any(addr))
 +		return bind_dual_stack(sock, addr, addrlen);
 +#endif
 +	return bind(sock, addr, addrlen);
-+}
-+
+ }
+ 
  static socket_t create_socket_for_addrinfo(const udp_socket_config_t *config,
-                                            const struct addrinfo *ai) {
- 	// Create socket
-@@ -91,7 +171,11 @@
+@@ -91,7 +173,11 @@
  
  	// Bind it
  	if (config->port_begin == 0 && config->port_end == 0) {
@@ -133,7 +135,7 @@ master on 2026-10-16) has the same src/udp.c and no option for this.
  			JLOG_DEBUG("UDP socket bound to %s:%hu",
  			           config->bind_address ? config->bind_address : "any", udp_get_port(sock));
  			return sock;
-@@ -106,7 +190,7 @@
+@@ -106,7 +192,7 @@
  		memcpy(&addr, ai->ai_addr, addrlen);
  		addr_set_port((struct sockaddr *)&addr, port);
  
@@ -142,7 +144,7 @@ master on 2026-10-16) has the same src/udp.c and no option for this.
  			JLOG_DEBUG("UDP socket bound to %s:%hu",
  			           config->bind_address ? config->bind_address : "any", port);
  			return sock;
-@@ -123,7 +207,7 @@
+@@ -123,7 +209,7 @@
  		do {
  			uint16_t port = get_next_port_in_range(config->port_begin, config->port_end);
  			addr_set_port((struct sockaddr *)&addr, port);

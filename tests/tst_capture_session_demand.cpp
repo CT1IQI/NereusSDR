@@ -18,10 +18,16 @@
 //               so a busy computer cannot fail a case that is not about
 //               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: setSharedCaptureSupervisor(): the application's standing
+//               helper outlives one engine and serves the next one's open,
+//               and the next engine starts Closed after the last one's
+//               failure.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QSignalSpy>
@@ -269,6 +275,68 @@ private slots:
         float buffer[64] = {};
         QCOMPARE(engine.pullTxMic(buffer, 64), 0);
         engine.stop();
+    }
+
+    // 2026-10-16: the persistent helper.  An engine built while a shared
+    // supervisor is set uses it, so the supervisor's standing helper
+    // outlives the engine (a window retired at a Core switch) and the next
+    // engine's open runs on that same process.
+    void sharedSupervisorKeepsItsHelperAcrossEngines()
+    {
+        CaptureSupervisor shared(fakeOptions(QStringLiteral("ready")));
+        auto standby = shared.acquire(CaptureSupervisor::Demand::Standby);
+        AudioEngine::setSharedCaptureSupervisor(&shared);
+        auto first = std::make_unique<AudioEngine>();
+        QTRY_VERIFY_WITH_TIMEOUT(first->captureHelperProcessIdForTest() > 0, kHelperStartMs);
+        const qint64 pid = first->captureHelperProcessIdForTest();
+        QVERIFY(!first->hasCaptureDemand());
+        QCOMPARE(first->captureStatus().state, State::Closed);
+
+        auto lease = first->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
+        QTRY_COMPARE_WITH_TIMEOUT(first->captureStatus().state, State::Ready, kHelperStartMs);
+        QCOMPARE(first->captureHelperProcessIdForTest(), pid);
+        lease.release();
+        first.reset();
+        QTRY_COMPARE_WITH_TIMEOUT(shared.status().state, State::Closed, 5000);
+        QTest::qWait(300);
+        QCOMPARE(shared.helperProcessId(), pid);                // outlived the engine
+        QVERIFY(!processIsGone(pid));
+
+        auto second = std::make_unique<AudioEngine>();
+        QCOMPARE(second->captureHelperProcessIdForTest(), pid);
+        auto again = second->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
+        QTRY_COMPARE_WITH_TIMEOUT(second->captureStatus().state, State::Ready, kHelperStartMs);
+        QCOMPARE(second->captureHelperProcessIdForTest(), pid);
+        QCOMPARE(shared.lastHelperProcessId(), pid);            // no other helper started
+        again.release();
+        second.reset();
+        AudioEngine::setSharedCaptureSupervisor(nullptr);
+
+        standby.release();
+        QTRY_VERIFY_WITH_TIMEOUT(processIsGone(pid), 3000);
+    }
+
+    // A failure the last engine saw on the shared supervisor (here: no
+    // helper program) is not the next engine's: it starts Closed, as an
+    // engine with a supervisor of its own would.
+    void newEngineDoesNotInheritTheSharedFailure()
+    {
+        CaptureSupervisor::Options options;
+        options.program = QDir(QCoreApplication::applicationDirPath())
+                              .filePath(QStringLiteral("no-such-capture-helper"));
+        CaptureSupervisor shared(options);
+        AudioEngine::setSharedCaptureSupervisor(&shared);
+        auto first = std::make_unique<AudioEngine>();
+        auto lease = first->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
+        QTRY_COMPARE_WITH_TIMEOUT(first->captureStatus().state, State::Failed, 3000);
+        lease.release();
+        first.reset();
+        QCOMPARE(shared.status().state, State::Failed);         // a failure persists
+
+        auto second = std::make_unique<AudioEngine>();
+        QTRY_COMPARE_WITH_TIMEOUT(second->captureStatus().state, State::Closed, 3000);
+        second.reset();
+        AudioEngine::setSharedCaptureSupervisor(nullptr);
     }
 
     // A helper that hangs in open never delays start() or a demand; the

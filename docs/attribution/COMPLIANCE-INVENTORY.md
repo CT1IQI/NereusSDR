@@ -39,7 +39,7 @@ inventory and per-component provenance docs.
 
 # Compliance Inventory
 
-Total tracked files: **7375**
+Total tracked files: **7390**
 
 ## aethersdr-port (86)
 
@@ -790,7 +790,7 @@ Total tracked files: **7375**
 - `third_party/fftw3/lib/libfftw3f-3.a`
 - `third_party/fftw3/lib/libfftw3f-3.def`
 
-## nereussdr-original (4095)
+## nereussdr-original (4107)
 
 - `.claude/commands/triage.md`
 - `.gitattributes`
@@ -3314,6 +3314,10 @@ Total tracked files: **7375**
 - `scripts/audit-wdsp-headers.py`
 - `scripts/check-new-ports.py`
 - `scripts/check-third-party-licenses.py`
+- `scripts/ci/box-linux.sh`
+- `scripts/ci/box-run.sh`
+- `scripts/ci/change-scope.sh`
+- `scripts/ci/linux-route.sh`
 - `scripts/ci/macos-openssl.sh`
 - `scripts/collect-crate-notices.py`
 - `scripts/collect-source-notices.py`
@@ -3599,6 +3603,8 @@ Total tracked files: **7375**
 - `src/core/audio/CaptureProtocol.h`
 - `src/core/audio/CaptureShm.cpp`
 - `src/core/audio/CaptureShm.h`
+- `src/core/audio/CaptureStandby.cpp`
+- `src/core/audio/CaptureStandby.h`
 - `src/core/audio/CaptureSupervisor.cpp`
 - `src/core/audio/CaptureSupervisor.h`
 - `src/core/audio/CompositeTxMicRouter.cpp`
@@ -3628,9 +3634,15 @@ Total tracked files: **7375**
 - `src/core/audio/LinuxPipeControl.h`
 - `src/core/audio/LinuxPipeOwnership.cpp`
 - `src/core/audio/LinuxPipeOwnership.h`
+- `src/core/audio/MacMicMode.h`
+- `src/core/audio/MacMicMode.mm`
 - `src/core/audio/MatcherRing.h`
+- `src/core/audio/MicModeKeeper.cpp`
+- `src/core/audio/MicModeKeeper.h`
 - `src/core/audio/MicUplinkCollector.cpp`
 - `src/core/audio/MicUplinkCollector.h`
+- `src/core/audio/NativeAudioFirstCall.cpp`
+- `src/core/audio/NativeAudioFirstCall.h`
 - `src/core/audio/NativeAudioQueryTrace.h`
 - `src/core/audio/PcMicSource.cpp`
 - `src/core/audio/PcMicSource.h`
@@ -4888,12 +4900,13 @@ Total tracked files: **7375**
 - `website/screenshot-sources.md`
 - `website/test-release-links.cjs`
 
-## packaging (97)
+## packaging (98)
 
 - `.github/ISSUE_TEMPLATE/bug_report.yml`
 - `.github/ISSUE_TEMPLATE/config.yml`
 - `.github/ISSUE_TEMPLATE/feature_request.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md`
+- `.github/actionlint.yaml`
 - `.github/docker/Dockerfile`
 - `.github/release-notes-template.md`
 - `.github/workflows/ci.yml`
@@ -5081,7 +5094,7 @@ Total tracked files: **7375**
 - `resources/shaders/waterfall.frag`
 - `resources/shaders/waterfall.vert`
 
-## test (1761)
+## test (1763)
 
 - `tests/CMakeLists.txt`
 - `tests/CatFixtureHarness.h`
@@ -5586,6 +5599,7 @@ Total tracked files: **7375**
 - `tests/tst_audio_driver_list.cpp`
 - `tests/tst_audio_engine_antivox_mix.cpp`
 - `tests/tst_audio_engine_flow_state.cpp`
+- `tests/tst_audio_engine_loss_in_open.cpp`
 - `tests/tst_audio_engine_master_mute.cpp`
 - `tests/tst_audio_engine_matcher_push.cpp`
 - `tests/tst_audio_engine_mox_gate_release.cpp`
@@ -5971,6 +5985,7 @@ Total tracked files: **7375**
 - `tests/tst_meter_responsive_fonts.cpp`
 - `tests/tst_metric_label.cpp`
 - `tests/tst_mic_line_phone_answer.cpp`
+- `tests/tst_mic_mode_keeper.cpp`
 - `tests/tst_mic_profile_manager.cpp`
 - `tests/tst_mic_profile_manager_cfc_live_path.cpp`
 - `tests/tst_mic_profile_manager_cfc_round_trip.cpp`

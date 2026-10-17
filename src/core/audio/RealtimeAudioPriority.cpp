@@ -19,6 +19,10 @@
 //               called at the start of the Mac's default output workgroup
 //               lookup when a test sets it. With AI-assisted implementation
 //               via Anthropic Claude Code.
+//   2026-10-16  J.J. Boyd (KG4VCF): the Mac's workgroup lookups mark the
+//               process's first native audio call (NativeAudioFirstCall),
+//               for the persistent capture helper's timing. AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 #include "RealtimeAudioPriority.h"
 
@@ -93,6 +97,8 @@ struct AudioPriorityToken {
 
 #ifdef Q_OS_MAC
 
+#include "core/audio/NativeAudioFirstCall.h"
+
 #include <CoreAudio/CoreAudio.h>
 #include <os/workgroup.h>
 #include <pthread/qos.h>
@@ -117,6 +123,7 @@ os_workgroup_t fetchDefaultOutputWorkgroup()
     };
     AudioDeviceID deviceId = kAudioObjectUnknown;
     UInt32 deviceSize = sizeof(deviceId);
+    markNativeAudioCall("audio workgroup lookup");
     OSStatus st = AudioObjectGetPropertyData(
         kAudioObjectSystemObject, &defaultOutAddr,
         0, nullptr, &deviceSize, &deviceId);
@@ -227,6 +234,7 @@ bool rejoinAudioWorkgroup(AudioPriorityToken* token, std::uint32_t audioObjectId
     };
     os_workgroup_t wg = nullptr;
     UInt32 wgSize = sizeof(os_workgroup_t);
+    markNativeAudioCall("audio workgroup rejoin");
     const OSStatus st = AudioObjectGetPropertyData(
         static_cast<AudioObjectID>(audioObjectId), &wgAddr, 0, nullptr, &wgSize, &wg);
     if (st != noErr || wg == nullptr) {

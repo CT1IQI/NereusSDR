@@ -46,7 +46,7 @@ chooser; that does not release or stop listening.
 
 ## Arrange panadapters and floating windows
 
-Choose **View > Pan Layout…** (shortcut **Ctrl+L**) to select one of the layouts shown in the dialog. The chosen layout is this desktop's presentation; it does not create radio receivers. The active pan is the one whose controls and add-slice action are targeted. Click inside the intended pan before adding a slice or opening a pan-specific action.
+Choose **View > Pan Layout…** (shortcut **Ctrl+L**) to select one of the layouts shown in the dialog. The chosen layout is this desktop's presentation; it does not create radio receivers. The active pan is the one whose controls and add-slice action are targeted. Click inside the intended pan before adding a slice or opening a pan-specific action. If a slice this window controls was placed on a pan the layout does not have, such as a second pan when this window shows one, it moves onto the first pan and the layout stays as it is. A slice another device controls keeps its pan; it appears here when you listen to it or choose a layout with that pan.
 
 To place one pan on another monitor, select it and choose **View > Float active pan…**. Move the floating window like an ordinary desktop window. Its title-bar dock/return control puts it back into the main layout. Closing the floating window also returns the pan to the main window; it does not remove its slices. If the main layout seems to be missing a receiver, check whether its pan is floating on another display before deleting or recreating slices.
 

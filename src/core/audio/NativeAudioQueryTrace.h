@@ -5,10 +5,14 @@
 // Modification history (NereusSDR):
 //   2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               Trace native enumeration queries without logging device data.
+//   2026-10-16: tracedNativeAudioQuery() marks the process's first native
+//               audio call (NativeAudioFirstCall).  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
 #include "core/LogCategories.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -76,6 +80,7 @@ private:
 template<typename Callable>
 decltype(auto) tracedNativeAudioQuery(const char* stage, int ordinal, Callable&& callable)
 {
+    markNativeAudioCall(stage);
     NativeAudioQueryTrace trace(stage, ordinal);
     return std::forward<Callable>(callable)();
 }

@@ -19,9 +19,27 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : openRole() gives the bus its stream event sink before
+//                 it opens, so a device lost during or right after the
+//                 open reaches the supervisor; each bus has a generation
+//                 never used before, taken by the role once it opens.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-16 : openRemoteSpeakers() opens a remote window's speakers at
+//                 window start; speakersAwaitDeviceList() says they wait
+//                 for this computer's first device list; begin says when
+//                 it refused the device's format, which asking again
+//                 cannot change. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 : pullVaxTxMicKeepingBacklog(): a remote window's uplink
 //                 keeps the VAX TX device's backlog. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 : setDeviceListInBackground(): the window's catalog lists
+//                 in the background, so nothing waits for this computer's
+//                 first device list (the window held its open up to 3 s
+//                 for it); the stream supervisor waits for it instead.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -367,6 +385,11 @@
 //               packet's timing (MatcherPacketTiming), where it passed
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: an engine uses the application's shared capture
+//               supervisor when one is set (setSharedCaptureSupervisor(),
+//               the Mac's standing helper) and leaves it running when it
+//               goes.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -660,7 +683,18 @@ AudioEngine::AudioEngine(QObject* parent)
     // (application-less unit tests) has no capture input, exactly like an
     // engine whose capture never became Ready.
     if (QCoreApplication::instance() != nullptr) {
-        installCaptureSupervisor({});
+        // 2026-10-16: on the Mac the application's standing helper serves
+        // every engine (CaptureStandby); a failure the last window saw is
+        // not this one's, as a supervisor of its own would start Closed.
+        if (CaptureSupervisor* const shared = sharedCaptureSupervisor().data()) {
+            attachCaptureSupervisor(shared);
+            if (shared->status().state == CaptureSupervisor::Status::State::Failed
+                && !shared->hasDemand()) {
+                shared->retry();
+            }
+        } else {
+            installCaptureSupervisor({});
+        }
     }
 
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
@@ -684,8 +718,16 @@ AudioEngine::~AudioEngine()
     }
     m_asioLease.release();
     // Bounded (stop deadline plus slack); kills a helper that ignores Stop.
-    if (m_captureSupervisor) {
-        m_captureSupervisor->shutdown();
+    if (m_ownedCaptureSupervisor) {
+        m_ownedCaptureSupervisor->shutdown();
+    } else if (m_captureSupervisor) {
+        // 2026-10-16: the shared supervisor and its helper stay for the
+        // next engine; only this engine's uses of it end.
+        if (m_delayProbeEnabled.load(std::memory_order_acquire)) {
+            m_captureSupervisor->setProbeEnabled(false);
+        }
+        m_delayProbeLease.release();
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
     }
     // Pa_Terminate when this was the last engine and PortAudio was started.
     PortAudioLibrary::removeUser();
@@ -1087,7 +1129,8 @@ void AudioEngine::reinitForSampleRate(int newWireRateHz)
 std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                                                 bool capture,
                                                 bool* inUse,
-                                                std::optional<AudioRole> role)
+                                                std::optional<AudioRole> role,
+                                                std::function<void(const AudioStreamEvent&)> eventSink)
 {
     if (inUse != nullptr) {
         *inUse = false;
@@ -1099,6 +1142,9 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
     // Fix wave follow-up: a test never opens this computer's real devices.
     if (m_deviceBusFactoryForTest) {
         std::unique_ptr<IAudioBus> fake = m_deviceBusFactoryForTest(cfg, capture);
+        if (fake && eventSink) {
+            fake->setStreamEventSink(std::move(eventSink));
+        }
         if (!fake || !fake->open(toAudioFormat(cfg))) {
             return nullptr;
         }
@@ -1158,6 +1204,11 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                 qCWarning(lcAudio) << "Audio output not created on" << audioEngineLabel(engine);
                 return nullptr;
             }
+            // Before open(): a device lost from the moment the bus watches
+            // it reaches the sink (most buses drop an event with no sink).
+            if (eventSink) {
+                bus->setStreamEventSink(std::move(eventSink));
+            }
             if (!bus->open(toAudioFormat(cfg))) {
                 qCWarning(lcAudio) << "IAudioBus open failed:" << bus->errorString();
                 if (inUse != nullptr) {
@@ -1174,6 +1225,9 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
         }
     }
     auto bus = std::make_unique<PortAudioBus>();
+    if (eventSink) {
+        bus->setStreamEventSink(std::move(eventSink));
+    }
     PortAudioConfig pcfg;
     pcfg.direction     = capture ? AudioDirection::Input
                                  : AudioDirection::Output;
@@ -1509,8 +1563,29 @@ void AudioEngine::ensureSpeakersOpen()
 void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
 {
     m_asioLease.release();
-    m_captureSupervisor.reset();
-    m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    if (m_captureSupervisor) {
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
+    }
+    m_captureSupervisor.clear();
+    m_ownedCaptureSupervisor.reset();
+    m_ownedCaptureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    attachCaptureSupervisor(m_ownedCaptureSupervisor.get());
+}
+
+QPointer<CaptureSupervisor>& AudioEngine::sharedCaptureSupervisor()
+{
+    static QPointer<CaptureSupervisor> shared;
+    return shared;
+}
+
+void AudioEngine::setSharedCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    sharedCaptureSupervisor() = supervisor;
+}
+
+void AudioEngine::attachCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    m_captureSupervisor = supervisor;
     // Task 15: the helper's ASIO answers go to the ASIO backend; a held
     // ASIO demand moves to the new supervisor.
     connect(m_captureSupervisor.get(), &CaptureSupervisor::asioCaps, this,
@@ -1549,6 +1624,17 @@ std::atomic<bool>& AudioEngine::delayProbeRequestedAtStart()
 void AudioEngine::setDelayProbeRequestedAtStart(bool requested)
 {
     delayProbeRequestedAtStart().store(requested, std::memory_order_release);
+}
+
+std::atomic<bool>& AudioEngine::deviceListInBackground()
+{
+    static std::atomic<bool> inBackground{false};
+    return inBackground;
+}
+
+void AudioEngine::setDeviceListInBackground(bool inBackground)
+{
+    deviceListInBackground().store(inBackground, std::memory_order_release);
 }
 
 // V-HW-8: the lease opens the helper; the supervisor tells it to listen
@@ -1764,7 +1850,9 @@ bool AudioEngine::ensureCatalogue()
     if (savedChoicesNeedOlderDrivers()) {
         m_catalogue->wantOlderDrivers();
     }
-    m_catalogue->start();
+    m_catalogue->start(deviceListInBackground().load(std::memory_order_acquire)
+                           ? AudioDeviceCatalog::FirstList::InBackground
+                           : AudioDeviceCatalog::FirstList::Wait);
     // R-AUD-06 (round 3): the catalogue answers its rescans in the order
     // they were asked, one answer each, so each answer finishes the
     // Rescan that asked for it.  An answer that comes after its Rescan
@@ -1955,7 +2043,10 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     // Every choice is known: the supervisor starts now, so the outputs are
     // open when this returns, as the direct paths left them.  For MicOnly
     // the mic role starts alone; the outputs wait for start() or an output
-    // setting (the posted start then does nothing).
+    // setting (the posted start then does nothing).  Before the catalog's
+    // first list (the window lists in the background) the start waits for
+    // it, no longer than the catalog's start would have
+    // (IAudioDeviceCatalog::firstListWaitLeftMs()).
     if (start == DeviceStart::MicOnly) {
         m_streamSupervisor->startMicOnly();
     }
@@ -1978,7 +2069,7 @@ void AudioEngine::tearDownAudioDevices()
         m_catalogue.reset();
     }
     for (quint64& generation : m_roleBusGeneration) {
-        ++generation;
+        generation = ++m_lastBusGeneration;
     }
     m_roleOpenEngine.fill(std::nullopt);
     for (QString& id : m_roleOpenDeviceId) {
@@ -2035,16 +2126,16 @@ bool AudioEngine::backendOpensOneStreamAtATime(AudioEngineKind engine) const
     return false;
 }
 
-std::function<void(const AudioStreamEvent&)> AudioEngine::makeStreamEventSink(AudioRole role)
+std::function<void(const AudioStreamEvent&)> AudioEngine::makeStreamEventSink(AudioRole role,
+                                                                           quint64 generation)
 {
     // The bus may call this on its device thread: it only posts.
-    const quint64 generation = m_roleBusGeneration[roleIndex(role)];
     return [this, role, generation](const AudioStreamEvent& event) {
         QMetaObject::invokeMethod(
             this,
             [this, role, generation, event]() {
                 if (!m_streamSupervisor || m_roleBusGeneration[roleIndex(role)] != generation) {
-                    return;   // the bus that sent it has been replaced or closed
+                    return;   // the bus that sent it has been replaced or closed, or never opened
                 }
                 m_streamSupervisor->onStreamEvent(role, event);
             },
@@ -2109,7 +2200,7 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         }
     }
     if (closeFirst) {
-        ++m_roleBusGeneration[idx];
+        m_roleBusGeneration[idx] = ++m_lastBusGeneration;
         m_roleOpenEngine[idx].reset();
         m_roleOpenDeviceId[idx].clear();
         std::unique_ptr<IAudioBus> old;
@@ -2127,13 +2218,19 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         old.reset();
     }
 
+    // The bus has its sink before it opens, so a device lost during the
+    // open, or before the bus is in the slot, reaches the supervisor (a
+    // bus drops an event it has no sink for).  Its generation is new; the
+    // role takes it only once the bus has opened, so the events of a
+    // failed open are dropped and the bus playing now keeps its own.
+    const quint64 busGeneration = ++m_lastBusGeneration;
     bool inUse = false;
-    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse, role);
+    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse, role,
+                                             makeStreamEventSink(role, busGeneration));
     const bool opened = bus != nullptr;
     QString backendName;
     if (opened) {
-        ++m_roleBusGeneration[idx];
-        bus->setStreamEventSink(makeStreamEventSink(role));
+        m_roleBusGeneration[idx] = busGeneration;
         backendName = bus->backendName();
         std::unique_ptr<IAudioBus> old;
         {
@@ -2206,7 +2303,7 @@ void AudioEngine::closeRole(AudioRole role)
         return;
     }
     const std::size_t idx = roleIndex(role);
-    ++m_roleBusGeneration[idx];
+    m_roleBusGeneration[idx] = ++m_lastBusGeneration;
     m_roleOpenEngine[idx].reset();
     m_roleOpenDeviceId[idx].clear();
     bool wasOpen = false;
@@ -2481,10 +2578,12 @@ void AudioEngine::finishOlderDriversRescan(quint64 token)
     m_rescanMic = false;
 }
 
-bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput output)
+bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput output,
+                                      RemotePlaybackRefusal* refusal)
 {
+    if (refusal) { *refusal = RemotePlaybackRefusal::Unavailable; }
     if (output == RemotePlaybackOutput::Headphones) {
-        return beginRemoteHeadphonesPlayback(error);
+        return beginRemoteHeadphonesPlayback(error, refusal);
     }
     if (m_running) {
         if (error) { *error = QStringLiteral("Local DSP already owns speaker playback"); }
@@ -2511,6 +2610,7 @@ bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput outpu
                                     "%1 channels at %2 Hz")
                          .arg(format.channels).arg(format.sampleRate);
         }
+        if (refusal) { *refusal = RemotePlaybackRefusal::Format; }
         return false;
     }
     if (!m_speakersBus->outputPacing()) {
@@ -2523,10 +2623,11 @@ bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput outpu
     m_speakersBus->restartClockMatch();
     m_remotePlaybackFormat = format;
     m_remotePlayback = true;
+    if (refusal) { *refusal = RemotePlaybackRefusal::None; }
     return true;
 }
 
-bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
+bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error, RemotePlaybackRefusal* refusal)
 {
     // R-R3-45: the speakers' rules, on the headphones output.
     if (m_running) {
@@ -2555,6 +2656,7 @@ bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
                                     "%1 channels at %2 Hz")
                          .arg(format.channels).arg(format.sampleRate);
         }
+        if (refusal) { *refusal = RemotePlaybackRefusal::Format; }
         return false;
     }
     if (!m_headphonesBus->outputPacing()) {
@@ -2565,6 +2667,7 @@ bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
     m_headphonesBus->restartClockMatch();   // R-AUD-15, as the speakers
     m_remoteHeadphonesFormat = format;
     m_remoteHeadphonesPlayback = true;
+    if (refusal) { *refusal = RemotePlaybackRefusal::None; }
     return true;
 }
 
@@ -3549,6 +3652,26 @@ void AudioEngine::openVaxOutputs()
             qCWarning(lcAudio) << "VAX TX bus open failed in a remote window: VAX cannot be sent";
         }
     }
+}
+
+void AudioEngine::openRemoteSpeakers()
+{
+    if (m_running) {
+        return;
+    }
+    // With the device layer this starts the outputs; with the speakers'
+    // device not listed yet they open on the list's arrival.
+    ensureSpeakersOpen();
+}
+
+bool AudioEngine::speakersAwaitDeviceList() const
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_speakersAwaitDeviceListForTest) {
+        return *m_speakersAwaitDeviceListForTest;
+    }
+#endif
+    return m_streamSupervisor && m_catalogue && !m_catalogue->hasListed();
 }
 
 void AudioEngine::openVaxOutputSlots()

@@ -19,6 +19,14 @@
 //               device itself takes that open as the chosen device's, with
 //               no retry.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: a default change that names the device an output plays on
+//               reopens nothing (playsOnCurrentDefault): the first device
+//               list of a run reports its default as a change, and the
+//               speakers that had just opened were closed and opened again.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a start before the catalog's first list waits for it, as
+//               long as the catalog's start would have (R-AUD-03).  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioStreamSupervisor.h"
@@ -29,6 +37,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -61,6 +70,13 @@ AudioStreamSupervisor::AudioStreamSupervisor(IAudioDeviceCatalog& catalogue, IAu
     }
     m_bluetoothWait.setSingleShot(true);
     connect(&m_bluetoothWait, &QTimer::timeout, this, [this]() { releaseHeldOutputs(); });
+    m_firstListWait.setSingleShot(true);
+    connect(&m_firstListWait, &QTimer::timeout, this, [this]() {
+        qCInfo(lcAudio) << "Audio devices: no device list after waiting" << m_firstListWait.interval()
+                        << "ms; the roles start without it";
+        endFirstListWait();
+    });
+    connect(&m_catalogue, &IAudioDeviceCatalog::firstListed, this, [this]() { endFirstListWait(); });
 
     connect(&m_catalogue, &IAudioDeviceCatalog::devicesChanged, this, [this]() {
         if (!m_started) {
@@ -416,7 +432,9 @@ std::optional<AudioDeviceInfo> AudioStreamSupervisor::resolvePlatformMic() const
 
 void AudioStreamSupervisor::start()
 {
-    if (m_started) {
+    // A start asked during the first-list wait is the first start, as a
+    // startMicOnly() before the posted start() is.
+    if (m_started || m_micAskedBeforeList || m_outputsAskedBeforeList) {
         return;
     }
     startMicOnly();
@@ -428,6 +446,10 @@ void AudioStreamSupervisor::startMicOnly()
     if (m_started) {
         return;
     }
+    if (waitsForFirstList()) {
+        m_micAskedBeforeList = true;
+        return;
+    }
     m_started = true;
     m_outputsDeferred = true;
     evaluate(AudioRole::TxInput, false);
@@ -436,6 +458,10 @@ void AudioStreamSupervisor::startMicOnly()
 void AudioStreamSupervisor::startOutputs()
 {
     if (!m_started) {
+        if (waitsForFirstList()) {
+            m_outputsAskedBeforeList = true;
+            return;
+        }
         start();
         return;
     }
@@ -453,6 +479,47 @@ void AudioStreamSupervisor::startOutputs()
     }
     for (AudioRole role : kOutputRoles) {
         evaluate(role, false);
+    }
+}
+
+// R-AUD-03 (2026-10-16): every choice is matched against the list, so a
+// start asked before the catalog's first list waits for it, for what is
+// left of the time the catalog's start gives it (firstListWaitLeftMs()):
+// timed from the catalog's start, and nothing more after a start that
+// waited for the list itself.  On the empty list a chosen device would
+// read as not connected and open only on its retry.  True while the start
+// must wait.
+bool AudioStreamSupervisor::waitsForFirstList()
+{
+    if (m_firstListWaitOver || m_catalogue.hasListed()) {
+        return false;
+    }
+    if (m_firstListWait.isActive()) {
+        return true;
+    }
+    const int left = m_catalogue.firstListWaitLeftMs();
+    if (left <= 0) {
+        return false;
+    }
+    m_firstListWait.start(scaled(left));
+    return true;
+}
+
+// The first list is in, or the wait is over without it: what was asked
+// during the wait starts now.  Later starts no longer wait.
+void AudioStreamSupervisor::endFirstListWait()
+{
+    if (m_firstListWaitOver) {
+        return;
+    }
+    m_firstListWaitOver = true;
+    m_firstListWait.stop();
+    const bool outputs = std::exchange(m_outputsAskedBeforeList, false);
+    const bool mic = std::exchange(m_micAskedBeforeList, false);
+    if (outputs) {
+        startOutputs();
+    } else if (mic) {
+        startMicOnly();
     }
 }
 
@@ -536,6 +603,9 @@ void AudioStreamSupervisor::evaluateDefaultOutput(AudioRole role, bool defaultMo
         closeIfOpen(role);
         s.silentReason = AudioRoleReason::NoDevice;
         return;
+    }
+    if (defaultMoved && playsOnCurrentDefault(role)) {
+        defaultMoved = false;   // it names the device this plays on
     }
     if (!defaultMoved && !s.forceReopen) {
         if (s.open && s.onDefault) {
@@ -685,11 +755,13 @@ bool AudioStreamSupervisor::openSystemDefault(AudioRole role)
 {
     RoleState& s = state(role);
     s.forceReopen = false;
+    const std::optional<AudioDeviceInfo> openedOn = systemDefault(role);
     const AudioOpenResult result = m_host.openRole(role, engineOf(role), std::nullopt, s.config);
     if (result == AudioOpenResult::Opened) {
         s.open = true;
         s.onDefault = true;
         s.openDevice.reset();
+        s.openDefaultId = openedOn ? openedOn->id : QString();
         if (kindOf(role) != ChoiceKind::Chosen) {
             s.silentReason = AudioRoleReason::None;
         }
@@ -717,6 +789,18 @@ bool AudioStreamSupervisor::openSystemDefault(AudioRole role)
     return false;
 }
 
+bool AudioStreamSupervisor::playsOnCurrentDefault(AudioRole role) const
+{
+    // Open on the system default, and the default is still the device it
+    // opened on: a default change that names it moved nothing.
+    const RoleState& s = state(role);
+    if (!s.open || !s.onDefault || s.openDefaultId.isEmpty()) {
+        return false;
+    }
+    const std::optional<AudioDeviceInfo> def = systemDefault(role);
+    return def && def->id == s.openDefaultId;
+}
+
 void AudioStreamSupervisor::ensureFallback(AudioRole role, bool defaultMoved)
 {
     RoleState& s = state(role);
@@ -730,7 +814,7 @@ void AudioStreamSupervisor::ensureFallback(AudioRole role, bool defaultMoved)
         s.silentReason = s.trouble;
         return;
     }
-    if (s.open && s.onDefault && !defaultMoved) {
+    if (s.open && s.onDefault && (!defaultMoved || playsOnCurrentDefault(role))) {
         return;
     }
     if (!openSystemDefault(role)) {

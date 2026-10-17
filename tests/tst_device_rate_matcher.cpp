@@ -6,8 +6,8 @@
 // already-attributed DeviceRateMatcher (R-AUD-15, V-SW-5).  It drives the
 // matcher's writer and reader on two simulated clocks, with no timer and no
 // device, and compares its ratio with WDSP's own rmatchV fed the same
-// clocks.  Each simulation is single-threaded and deterministic; the four
-// independent drift simulations (two offsets, ours and rmatchV) run on
+// clocks.  Each simulation is single-threaded and deterministic; the two
+// independent drift simulations of each offset (ours and rmatchV) run on
 // worker threads, and the threads only run them side by side to keep the
 // wall time down.  No simulation shares state with another.
 //
@@ -33,10 +33,15 @@
 //   2026-10-13: A BLOCK writer resumes after repeated intentional gaps
 //               without treating the continuously running reader as clock
 //               drift. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: the drift offsets and the hiatus cases are data rows, run
+//               as ctest entries of their own beside each other (CI speed
+//               round); the same simulations and checks. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
 
+#include "TestFunctionGroups.h"
 #include "core/audio/AudioDelayParts.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
@@ -77,6 +82,38 @@ constexpr double kSineAmplitude = 0.5;
 constexpr int kSinePeriodFrames = 48;   // 1 kHz at 48 kHz
 // Twice the 1 kHz sine's own largest sample-to-sample step.
 const double kMaxAllowedStep = 2.0 * kSineAmplitude * 2.0 * std::numbers::pi * 1000.0 / kRate;
+
+// The clock offsets of the ten-minute drift runs: reader fast, then slow.
+// The rows of driftMatchesRmatch and blockWriterReacquiresRealDriftAfterHiatus,
+// and main() builds the ctest entries from the same list.
+constexpr std::array<int, 2> kDriftOffsets{200, -200};
+
+QString driftTag(int ppm)
+{
+    return QString::asprintf("%+d ppm", ppm);
+}
+
+// blockWriterRecoversAfterHiatus's rows, read by its _data function and by
+// main(), which spreads them over ctest entries.
+struct HiatusRow {
+    QString tag;
+    int callbackFrames = 0;
+    double warmupSeconds = 0.0;
+    int delayMs = 0;
+};
+
+QList<HiatusRow> hiatusRows()
+{
+    QList<HiatusRow> rows;
+    for (int callback : {64, 128, 256, 512}) {
+        for (double warmup : {2.8, 40.0}) {
+            rows.append({QString::asprintf("callback%d-warm%.1f", callback, warmup), callback, warmup, 0});
+        }
+    }
+    rows.append({QStringLiteral("callback512-warm400"), 512, 400.0, 0});
+    rows.append({QStringLiteral("callback128-fixed20"), 128, 40.0, 20});
+    return rows;
+}
 
 struct SineSource {
     std::array<float, kSinePeriodFrames> sinTable{};
@@ -288,10 +325,12 @@ private slots:
     void sizesAndReadout();
     void manualSizeAndRates();
     void callerMemory();
+    void driftMatchesRmatch_data();
     void driftMatchesRmatch();
     void forcedDryRunStepsUpOnce();
     void blockWriterRecoversAfterHiatus_data();
     void blockWriterRecoversAfterHiatus();
+    void blockWriterReacquiresRealDriftAfterHiatus_data();
     void blockWriterReacquiresRealDriftAfterHiatus();
     void forcedOverrunStaysSmooth();
     void flushRestartAndFade();
@@ -450,36 +489,37 @@ DriftResult runDrift(int ppm, bool reference)
 
 } // namespace
 
+void TestDeviceRateMatcher::driftMatchesRmatch_data()
+{
+    QTest::addColumn<int>("ppm");
+    for (int ppm : kDriftOffsets) {
+        QTest::addRow("%s", qPrintable(driftTag(ppm))) << ppm;
+    }
+}
+
 void TestDeviceRateMatcher::driftMatchesRmatch()
 {
 #ifndef HAVE_WDSP
     QSKIP("WDSP's rmatchV is the reference; this build has no WDSP");
 #else
-    constexpr std::array<int, 2> kOffsets{200, -200};   // reader fast, then slow
-    std::array<std::future<DriftResult>, 2> ours;
-    std::array<std::future<DriftResult>, 2> references;
-    for (std::size_t i = 0; i < kOffsets.size(); ++i) {
-        ours[i] = std::async(std::launch::async, runDrift, kOffsets[i], false);
-        references[i] = std::async(std::launch::async, runDrift, kOffsets[i], true);
-    }
-    for (std::size_t i = 0; i < kOffsets.size(); ++i) {
-        const int ppm = kOffsets[i];
-        const DriftResult result = ours[i].get();
-        const double reference = references[i].get().ratio;
-        const DeviceRateMatcherStats& end = result.end;
-        qInfo("ppm %d: ratio %.9f, rmatchV %.9f, expected %.9f; step %d ms, dry runs %llu, overruns %llu",
-              ppm, result.ratio, reference, 1.0 + ppm * 1.0e-6, end.delayStepMs,
-              static_cast<unsigned long long>(end.dryRuns),
-              static_cast<unsigned long long>(end.overruns));
-        QVERIFY(end.controlActive);
-        QCOMPARE(end.dryRuns, result.settled.dryRuns);
-        QCOMPARE(end.overruns, result.settled.overruns);
-        QCOMPARE(end.delayStepMs, result.settled.delayStepMs);
-        QVERIFY2(std::abs(result.ratio - reference) <= 10.0e-6,
-                 qPrintable(QStringLiteral("ppm %1: ratio %2 vs rmatchV %3")
-                                .arg(ppm).arg(result.ratio, 0, 'f', 9).arg(reference, 0, 'f', 9)));
-        QVERIFY(result.maxStep <= kMaxAllowedStep);
-    }
+    QFETCH(int, ppm);
+    std::future<DriftResult> ours = std::async(std::launch::async, runDrift, ppm, false);
+    std::future<DriftResult> references = std::async(std::launch::async, runDrift, ppm, true);
+    const DriftResult result = ours.get();
+    const double reference = references.get().ratio;
+    const DeviceRateMatcherStats& end = result.end;
+    qInfo("ppm %d: ratio %.9f, rmatchV %.9f, expected %.9f; step %d ms, dry runs %llu, overruns %llu",
+          ppm, result.ratio, reference, 1.0 + ppm * 1.0e-6, end.delayStepMs,
+          static_cast<unsigned long long>(end.dryRuns),
+          static_cast<unsigned long long>(end.overruns));
+    QVERIFY(end.controlActive);
+    QCOMPARE(end.dryRuns, result.settled.dryRuns);
+    QCOMPARE(end.overruns, result.settled.overruns);
+    QCOMPARE(end.delayStepMs, result.settled.delayStepMs);
+    QVERIFY2(std::abs(result.ratio - reference) <= 10.0e-6,
+             qPrintable(QStringLiteral("ppm %1: ratio %2 vs rmatchV %3")
+                            .arg(ppm).arg(result.ratio, 0, 'f', 9).arg(reference, 0, 'f', 9)));
+    QVERIFY(result.maxStep <= kMaxAllowedStep);
 #endif
 }
 
@@ -495,13 +535,9 @@ void TestDeviceRateMatcher::blockWriterRecoversAfterHiatus_data()
     QTest::addColumn<int>("callbackFrames");
     QTest::addColumn<double>("warmupSeconds");
     QTest::addColumn<int>("delayMs");
-    for (int callback : {64, 128, 256, 512}) {
-        for (double warmup : {2.8, 40.0}) {
-            QTest::addRow("callback%d-warm%.1f", callback, warmup) << callback << warmup << 0;
-        }
+    for (const HiatusRow& row : hiatusRows()) {
+        QTest::addRow("%s", qPrintable(row.tag)) << row.callbackFrames << row.warmupSeconds << row.delayMs;
     }
-    QTest::addRow("callback512-warm400") << 512 << 400.0 << 0;
-    QTest::addRow("callback128-fixed20") << 128 << 40.0 << 20;
 }
 
 void TestDeviceRateMatcher::blockWriterRecoversAfterHiatus()
@@ -625,31 +661,38 @@ void TestDeviceRateMatcher::blockWriterRecoversAfterHiatus()
 #endif
 }
 
+void TestDeviceRateMatcher::blockWriterReacquiresRealDriftAfterHiatus_data()
+{
+    QTest::addColumn<int>("ppm");
+    for (int ppm : kDriftOffsets) {
+        QTest::addRow("%s", qPrintable(driftTag(ppm))) << ppm;
+    }
+}
+
 void TestDeviceRateMatcher::blockWriterReacquiresRealDriftAfterHiatus()
 {
 #ifndef HAVE_WDSP
     QSKIP("Drift recovery acceptance needs the production variable resampler");
 #else
-    for (int ppm : {200, -200}) {
-        ClockSim::Options options;
-        options.ppm = ppm;
-        options.writerHiatusAtSeconds = 15.0;
-        ClockSim sim(options);
-        sim.runUntil(50.0);
-        const DeviceRateMatcherStats settled = sim.matcher().stats();
-        sim.runUntil(540.0);
-        sim.runUntil(600.0, 540.0);
-        const DeviceRateMatcherStats end = sim.matcher().stats();
-        qInfo("resumed drift %d ppm: ratio %.9f, dry %llu, over %llu, step %d ms", ppm, sim.meanRatio(),
-              static_cast<unsigned long long>(end.dryRuns), static_cast<unsigned long long>(end.overruns),
-              end.delayStepMs);
-        QVERIFY(end.controlActive);
-        QCOMPARE(end.dryRuns, settled.dryRuns);
-        QCOMPARE(end.overruns, settled.overruns);
-        QCOMPARE(end.delayStepMs, settled.delayStepMs);
-        QVERIFY(std::abs(sim.meanRatio() - (1.0 + ppm * 1.0e-6)) <= 10.0e-6);
-        QVERIFY(sim.maxStep() <= kMaxAllowedStep);
-    }
+    QFETCH(int, ppm);
+    ClockSim::Options options;
+    options.ppm = ppm;
+    options.writerHiatusAtSeconds = 15.0;
+    ClockSim sim(options);
+    sim.runUntil(50.0);
+    const DeviceRateMatcherStats settled = sim.matcher().stats();
+    sim.runUntil(540.0);
+    sim.runUntil(600.0, 540.0);
+    const DeviceRateMatcherStats end = sim.matcher().stats();
+    qInfo("resumed drift %d ppm: ratio %.9f, dry %llu, over %llu, step %d ms", ppm, sim.meanRatio(),
+          static_cast<unsigned long long>(end.dryRuns), static_cast<unsigned long long>(end.overruns),
+          end.delayStepMs);
+    QVERIFY(end.controlActive);
+    QCOMPARE(end.dryRuns, settled.dryRuns);
+    QCOMPARE(end.overruns, settled.overruns);
+    QCOMPARE(end.delayStepMs, settled.delayStepMs);
+    QVERIFY(std::abs(sim.meanRatio() - (1.0 + ppm * 1.0e-6)) <= 10.0e-6);
+    QVERIFY(sim.maxStep() <= kMaxAllowedStep);
 #endif
 }
 
@@ -1190,5 +1233,37 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
     QVERIFY(delivered - written <= batch);
 }
 
-QTEST_GUILESS_MAIN(TestDeviceRateMatcher)
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    TestDeviceRateMatcher test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 2026-10-16 CI speed round: 214 s on the Linux runner as one entry.
+    // The ten-minute simulations run as ctest entries of their own
+    // (tests/CMakeLists.txt): each drift offset (two threads each) as
+    // tst_device_rate_matcher_drift1 and _drift2, the hiatus resumes after
+    // a real drift as _reacquire, and blockWriterRecoversAfterHiatus's
+    // rows, built here from the list its _data function reads, as
+    // _hiatus1 to _hiatus3, every third row each; the rest as
+    // tst_device_rate_matcher.
+    QList<NereusSDR::TestFunctionGroups::Group> groups;
+    for (std::size_t i = 0; i < kDriftOffsets.size(); ++i) {
+        groups.append({QStringLiteral("drift%1").arg(i + 1),
+                       {QStringLiteral("driftMatchesRmatch:") + driftTag(kDriftOffsets[i])}});
+    }
+    groups.append({QStringLiteral("reacquire"), {QStringLiteral("blockWriterReacquiresRealDriftAfterHiatus")}});
+    constexpr int kHiatusEntries = 3;
+    const qsizetype firstHiatus = groups.size();
+    for (int k = 0; k < kHiatusEntries; ++k) {
+        groups.append({QStringLiteral("hiatus%1").arg(k + 1), {}});
+    }
+    const QList<HiatusRow> rows = hiatusRows();
+    for (qsizetype i = 0; i < rows.size(); ++i) {
+        groups[firstHiatus + i % kHiatusEntries].entries.append(
+            QStringLiteral("blockWriterRecoversAfterHiatus:") + rows.at(i).tag);
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_DEVICE_RATE_MATCHER_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_device_rate_matcher.moc"

@@ -42,6 +42,11 @@
 //               the last timing it was given for a test to read
 //               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-17: setLosesDeviceInOpenForTest(): open() posts DeviceLost
+//               from a device thread before it returns, and a loss with
+//               no sink is dropped or kept for the next sink, as each
+//               engine's bus does. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -63,6 +68,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -71,6 +77,11 @@ namespace NereusSDR {
 class FakeMatcherAudioBus final : public IAudioBus {
 public:
     static constexpr int kInRate = 48000;
+
+    // What the bus does with a stream event posted while it has no sink.
+    // Core Audio's, PipeWire's, PulseAudio's and Windows audio's buses
+    // drop it; AlsaDirectBus keeps one for the next sink set.
+    enum class NoSinkEvent { Dropped, KeptForTheSink };
 
     explicit FakeMatcherAudioBus(AudioStreamRequest request, bool takesStereoMix = true,
                                  int callbackFrames = 128)
@@ -91,6 +102,23 @@ public:
     }
 
     bool open(const AudioFormat& format) override
+    {
+        const bool opened = openBus(format);
+        if (m_losesDeviceInOpen) {
+            // The device goes away while open() runs: its device thread
+            // posts the loss before open() returns, opened or not.
+            AudioStreamEvent lost;
+            lost.kind = AudioStreamEvent::Kind::DeviceLost;
+            lost.detail = QStringLiteral("Fake device went away in the open");
+            std::thread device([this, lost] { postEvent(lost); });
+            device.join();
+        }
+        return opened;
+    }
+
+private:
+    // open() as it was before setLosesDeviceInOpenForTest().
+    bool openBus(const AudioFormat& format)
     {
         if (!m_openResult) {
             m_error = QStringLiteral("Fake open failure");
@@ -116,6 +144,7 @@ public:
         return true;
     }
 
+public:
     void close() override
     {
         m_open.store(false);
@@ -155,8 +184,19 @@ public:
 
     void setStreamEventSink(std::function<void(const AudioStreamEvent&)> sink) override
     {
-        std::lock_guard<std::mutex> lock(m_sinkMutex);
-        m_sink = std::move(sink);
+        std::optional<AudioStreamEvent> kept;
+        std::function<void(const AudioStreamEvent&)> s;
+        {
+            std::lock_guard<std::mutex> lock(m_sinkMutex);
+            m_sink = std::move(sink);
+            if (m_sink && m_kept) {
+                kept = std::exchange(m_kept, std::nullopt);
+                s = m_sink;
+            }
+        }
+        if (kept) {
+            s(*kept);
+        }
     }
 
     AudioDelayParts delayParts() const override
@@ -313,6 +353,14 @@ public:
         }
     }
 
+    // Every later open() posts DeviceLost from a device thread before it
+    // returns; with no sink set then, `noSink` says what becomes of it.
+    void setLosesDeviceInOpenForTest(NoSinkEvent noSink)
+    {
+        m_losesDeviceInOpen = true;
+        m_noSinkEvent = noSink;
+    }
+
     // Test inspectors.
     const AudioStreamRequest& request() const { return m_request; }
     DeviceRateMatcher* matcher() { return m_matcher.get(); }
@@ -325,6 +373,21 @@ public:
     void setOpenResult(bool ok) { m_openResult = ok; }
 
 private:
+    void postEvent(const AudioStreamEvent& event)
+    {
+        std::function<void(const AudioStreamEvent&)> sink;
+        {
+            std::lock_guard<std::mutex> lock(m_sinkMutex);
+            sink = m_sink;
+            if (!sink && m_noSinkEvent == NoSinkEvent::KeptForTheSink) {
+                m_kept = event;
+            }
+        }
+        if (sink) {
+            sink(event);
+        }
+    }
+
     AudioStreamRequest m_request;
     bool m_takesStereoMix;
     std::uint32_t m_workgroupDevice = 0;
@@ -352,8 +415,11 @@ private:
     std::shared_ptr<std::atomic<bool>> m_alive;
     std::shared_ptr<std::atomic<int>> m_closedUnfaded;
     QByteArray m_bytes;
+    bool m_losesDeviceInOpen = false;
+    NoSinkEvent m_noSinkEvent = NoSinkEvent::Dropped;
     std::mutex m_sinkMutex;
     std::function<void(const AudioStreamEvent&)> m_sink;
+    std::optional<AudioStreamEvent> m_kept;   // KeptForTheSink only
 };
 
 } // namespace NereusSDR

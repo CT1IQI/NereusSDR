@@ -15,9 +15,10 @@
 // catalogue never touches a stream.
 //
 // A backend that hangs never hangs the caller: start() waits at most
-// kStartWaitMs for the first list and stop() at most kStopWaitMs for the
-// thread.  A thread that outlives stop() owns everything it still
-// touches (the shared State, the backends, its worker) and frees it when
+// kStartWaitMs for the first list (not at all with FirstList::InBackground,
+// as the window starts it) and stop() at most kStopWaitMs for the thread.
+// A thread that outlives stop() owns everything it still touches (the
+// shared State, the backends, its worker) and frees it when
 // the backend returns; nothing it does reaches the catalogue again, and it
 // calls no backend after that call.  Until it returns, a later start() or
 // rescan lists that backend as not running and never calls it, so no
@@ -51,6 +52,13 @@
 //   2026-10-12: wantOlderDrivers(): an engine listed on demand is listed
 //               only once something asks for it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: start(FirstList::InBackground) returns at once; the first
+//               list arrives through the main thread's queue.  The window
+//               starts it so; the Core and the tests still wait.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-17: firstListWaitLeftMs(): what is left of kStartWaitMs after
+//               a start in the background, 0 after one that waited.  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -59,6 +67,7 @@
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/IAudioEngineBackend.h"
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QString>
 
@@ -79,12 +88,17 @@ public:
     static constexpr int kStartWaitMs = 3000;   // start() waits at most this long for the first list
     static constexpr int kStopWaitMs = 3000;    // stop() waits at most this long for the thread
 
+    // Wait: start() holds its caller up to kStartWaitMs for the first list.
+    // InBackground: start() returns at once; the first list arrives through
+    // the main thread's queue (hasListed() and firstListed() say when).
+    enum class FirstList { Wait, InBackground };
+
     // backends in R-AUD-01 order; backends() returns them in this order.
     explicit AudioDeviceCatalog(std::vector<std::shared_ptr<IAudioEngineBackend>> backends,
                                 QObject* parent = nullptr);
     ~AudioDeviceCatalog() override;      // stops its thread
 
-    void start();                        // lists once; waits at most 3 s for the first list
+    void start(FirstList firstList = FirstList::Wait);   // lists once; see FirstList
     void stop();
     void setDebounceIntervalForTest(int ms);
     // The windows this run has started, and the length the last one was
@@ -108,6 +122,10 @@ public:
     // an answer); false while stopped.  start() itself returns with it
     // false when the first list took longer than kStartWaitMs.
     bool hasListed() const override;
+    // What is left of kStartWaitMs from a start(FirstList::InBackground)
+    // until the first list is in; 0 after a start that waited, listed or
+    // not, and while stopped.
+    int firstListWaitLeftMs() const override;
 
 private:
     struct BackendSnapshot {
@@ -152,6 +170,7 @@ private:
     std::vector<BackendSnapshot> m_snapshot;
     std::uint64_t m_adoptedGeneration = 0;
     bool m_listed = false;               // hasListed(), for this run
+    QElapsedTimer m_backgroundStart;     // from a start in the background; invalid otherwise
 
     // One run's thread, worker and the state they share.  The worker
     // deletes itself on its own thread when the thread finishes; the

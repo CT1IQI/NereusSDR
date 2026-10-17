@@ -598,6 +598,12 @@ Advanced, and each control appears on one page only.
   drawn as text instead of color emoji.
 - On the Mac, a remote window can no longer hang when its microphone stops
   while Core Audio is slow to answer at startup.
+- On the Mac, the microphone no longer takes up to about two minutes to start
+  after launch. NereusSDR now sets its own Mic Mode to Standard at each
+  launch, so macOS does not apply Voice Isolation to it; Voice Isolation or
+  Wide Spectrum picked for NereusSDR in Control Center is back at Standard at
+  the next launch. The first window can appear up to about a second later
+  while this is done.
 - On a Mac with a Protocol 2 radio, the transmit sender no longer waits on a
   Core Audio lookup when the radio connects. Under load that lookup took a
   quarter of a second to nearly two seconds, and no transmit samples went out
@@ -624,6 +630,20 @@ Advanced, and each control appears on one page only.
   a direct secure WebSocket (WSS) at once. Where UDP between the window and
   the Core is blocked but TCP port 443 works, it used to wait 40 to 85
   seconds first. Audio and display kept flowing on the relay meanwhile.
+- A remote window's receive audio rides out a pause in the network of up to
+  2.5 seconds instead of restarting, and comes back with no added delay.
+  Before, half a second with no packets restarted it, which added 1.3 to 2.4
+  seconds more silence.
+- A remote window no longer starts with no sound until you mute and unmute. It
+  opens its speakers when the window starts, and after a speaker fault it asks
+  the Core for audio again on its own (after 1, 2 and 4 seconds, then every 4
+  seconds) until it plays; the problem and **Retry audio** then clear. While
+  this computer's list of audio devices is still coming in, the status reads
+  Waiting for audio from Core, for up to 10 seconds, instead of showing a
+  problem. A speaker or headphones device set to a format remote playback
+  cannot play now says so and is not asked for again until you change it. A
+  fault that comes while the window's connection is moving still tells the
+  Core to stop sending audio.
 - When a remote window's audio and displays move to a new connection, as after
   the network drops and comes back, the window asks the Core again for
   everything the move lost: receive audio, the headphones mix, the transmit
@@ -670,6 +690,10 @@ Advanced, and each control appears on one page only.
   screen is moved back where it can be reached: when it is shown again, at the
   end of a transmit, or when a monitor is added, removed or resized. Before,
   the Rotor could read as ticked while its window sat off every screen.
+- A slice you control that was placed on a pan this window does not show now
+  moves onto the window's first pan. Before, it sat on a hidden pan: it played
+  but could not be seen, and the hidden pan still drew a spectrum. The
+  window's layout is not changed.
 - A Core sends its spectrum and waterfall to remote windows and phones from a
   thread of its own, so they keep flowing while the desktop app that runs the
   Core is busy drawing. Before, a Windows desktop Core with the screen locked
