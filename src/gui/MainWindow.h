@@ -12,6 +12,9 @@
 //   2026-10-16: restoreMainWindowGeometry()'s note says the constructor
 //               calls it last (issue #525). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-16: attachSlicesToNewPans, for a slice whose pan a layout
+//               change makes after it. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: rehomeSlicesOffWindowPans, for a slice keyed to a pan this
 //               window does not show. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -1560,6 +1563,10 @@ private:
     // does not show goes onto the window's first pan, as a layout change
     // rehomes it (ruling U7). A remote window waits for the Core's settings.
     void rehomeSlicesOffWindowPans();
+    // A slice keyed to a pan a layout change just made (one this window
+    // shows now and did not show in shownBefore) goes onto that pan with its
+    // flag.
+    void attachSlicesToNewPans(const QStringList& shownBefore);
     // A layout change placed this slice (m_markerOnlyPlacement) and this
     // window still shows it there.
     bool markerOnlyPlacement(int sliceId) const;

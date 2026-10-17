@@ -16,6 +16,10 @@
 //               maximized composites its spectrum through QRhi on Linux
 //               (issue #525). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: A slice keyed to a pan that a layout change makes is
+//               docked on it with its flag (attachSlicesToNewPans), as the
+//               hidden pan that held it was taken up before. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: A slice keyed to a pan this window does not show gets no
 //               hidden pan; one this window controls is rehomed onto its
 //               pan, as a layout change rehomes it (ruling U7). J.J. Boyd
@@ -2433,6 +2437,8 @@ void MainWindow::revealSliceInWindow(int sliceId)
             for (const QString& id : std::as_const(floating)) {
                 m_panStack->floatPanadapter(id);
             }
+            // A slice keyed to the pan the grown layout makes goes onto it.
+            attachSlicesToNewPans(before);
             // A slice whose flag sat on a pan the new layout retired keeps
             // its flag.
             for (SliceModel* other : m_radioModel->slices()) {
@@ -2556,6 +2562,37 @@ void MainWindow::reconcileListenPlacements()
     }
     if (changed) { rebuildFftRouting(); }
     m_reconcilingPlacements = false;
+}
+
+// A slice keyed to a pan a layout change just made goes onto that pan,
+// flag and all. The sliceAdded handler docks a slice whose pan is there;
+// one whose pan came after it (a slice made, then a layout change that
+// makes its pan before this window's event loop runs again) is docked
+// here. While a hidden pan was made for such a slice, that pan held it and
+// the layout took the pan up; with no pan made, nothing else puts the
+// slice on the new pan, and its flag stays on the pan spectrumForSlice
+// fell back to. Only pans the window did not show in shownBefore are
+// looked at: a pan it already showed lists the slices it was given, and a
+// slice taken off one stays off. A slice this window placed stays where it
+// was placed.
+void MainWindow::attachSlicesToNewPans(const QStringList& shownBefore)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    QStringList made;
+    for (const QString& id : windowPanIds()) {
+        if (!shownBefore.contains(id)) { made << id; }
+    }
+    if (made.isEmpty()) { return; }
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (!slice) { continue; }
+        const int id = slice->sliceIndex();
+        const QString key = slice->panKey();
+        if (key.isEmpty() || !made.contains(key) || m_listenPlacement.contains(id)) { continue; }
+        PanadapterApplet* pan = m_panStack->panadapter(key);
+        if (!pan || pan->associatedSlices().contains(id)) { continue; }
+        m_panStack->moveSliceToPan(id, key);
+        rehostSliceView(slice);
+    }
 }
 
 // A pan key can name a pan this window does not show: the Core's slices
@@ -18552,7 +18589,10 @@ void MainWindow::applyPanLayout(const QString& layoutId)
     }
 
     qCInfo(lcContainer) << "Pan layout: applying" << layoutId << "with ids" << ids;
+    const QStringList shownBefore = windowPanIds();
     m_panStack->applyLayout(layoutId, ids);
+    // A slice keyed to a pan this layout makes goes onto it.
+    attachSlicesToNewPans(shownBefore);
 
     if (!m_radioModel) { return; }
 
