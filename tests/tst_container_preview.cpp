@@ -420,12 +420,25 @@ private slots:
         // grow, the vertical bar shows, the viewport narrows and the rows are
         // projected again. Wait for the rows that match the width the viewport
         // has now; a fixed wait ends part way through on a loaded runner. The
-        // posted events go first, so rows grown for a viewport whose bar has
-        // not yet shown cannot pass.
+        // posted events go first, which makes a pass on rows grown for a
+        // viewport whose bar has not yet shown unlikely; one more turn of the
+        // event loop and a second check after the wait rule it out.
         const auto liveUsableWidthNow = [&] {
             const QMargins margins = liveViewport->widget()->layout()->contentsMargins();
             return liveViewport->viewport()->width() - margins.left() - margins.right();
         };
+        const auto liveRowsReport = [&] {
+            QString report=QString("usable viewport width %1;").arg(liveUsableWidthNow());
+            for(int i=0;i<live.entryRows().size();++i) {
+                const auto& row=live.entryRows()[i];
+                report+=QString(" row %1 height %2").arg(i).arg(live.entryBoundary(row.entryId).height());
+                if (auto* bar = qobject_cast<BarPresetItem*>(row.item.data())) {
+                    report+=QString(" (bar, natural %1)").arg(qRound(double(bar->preferredRowHeight()) * liveUsableWidthNow() / 260));
+                } else { report+=QString(" (preview %1)").arg(meters[i]->height()); }
+            }
+            return report;
+        };
+        // Drains posted events on every call, and QTRY evaluates it many times.
         const auto liveRowsMatchViewport = [&] {
             QCoreApplication::sendPostedEvents();
             for(int i=0;i<live.entryRows().size();++i) {
@@ -436,7 +449,8 @@ private slots:
             }
             return true;
         };
-        QTRY_VERIFY(liveRowsMatchViewport());
+        QTRY_VERIFY2(liveRowsMatchViewport(), qPrintable(liveRowsReport()));
+        QTest::qWait(0); QVERIFY2(liveRowsMatchViewport(), qPrintable(liveRowsReport()));
         const auto captured=live.captureDocument();
         for(int i=0;i<d.contents.size();++i) {
             QCOMPARE(captured.contents[i].canvasRect,d.contents[i].canvasRect);
