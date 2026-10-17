@@ -6,6 +6,10 @@
 //               transport failure or a lost heartbeat still stops the
 //               audio at once. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: the VAX collector keeps the VAX TX device's backlog (up
+//               to the Core's deepest transmit buffer), not the device's
+//               16 ms guard. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-16: a media move asks again for the speakers' audio, the
 //               headphones mix, the transmit monitor, receiver streams and
 //               displays whose request made around the move is still
@@ -3398,7 +3402,10 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine, bool vax)
         d->micCollectorVax = vax;
         if (vax) {
             d->micCollector = std::make_unique<MicUplinkCollector>(
-                [engine](float* dst, int frames) { return engine->pullVaxTxMic(dst, frames); });
+                [engine](float* dst, int frames) {
+                    return engine->pullVaxTxMicKeepingBacklog(dst, frames,
+                                                              RemoteMicConfig::kMaxDepthFrames);
+                });
         } else {
             d->micCollector = std::make_unique<MicUplinkCollector>(
                 [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
