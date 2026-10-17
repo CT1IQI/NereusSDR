@@ -40,6 +40,14 @@
 //     AsioControlPanel window to helper  {}
 //   ASIO payloads may be up to kMaxAsioJsonBytes long.
 //
+//   Warm-up (version 5, the persistent helper on macOS):
+//     Warm   window to helper  {}: list the devices of the default engine
+//            now, with no microphone open
+//     Warmed helper to window  {"inputs","startNs","listedNs"}: how many
+//            inputs it listed (-1: it listed none, as in a test run) and the
+//            steady-clock nanoseconds before its first engine call and after
+//            the list, as decimal strings
+//
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
 //
@@ -57,6 +65,9 @@
 //               Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 17 (R-AUD-21): kAsioResetDetail.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: version 5 adds Warm and Warmed, the persistent helper's
+//               warm-up.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -79,7 +90,7 @@
 
 namespace NereusSDR::CaptureProtocol {
 
-inline constexpr quint8 kVersion = 4;
+inline constexpr quint8 kVersion = 5;
 inline constexpr int kHeaderBytes = 12;          // "NCAP", u8 version, u8 type, u16 reserved(0), u32 payloadBytes, little-endian
 inline constexpr int kMaxJsonBytes = 4096;
 inline constexpr int kPcmHeaderBytes = 24;       // u32 generation, u32 frameCount, u64 framePosition, u64 sentMonotonicNs
@@ -98,6 +109,7 @@ enum class RecordType : quint8 {
     RingAttached = 5,
     AsioCaps = 6,
     AsioState = 7,
+    Warmed = 8,
     Configure = 16,
     Open = 17,
     Stop = 18,
@@ -106,7 +118,8 @@ enum class RecordType : quint8 {
     AttachRing = 21,
     AsioDescribe = 22,
     AsioOpen = 23,
-    AsioControlPanel = 24
+    AsioControlPanel = 24,
+    Warm = 25
 };
 
 struct Record {
@@ -249,6 +262,24 @@ std::optional<std::int64_t> decodeProbeHit(const QByteArray& json);
 
 QByteArray encodeProbeEnable(bool enabled);
 std::optional<bool> decodeProbeEnable(const QByteArray& json);
+
+// ── Warm-up (version 5) ───────────────────────────────────────────────────
+
+inline constexpr int kMaxWarmedInputs = 1024;
+
+// The helper's answer to Warm.  inputs -1..kMaxWarmedInputs (-1: nothing
+// was listed); startNs above 0 and listedNs at or after it, both
+// std::chrono::steady_clock nanoseconds (audioProbeNowNs), carried as
+// canonical decimal strings like ProbeHit's.
+struct Warmed {
+    int inputs = -1;
+    std::int64_t startNs = 0;
+    std::int64_t listedNs = 0;
+};
+
+QByteArray encodeWarm();                 // payload is the empty JSON object {}
+QByteArray encodeWarmed(const Warmed& warmed);
+std::optional<Warmed> decodeWarmed(const QByteArray& json);
 
 // ── ASIO (version 4) ──────────────────────────────────────────────────────
 

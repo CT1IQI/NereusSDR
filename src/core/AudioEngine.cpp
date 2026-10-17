@@ -364,6 +364,9 @@
 //               packet's timing (MatcherPacketTiming), where it passed
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setSharedCaptureSupervisor() stores the supervisor (the
+//               persistent helper's interface); engines do not use it yet.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -1535,6 +1538,17 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
     connect(m_captureSupervisor.get(), &CaptureSupervisor::probeHit,
             this, [this](qint64 captureNs) { onDelayProbeHit(captureNs); });
     m_captureSupervisor->configure(m_txInputConfig);
+}
+
+QPointer<CaptureSupervisor>& AudioEngine::sharedCaptureSupervisor()
+{
+    static QPointer<CaptureSupervisor> shared;
+    return shared;
+}
+
+void AudioEngine::setSharedCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    sharedCaptureSupervisor() = supervisor;
 }
 
 std::atomic<bool>& AudioEngine::delayProbeRequestedAtStart()

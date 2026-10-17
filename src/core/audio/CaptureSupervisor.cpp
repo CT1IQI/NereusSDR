@@ -43,6 +43,9 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: attribute open-step diagnostics to their process/generation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: the persistent helper's interface: a Standby lease is
+//               accepted and opens no microphone; helperAvailable().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -1540,6 +1543,8 @@ const char* demandName(CaptureSupervisor::Demand demand)
         return "the remote window's microphone uplink";
     case CaptureSupervisor::Demand::AsioDevice:
         return "an ASIO device";
+    case CaptureSupervisor::Demand::Standby:
+        return "the standing capture helper";
     case CaptureSupervisor::Demand::LocalSession:
         break;
     }
@@ -1563,6 +1568,9 @@ CaptureSupervisor::Lease CaptureSupervisor::acquire(Demand demand)
             QMetaObject::invokeMethod(worker, [worker]() { worker->setAsioDemanded(true); },
                                       Qt::QueuedConnection);
         }
+        return Lease(this, id);
+    }
+    if (demand == Demand::Standby) {
         return Lease(this, id);
     }
     if (micLeaseCount() == 1) {
@@ -1595,6 +1603,9 @@ void CaptureSupervisor::releaseLease(quint64 id)
         }
         return;
     }
+    if (demand == Demand::Standby) {
+        return;
+    }
     if (micLeaseCount() == 0) {
         QMetaObject::invokeMethod(worker, [worker]() { worker->setDemanded(false, 0); },
                                   Qt::QueuedConnection);
@@ -1603,7 +1614,16 @@ void CaptureSupervisor::releaseLease(quint64 id)
 
 int CaptureSupervisor::micLeaseCount() const
 {
-    return static_cast<int>(m_leases.size()) - asioLeaseCount();
+    return static_cast<int>(m_leases.size()) - asioLeaseCount() - standbyLeaseCount();
+}
+
+int CaptureSupervisor::standbyLeaseCount() const
+{
+    int count = 0;
+    for (const Demand demand : m_leases) {
+        count += demand == Demand::Standby ? 1 : 0;
+    }
+    return count;
 }
 
 int CaptureSupervisor::asioLeaseCount() const
@@ -1706,6 +1726,15 @@ qint64 CaptureSupervisor::helperProcessId() const
 qint64 CaptureSupervisor::lastHelperProcessId() const
 {
     return m_lastHelperPid->load();
+}
+
+bool CaptureSupervisor::helperAvailable() const
+{
+    if (m_options.program.isEmpty()) {
+        return false;
+    }
+    const QFileInfo info(m_options.program);
+    return !info.isAbsolute() || info.exists();
 }
 
 int CaptureSupervisor::fireDeadlinesNowForTest(int deadlines)

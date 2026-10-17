@@ -13,6 +13,9 @@
 //   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21):
 //               version 4, the ASIO records and their rejections.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: version 5, Warm and Warmed (the persistent helper) and
+//               their rejections.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -145,7 +148,7 @@ private slots:
 
     void contractConstants()
     {
-        QCOMPARE(int(kVersion), 4);
+        QCOMPARE(int(kVersion), 5);
         QCOMPARE(kHeaderBytes, 12);
         QCOMPARE(kMaxJsonBytes, 4096);
         QCOMPARE(kPcmHeaderBytes, 24);
@@ -159,7 +162,7 @@ private slots:
         const QByteArray rec = encodeRecord(RecordType::Status, QByteArray(300, 'x'));
         QCOMPARE(rec.size(), kHeaderBytes + 300);
         QCOMPARE(rec.left(4), QByteArray("NCAP"));
-        QCOMPARE(quint8(rec[4]), quint8(4));
+        QCOMPARE(quint8(rec[4]), quint8(5));
         QCOMPARE(quint8(rec[5]), quint8(2));
         QCOMPARE(quint8(rec[6]), quint8(0));
         QCOMPARE(quint8(rec[7]), quint8(0));
@@ -177,8 +180,10 @@ private slots:
         const int pcmMax = kPcmHeaderBytes + kMaxPcmFrames * 4;
         QVERIFY(!encodeRecord(RecordType::Pcm, QByteArray(pcmMax, 'a')).isEmpty());
         QVERIFY(encodeRecord(RecordType::Pcm, QByteArray(pcmMax + 1, 'a')).isEmpty());
-        QVERIFY(encodeRecord(static_cast<RecordType>(8), QByteArray("{}")).isEmpty());
-        QVERIFY(encodeRecord(static_cast<RecordType>(25), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(static_cast<RecordType>(9), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(static_cast<RecordType>(26), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(RecordType::Warmed, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::Warm, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
         QVERIFY(!encodeRecord(RecordType::AsioOpen, QByteArray(kMaxAsioJsonBytes, 'a')).isEmpty());
         QVERIFY(encodeRecord(RecordType::AsioOpen, QByteArray(kMaxAsioJsonBytes + 1, 'a')).isEmpty());
         QVERIFY(!encodeRecord(RecordType::AttachRing, QByteArray(kMaxJsonBytes, 'a')).isEmpty());
@@ -264,7 +269,7 @@ private slots:
     {
         QTest::addColumn<QByteArray>("bytes");
         QTest::addColumn<int>("error");
-        QTest::newRow("bad magic") << rawHeader("NCAQ", 4, 2, 0, 2) + "{}"
+        QTest::newRow("bad magic") << rawHeader("NCAQ", 5, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadMagic);
         QTest::newRow("version 1") << rawHeader("NCAP", 1, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadVersion);
@@ -272,40 +277,46 @@ private slots:
                                    << int(RecordReader::Error::BadVersion);
         QTest::newRow("version 3") << rawHeader("NCAP", 3, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadVersion);
-        QTest::newRow("version 5") << rawHeader("NCAP", 5, 2, 0, 2) + "{}"
+        QTest::newRow("version 4") << rawHeader("NCAP", 4, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadVersion);
-        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 4, 2, 1, 2) + "{}"
+        QTest::newRow("version 6") << rawHeader("NCAP", 6, 2, 0, 2) + "{}"
+                                   << int(RecordReader::Error::BadVersion);
+        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 5, 2, 1, 2) + "{}"
                                           << int(RecordReader::Error::BadReserved);
-        QTest::newRow("reserved high byte") << rawHeader("NCAP", 4, 2, 0x100, 2) + "{}"
+        QTest::newRow("reserved high byte") << rawHeader("NCAP", 5, 2, 0x100, 2) + "{}"
                                             << int(RecordReader::Error::BadReserved);
-        QTest::newRow("unknown type") << rawHeader("NCAP", 4, 8, 0, 2) + "{}"
+        QTest::newRow("unknown type") << rawHeader("NCAP", 5, 9, 0, 2) + "{}"
                                       << int(RecordReader::Error::UnknownType);
-        QTest::newRow("unknown type 25") << rawHeader("NCAP", 4, 25, 0, 2) + "{}"
+        QTest::newRow("unknown type 26") << rawHeader("NCAP", 5, 26, 0, 2) + "{}"
                                          << int(RecordReader::Error::UnknownType);
-        QTest::newRow("probe hit 4097") << rawHeader("NCAP", 4, 4, 0, 4097)
-                                        << int(RecordReader::Error::Oversize);
-        QTest::newRow("attach ring 4097") << rawHeader("NCAP", 4, 21, 0, 4097)
-                                          << int(RecordReader::Error::Oversize);
-        QTest::newRow("ring attached 4097") << rawHeader("NCAP", 4, 5, 0, 4097)
-                                            << int(RecordReader::Error::Oversize);
-        QTest::newRow("json 4097") << rawHeader("NCAP", 4, 2, 0, 4097)
+        QTest::newRow("warmed 4097") << rawHeader("NCAP", 5, 8, 0, 4097)
+                                     << int(RecordReader::Error::Oversize);
+        QTest::newRow("warm 4097") << rawHeader("NCAP", 5, 25, 0, 4097)
                                    << int(RecordReader::Error::Oversize);
-        QTest::newRow("configure 4097") << rawHeader("NCAP", 4, 16, 0, 4097)
+        QTest::newRow("probe hit 4097") << rawHeader("NCAP", 5, 4, 0, 4097)
                                         << int(RecordReader::Error::Oversize);
-        QTest::newRow("asio caps 16385") << rawHeader("NCAP", 4, 6, 0, 16385)
-                                         << int(RecordReader::Error::Oversize);
-        QTest::newRow("asio state 16385") << rawHeader("NCAP", 4, 7, 0, 16385)
+        QTest::newRow("attach ring 4097") << rawHeader("NCAP", 5, 21, 0, 4097)
                                           << int(RecordReader::Error::Oversize);
-        QTest::newRow("asio describe 16385") << rawHeader("NCAP", 4, 22, 0, 16385)
-                                             << int(RecordReader::Error::Oversize);
-        QTest::newRow("asio open 16385") << rawHeader("NCAP", 4, 23, 0, 16385)
+        QTest::newRow("ring attached 4097") << rawHeader("NCAP", 5, 5, 0, 4097)
+                                            << int(RecordReader::Error::Oversize);
+        QTest::newRow("json 4097") << rawHeader("NCAP", 5, 2, 0, 4097)
+                                   << int(RecordReader::Error::Oversize);
+        QTest::newRow("configure 4097") << rawHeader("NCAP", 5, 16, 0, 4097)
+                                        << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio caps 16385") << rawHeader("NCAP", 5, 6, 0, 16385)
                                          << int(RecordReader::Error::Oversize);
-        QTest::newRow("asio panel 16385") << rawHeader("NCAP", 4, 24, 0, 16385)
+        QTest::newRow("asio state 16385") << rawHeader("NCAP", 5, 7, 0, 16385)
+                                          << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio describe 16385") << rawHeader("NCAP", 5, 22, 0, 16385)
+                                             << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio open 16385") << rawHeader("NCAP", 5, 23, 0, 16385)
+                                         << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio panel 16385") << rawHeader("NCAP", 5, 24, 0, 16385)
                                           << int(RecordReader::Error::Oversize);
         QTest::newRow("pcm oversize")
-            << rawHeader("NCAP", 4, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
+            << rawHeader("NCAP", 5, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
             << int(RecordReader::Error::Oversize);
-        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 4, 3, 0, 0xFFFFFFFFu)
+        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 5, 3, 0, 0xFFFFFFFFu)
                                             << int(RecordReader::Error::Oversize);
     }
 
@@ -1278,6 +1289,106 @@ private slots:
         const QByteArray bytes = rawHeader("NCAP", 1, 4, 0, 2) + "{}";
         reader.append(bytes.constData(), bytes.size());
         QCOMPARE(reader.error(), RecordReader::Error::BadVersion);
+    }
+
+    // ── Warm-up (version 5, the persistent helper) ─────────────────────────
+
+    void warmRecordTypes()
+    {
+        QCOMPARE(int(RecordType::Warmed), 8);
+        QCOMPARE(int(RecordType::Warm), 25);
+        QCOMPARE(kMaxWarmedInputs, 1024);
+    }
+
+    void warmRecord()
+    {
+        const QByteArray rec = encodeWarm();
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::Warm));
+        QCOMPARE(payloadOf(rec), QByteArray("{}"));
+    }
+
+    void warmedRoundTrip_data()
+    {
+        QTest::addColumn<int>("inputs");
+        QTest::addColumn<qint64>("startNs");
+        QTest::addColumn<qint64>("listedNs");
+        QTest::newRow("listed none") << -1 << qint64(1) << qint64(1);
+        QTest::newRow("no inputs") << 0 << qint64(5) << qint64(9);
+        QTest::newRow("steady") << 7 << qint64(1234567890123456789LL)
+                                << qint64(1234567890987654321LL);
+        QTest::newRow("bounds") << kMaxWarmedInputs << qint64(1)
+                                << qint64(9223372036854775807LL);
+    }
+
+    void warmedRoundTrip()
+    {
+        QFETCH(int, inputs);
+        QFETCH(qint64, startNs);
+        QFETCH(qint64, listedNs);
+        Warmed warmed;
+        warmed.inputs = inputs;
+        warmed.startNs = startNs;
+        warmed.listedNs = listedNs;
+        const QByteArray rec = encodeWarmed(warmed);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::Warmed));
+        // The times are decimal strings, so the 64-bit values are exact.
+        const QJsonObject obj = objectOf(rec);
+        QCOMPARE(obj.size(), 3);
+        QCOMPARE(obj.value("inputs").toInt(), inputs);
+        QCOMPARE(obj.value("startNs").toString(), QString::number(startNs));
+        QCOMPARE(obj.value("listedNs").toString(), QString::number(listedNs));
+        const auto decoded = decodeWarmed(payloadOf(rec));
+        QVERIFY(decoded);
+        QCOMPARE(decoded->inputs, inputs);
+        QCOMPARE(qint64(decoded->startNs), startNs);
+        QCOMPARE(qint64(decoded->listedNs), listedNs);
+    }
+
+    void warmedRejections()
+    {
+        QVERIFY(decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12"})")));
+        // Out of range: inputs, a start at or before 0, a list before the start.
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":-2,"startNs":"10","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":1025,"startNs":"10","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2.5,"startNs":"10","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"0","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"-5","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"12","listedNs":"10"})")));
+        // Only the canonical decimal strings.
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":10,"listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"010","listedNs":"12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"+12"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"9223372036854775808"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":"2","startNs":"10","listedNs":"12"})")));
+        // The exact key set.
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10"})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({"inputs":2,"startNs":"10","listedNs":"12","x":1})")));
+        QVERIFY(!decodeWarmed(QByteArray(R"({})")));
+        QVERIFY(!decodeWarmed(QByteArray("not json")));
+        QVERIFY(!decodeWarmed(QByteArray(kMaxJsonBytes + 1, ' ')));
+        // The encoder refuses what the decoder would.
+        Warmed bad;
+        bad.inputs = 2;
+        bad.startNs = 12;
+        bad.listedNs = 10;
+        QVERIFY(encodeWarmed(bad).isEmpty());
+    }
+
+    void readerAcceptsWarmRecords()
+    {
+        Warmed warmed;
+        warmed.inputs = 3;
+        warmed.startNs = 100;
+        warmed.listedNs = 250;
+        const QByteArray stream = encodeWarm() + encodeWarmed(warmed);
+        RecordReader reader;
+        reader.append(stream.constData(), stream.size());
+        QCOMPARE(reader.next()->type, RecordType::Warm);
+        QCOMPARE(reader.next()->type, RecordType::Warmed);
+        QCOMPARE(reader.error(), RecordReader::Error::None);
     }
 };
 

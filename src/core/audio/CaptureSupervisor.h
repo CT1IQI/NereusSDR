@@ -38,6 +38,12 @@
 //   2026-10-09: native audio plan final fix wave (R-R3-36):
 //               fireDeadlinesNowForTest(), to fire a deadline early.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: the persistent helper: Demand::Standby keeps one warmed
+//               helper running for every generation; helperWarmed(),
+//               helperAvailable(); an open waits behind the helper's
+//               warm-up, which has its own bound (Options::warmTimeoutMs,
+//               WarmDeadline).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -72,6 +78,9 @@ struct CaptureSupervisorOptions {
     int helloTimeoutMs = 3000;
     int openTimeoutMs = 10000;
     int stopTimeoutMs = 2000;
+    // A standing helper's warm-up (2026-10-16): its first audio call can
+    // wait out a macOS Mic Mode re-apply, 40 to 100 s.
+    int warmTimeoutMs = 120000;
 };
 
 // Owns the helper process on a private I/O thread and publishes its status.
@@ -79,7 +88,20 @@ struct CaptureSupervisorOptions {
 // Demand: the first active Lease starts the helper and opens a new
 // generation (Configure then Open); releasing the last Lease stops it (Stop,
 // at most stopTimeoutMs, then kill) and returns to Closed.  No demand means
-// no helper process.
+// no helper process, unless a Standby or AsioDevice lease keeps it running
+// with no microphone open; then a generation's end stops only the
+// generation, and the next one reuses the same helper.
+//
+// Standby (2026-10-16): the first Standby lease starts a helper, which is
+// sent Warm once it says hello, so its first audio call and device list
+// come before the application's own (CaptureStandby); helperWarmed()
+// reports the answer.  An open asked for during the warm-up stays Opening
+// and is sent once the helper has warmed, and its open deadline starts
+// then; the warm-up has its own deadline, warmTimeoutMs, past which the
+// helper is killed (Failed, Timeout, when a generation was waiting).  A
+// standing helper that ends (killed past a deadline, exited, failed) is
+// replaced by one fresh helper at once, and by another only after that one
+// answered Warmed.  The other deadlines and kills are as for any helper.
 //
 // Each generation gets its own shared-memory region and wake (CaptureShm),
 // handed to the helper with AttachRing; the helper builds the clock
@@ -107,8 +129,12 @@ public:
     /// microphone chosen in Audio > Devices to its Core, while it transmits.
     /// AsioDevice (native audio plan Task 15): an output or input on ASIO,
     /// which runs in the helper.  It keeps the helper running and opens no
-    /// microphone; the other demands are the microphone's.
-    enum class Demand { LocalSession, TestMic, RemoteWindow, AsioDevice };
+    /// microphone.
+    /// Standby (2026-10-16): the standing helper, started early and warmed
+    /// so that every later generation reuses it.  It keeps the helper
+    /// running and opens no microphone.  The other demands are the
+    /// microphone's.
+    enum class Demand { LocalSession, TestMic, RemoteWindow, AsioDevice, Standby };
 
     struct Status {
         enum class State { Closed, PreparingPermission, Opening, Ready, Failed, Stopping };
@@ -182,6 +208,10 @@ public:
     CaptureAudioBus* reader() const;        // same pointer for the supervisor's lifetime
     void shutdown();                        // idempotent; returns within stopTimeoutMs + 500 ms
 
+    // False when no helper program can be started (demand would report
+    // HelperMissing).  Owner thread only.
+    bool helperAvailable() const;
+
     // Diagnostics: the running helper's process id, 0 when none.
     qint64 helperProcessId() const;
     // Diagnostics: the latest helper's process id, kept after it ends (a
@@ -193,11 +223,12 @@ public:
     // once, as a timer firing before its interval would.  Returns the
     // deadlines it ran.  Owner thread only; returns after the capture
     // thread has run them.
-    enum DeadlineForTest { HelloDeadline = 1, OpenDeadline = 2, StopDeadline = 4 };
+    enum DeadlineForTest { HelloDeadline = 1, OpenDeadline = 2, StopDeadline = 4,
+                           WarmDeadline = 8 };
     int fireDeadlinesNowForTest(int deadlines);
 
     // True while at least one microphone Lease is active (any demand but
-    // AsioDevice).  Owner thread only.
+    // AsioDevice and Standby).  Owner thread only.
     bool hasDemand() const { return micLeaseCount() > 0; }
 
     // ASIO (native audio plan Task 15).  Owner thread only.  Each starts
@@ -226,11 +257,15 @@ signals:
     // helper that ends while an ASIO open is held reports Failed.
     void asioCaps(const NereusSDR::CaptureProtocol::AsioCapsRecord& caps);
     void asioState(const NereusSDR::CaptureProtocol::AsioState& state);
+    // The standing helper answered Warm (2026-10-16), on the owner thread:
+    // its process id.  Each helper is warmed once.
+    void helperWarmed(qint64 pid);
 
 private:
     void releaseLease(quint64 id);
     int micLeaseCount() const;
     int asioLeaseCount() const;
+    int standbyLeaseCount() const;
     bool hasLease(quint64 id) const;
     void onWorkerStatus(const Status& status);
     void onWorkerHop(quint32 generation, double hopMs);

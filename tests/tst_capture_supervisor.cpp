@@ -55,10 +55,18 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: the persistent helper: one standing helper serves every
+//               generation, and a stuck one is still killed and replaced;
+//               an open waits out the helper's warm-up (its own bound), a
+//               helper that never starts is replaced once only, and
+//               CaptureStandby holds work until the helper has warmed or
+//               its bound.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QMutex>
@@ -75,6 +83,7 @@
 #include <vector>
 
 #include "core/audio/CaptureAudioBus.h"
+#include "core/audio/CaptureStandby.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
@@ -324,6 +333,32 @@ public:
 
 private:
     static constexpr const char* kVariable = "NEREUS_FAKE_CAPTURE_PERMISSION_FILE";
+    QTemporaryDir m_dir;
+    QString m_file;
+    bool m_valid = false;
+};
+
+// The file whose presence makes the warm-while-marked fake hold Warm
+// (FakeCaptureChild.h); release() removes it.
+class WarmHold {
+public:
+    WarmHold()
+        : m_file(m_dir.filePath(QStringLiteral("held")))
+    {
+        QFile file(m_file);
+        m_valid = m_dir.isValid() && file.open(QIODevice::WriteOnly);
+        file.close();
+        qputenv(kVariable, m_file.toLocal8Bit());
+    }
+    ~WarmHold() { qunsetenv(kVariable); }
+    WarmHold(const WarmHold&) = delete;
+    WarmHold& operator=(const WarmHold&) = delete;
+
+    bool isValid() const { return m_valid; }
+    bool release() { return QFile::remove(m_file); }
+
+private:
+    static constexpr const char* kVariable = "NEREUS_FAKE_CAPTURE_WARM_FILE";
     QTemporaryDir m_dir;
     QString m_file;
     bool m_valid = false;
@@ -1349,6 +1384,340 @@ private slots:
         QTest::qWait(300);
         QCOMPARE(hits.size(), 0);
         QCOMPARE(supervisor.status().state, State::Ready);
+    }
+
+    // ── The persistent helper (2026-10-16) ──────────────────────────────────
+
+    // Standby starts one helper and warms it with no microphone open.
+    // Every generation after that (an open, a close, a reopen for the
+    // remote window, a device change, a retry) runs on that same helper;
+    // only the standby's release lets it stop.
+    void standbyHelperServesEveryGeneration()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QVERIFY(standby.isActive());
+        QVERIFY(!supervisor.hasDemand());                       // not a microphone demand
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 1, kHelperStartMs);
+        const qint64 pid = supervisor.helperProcessId();
+        QVERIFY(pid > 0);
+        QCOMPARE(warmed.at(0).at(0).toLongLong(), pid);
+        QCOMPARE(supervisor.status().state, State::Closed);     // no microphone opened
+        QCOMPARE(supervisor.status().generation, quint32(0));
+        QVERIFY(!supervisor.reader()->isOpen());
+
+        auto mic = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        const quint32 opened = supervisor.status().generation;
+        QCOMPARE(supervisor.helperProcessId(), pid);
+
+        mic.release();
+        QVERIFY(waitForState(supervisor, State::Closed, 3000));
+        QTest::qWait(300);
+        QCOMPARE(supervisor.helperProcessId(), pid);            // standing by
+        QVERIFY(!processIsGone(pid));
+
+        auto uplink = supervisor.acquire(CaptureSupervisor::Demand::RemoteWindow);
+        QVERIFY(waitFor(supervisor, [opened](const Status& s) {
+            return s.state == State::Ready && s.generation > opened;
+        }, 5000));
+        const quint32 reopened = supervisor.status().generation;
+        QCOMPARE(supervisor.helperProcessId(), pid);
+
+        AudioDeviceConfig other = supervisor.config();
+        other.deviceName = QStringLiteral("Other fake microphone");
+        supervisor.configure(other);
+        QVERIFY(waitFor(supervisor, [reopened](const Status& s) {
+            return s.state == State::Ready && s.generation > reopened
+                && s.actualDevice == QLatin1String("Other fake microphone");
+        }, 5000));
+        const quint32 changed = supervisor.status().generation;
+        QCOMPARE(supervisor.helperProcessId(), pid);
+
+        supervisor.retry();
+        QVERIFY(waitFor(supervisor, [changed](const Status& s) {
+            return s.state == State::Ready && s.generation > changed;
+        }, 5000));
+        QCOMPARE(supervisor.helperProcessId(), pid);
+        QCOMPARE(supervisor.lastHelperProcessId(), pid);        // no other helper ever started
+        QCOMPARE(warmed.size(), 1);
+
+        uplink.release();
+        QVERIFY(waitForState(supervisor, State::Closed, 3000));
+        QTest::qWait(300);
+        QCOMPARE(supervisor.helperProcessId(), pid);
+
+        standby.release();                                      // nothing holds it now
+        QVERIFY(waitProcessGone(pid, 3000));
+        QTRY_COMPARE_WITH_TIMEOUT(supervisor.helperProcessId(), qint64(0), 3000);
+        QCOMPARE(supervisor.status().state, State::Closed);
+    }
+
+    // A standby helper that misses its open deadline is still killed, and
+    // standby starts one fresh helper at once, warmed with no microphone
+    // open.  The failure stays published (the generation is never retried
+    // by itself); the retry opens on the fresh helper, not on another.
+    void stuckStandbyHelperIsKilledAndReplaced()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open"));
+        options.openTimeoutMs = 500;                            // 10000 in production
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 1, kHelperStartMs);
+        const qint64 stuck = supervisor.helperProcessId();
+        QVERIFY(stuck > 0);
+
+        auto mic = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(markers.waitHanging(stuck, kHelperStartMs));    // the open went to the warm helper
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        const quint32 failed = supervisor.status().generation;
+        QVERIFY(waitProcessGone(stuck, 1000));                  // killed
+
+        QTRY_VERIFY_WITH_TIMEOUT(warmed.size() >= 2, kHelperStartMs);
+        const qint64 fresh = warmed.at(1).at(0).toLongLong();
+        QVERIFY(fresh > 0);
+        QVERIFY(fresh != stuck);
+        QCOMPARE(supervisor.helperProcessId(), fresh);
+        QCOMPARE(supervisor.status().state, State::Failed);     // never retried by itself
+        QCOMPARE(supervisor.status().generation, failed);
+
+        supervisor.retry();
+        QVERIFY(markers.waitHanging(fresh, kHelperStartMs));    // the retry's open went to it
+        QVERIFY(waitFor(supervisor, [failed](const Status& s) {
+            return s.state == State::Failed && s.generation > failed;
+        }, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        QVERIFY(waitProcessGone(fresh, 1000));
+    }
+
+    // An open asked for while the standing helper is still in its warm-up
+    // (its first audio call, which a macOS Mic Mode re-apply can hold for
+    // 40 to 100 s) stays Opening.  Its open deadline starts only once the
+    // helper has warmed, so the helper is not killed at it, and the open
+    // then succeeds on that same helper.
+    void openDuringWarmUpWaitsForTheHelper()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        WarmHold hold;
+        QVERIFY(hold.isValid());
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("warm-while-marked"));
+        options.openTimeoutMs = 500;                            // 10000 in production
+        CaptureSupervisor supervisor(options);
+        Recorder recorder(supervisor);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        const qint64 pid = waitForPid(supervisor, kHelperStartMs);
+        QVERIFY(pid > 0);
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));      // in its warm-up
+
+        auto mic = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Opening, 3000));
+        QCOMPARE(supervisor.fireDeadlinesNowForTest(CaptureSupervisor::OpenDeadline), 0);
+        QTest::qWait(options.openTimeoutMs * 2);                // the warm-up outlasts it
+        QCOMPARE(supervisor.status().state, State::Opening);
+        QVERIFY(!recorder.sawState(State::Failed));
+        QCOMPARE(supervisor.helperProcessId(), pid);
+        QCOMPARE(warmed.size(), 0);
+
+        QVERIFY(hold.release());
+        QVERIFY(waitFor(supervisor, [](const Status& s) {
+            return s.state == State::Ready || s.state == State::Failed;
+        }, 5000));
+        QCOMPARE(supervisor.status().state, State::Ready);
+        QCOMPARE(warmed.size(), 1);
+        QCOMPARE(supervisor.helperProcessId(), pid);
+        QCOMPARE(supervisor.lastHelperProcessId(), pid);        // no other helper started
+        QVERIFY(!recorder.sawState(State::Failed));
+    }
+
+    // A standing helper stuck in its warm-up is killed at the warm deadline
+    // (not the shorter open deadline); an open that waited on it fails as
+    // Timeout.  One fresh helper stands by in its place; when that one
+    // sticks too it is killed in turn, and no third helper is started.
+    void stuckWarmUpIsKilledAtTheWarmDeadline()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-warm"));
+        options.openTimeoutMs = 300;                            // 10000 in production
+        options.warmTimeoutMs = 1500;                           // 120000 in production
+        CaptureSupervisor supervisor(options);
+        Recorder recorder(supervisor);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        const qint64 stuck = waitForPid(supervisor, kHelperStartMs);
+        QVERIFY(stuck > 0);
+        QVERIFY(markers.waitHanging(stuck, kHelperStartMs));
+
+        auto mic = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Opening, 3000));
+        QTest::qWait(options.openTimeoutMs * 2);                // past the open deadline
+        QCOMPARE(supervisor.status().state, State::Opening);
+        QCOMPARE(supervisor.helperProcessId(), stuck);
+        QVERIFY(waitForState(supervisor, State::Failed, options.warmTimeoutMs + 3000));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        const quint32 failed = supervisor.status().generation;
+        QVERIFY(waitProcessGone(stuck, 1000));                  // killed
+
+        QElapsedTimer timer;
+        timer.start();
+        qint64 fresh = 0;
+        while (timer.elapsed() < kHelperStartMs) {
+            fresh = supervisor.helperProcessId();
+            if (fresh > 0 && fresh != stuck) {
+                break;
+            }
+            QTest::qWait(5);
+        }
+        QVERIFY(fresh > 0);
+        QVERIFY(fresh != stuck);
+        QVERIFY(markers.waitHanging(fresh, kHelperStartMs));    // stuck in its warm-up too
+        QCOMPARE(supervisor.status().state, State::Failed);     // never retried by itself
+        QCOMPARE(supervisor.status().generation, failed);
+        QVERIFY(waitProcessGone(fresh, options.warmTimeoutMs + 3000));
+
+        QTest::qWait(options.warmTimeoutMs);
+        QCOMPARE(supervisor.helperProcessId(), qint64(0));      // no third helper
+        QCOMPARE(supervisor.lastHelperProcessId(), fresh);
+        QCOMPARE(warmed.size(), 0);
+        QCOMPARE(supervisor.status().state, State::Failed);
+    }
+
+    // A standing helper that never says hello is killed at the hello
+    // deadline and replaced once; when the replacement does the same,
+    // standby gives up: no further helper is started.
+    void standbyHelperThatNeverStartsIsReplacedOnce()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("no-hello"));
+        options.helloTimeoutMs = 400;                           // 3000 in production
+        CaptureSupervisor supervisor(options);
+        QSignalSpy warmed(&supervisor, &CaptureSupervisor::helperWarmed);
+        auto standby = supervisor.acquire(CaptureSupervisor::Demand::Standby);
+        const qint64 first = waitForPid(supervisor, kHelperStartMs);
+        QVERIFY(first > 0);
+        QVERIFY(waitProcessGone(first, 3000));
+
+        QElapsedTimer timer;
+        timer.start();
+        while (supervisor.lastHelperProcessId() == first && timer.elapsed() < kHelperStartMs) {
+            QTest::qWait(5);
+        }
+        const qint64 second = supervisor.lastHelperProcessId();
+        QVERIFY(second > 0);
+        QVERIFY(second != first);
+        QVERIFY(waitProcessGone(second, 3000));
+
+        QTest::qWait(options.helloTimeoutMs * 3);               // room for a third start
+        QCOMPARE(supervisor.helperProcessId(), qint64(0));
+        QCOMPARE(supervisor.lastHelperProcessId(), second);
+        QCOMPARE(supervisor.fireDeadlinesNowForTest(CaptureSupervisor::HelloDeadline), 0);
+        QCOMPARE(warmed.size(), 0);
+        QCOMPARE(supervisor.status().state, State::Closed);     // no microphone was asked for
+    }
+
+    // ── CaptureStandby (2026-10-16) ─────────────────────────────────────────
+
+    // Work handed to whenWarm() waits while the helper is in its warm-up
+    // and runs from the event loop once it has warmed; later work runs at
+    // once, but never inside the call.  The helper keeps running.
+    void standbyHoldsWorkUntilTheHelperHasWarmed()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        WarmHold hold;
+        QVERIFY(hold.isValid());
+        CaptureStandby standby(fakeOptions(QStringLiteral("warm-while-marked")), 60000);
+        QObject context;
+        int ran = 0;
+        standby.whenWarm(&context, [&ran]() { ++ran; });
+        const qint64 pid = waitForPid(*standby.supervisor(), kHelperStartMs);
+        QVERIFY(pid > 0);
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));
+        QTest::qWait(200);
+        QCOMPARE(ran, 0);
+        QVERIFY(!standby.warmed());
+
+        QVERIFY(hold.release());
+        QTRY_COMPARE_WITH_TIMEOUT(ran, 1, kHelperStartMs);
+        QVERIFY(standby.warmed());
+
+        standby.whenWarm(&context, [&ran]() { ++ran; });
+        QCOMPARE(ran, 1);                                       // not inside the call
+        QTRY_COMPARE_WITH_TIMEOUT(ran, 2, 1000);
+        QCOMPARE(standby.supervisor()->helperProcessId(), pid);
+        QVERIFY(!processIsGone(pid));
+    }
+
+    // The bound only stops the holding: the work runs once it has passed,
+    // and the helper, still in its warm-up, is not killed for it.  Ending
+    // the standby still ends that helper within its bounded shutdown.
+    void standbyReleasesWorkAtItsBound()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        constexpr int kBoundMs = 300;
+        auto standby = std::make_unique<CaptureStandby>(fakeOptions(QStringLiteral("hang-warm")),
+                                                        kBoundMs);
+        QObject context;
+        int ran = 0;
+        QElapsedTimer timer;
+        timer.start();
+        standby->whenWarm(&context, [&ran]() { ++ran; });
+        QTRY_COMPARE_WITH_TIMEOUT(ran, 1, kHelperStartMs);
+        QVERIFY2(timer.elapsed() >= kBoundMs, qPrintable(QString::number(timer.elapsed())));
+        QVERIFY(!standby->warmed());
+        const qint64 pid = waitForPid(*standby->supervisor(), kHelperStartMs);
+        QVERIFY(pid > 0);
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));
+        QCOMPARE(standby->supervisor()->helperProcessId(), pid);
+
+        timer.restart();
+        standby.reset();
+        QVERIFY2(timer.elapsed() < 2000 + 500, qPrintable(QString::number(timer.elapsed())));
+        QVERIFY2(waitProcessGone(pid, 500), "helper outlived its standby");
+    }
+
+    // No helper program: nothing is started and nothing is held.
+    void standbyWithoutAHelperHoldsNothing()
+    {
+        CaptureSupervisor::Options options;
+        options.program = QDir(QCoreApplication::applicationDirPath())
+                              .filePath(QStringLiteral("no-such-capture-helper"));
+        CaptureStandby standby(options, 60000);
+        QObject context;
+        int ran = 0;
+        standby.whenWarm(&context, [&ran]() { ++ran; });
+        QCOMPARE(ran, 0);                                       // not inside the call
+        QTRY_COMPARE_WITH_TIMEOUT(ran, 1, 1000);
+        QVERIFY(!standby.warmed());
+        QCOMPARE(standby.supervisor()->lastHelperProcessId(), qint64(0));
+    }
+
+    // Work whose context is destroyed while it is held never runs.
+    void standbyDropsWorkWhoseContextIsGone()
+    {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
+        WarmHold hold;
+        QVERIFY(hold.isValid());
+        CaptureStandby standby(fakeOptions(QStringLiteral("warm-while-marked")), 60000);
+        auto context = std::make_unique<QObject>();
+        int ran = 0;
+        standby.whenWarm(context.get(), [&ran]() { ++ran; });
+        const qint64 pid = waitForPid(*standby.supervisor(), kHelperStartMs);
+        QVERIFY(pid > 0);
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));
+        context.reset();
+        QVERIFY(hold.release());
+        QTRY_VERIFY_WITH_TIMEOUT(standby.warmed(), kHelperStartMs);
+        QTest::qWait(100);
+        QCOMPARE(ran, 0);
     }
 };
 

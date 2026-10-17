@@ -80,10 +80,24 @@
 //                         still honoured): the engine's retry stays pending.
 //   bad-ring              Hello; on Open: Opening, Ready, then a wake with
 //                         the region's ring header zeroed.
+//   hang-warm             As ready until Warm; then nothing at all (Stop
+//                         and Shutdown are ignored too), as a helper stuck
+//                         in its first audio call.  With
+//                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it then creates
+//                         the empty file <dir>/<its pid>.
+//   warm-while-marked     As ready, but Warm is answered only once the file
+//                         NEREUS_FAKE_CAPTURE_WARM_FILE names is gone; every
+//                         command after it (Shutdown too) waits behind it,
+//                         as in the real helper.  With
+//                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it creates the
+//                         empty file <dir>/<its pid> once it holds Warm.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
 // Every scenario answers AsioDescribe with one driver, "Fake ASIO" (4
 // outputs, 2 inputs), AsioOpen with running (256 frames, 48 kHz) or, with
 // no uses, closed, and accepts AsioControlPanel (Task 15).
+// Every scenario that is still answering commands answers Warm with Warmed
+// (one input, listed at once); hang-open and its kin answer it until their
+// Open, no-hello and hang-warm never (2026-10-16).
 // Every scenario exits with code 0 on stdin EOF, and on Shutdown unless
 // it is ignoring commands.  An unknown scenario exits with code 2.
 //
@@ -114,6 +128,9 @@
 //               Claude Code.
 //   2026-10-12: generation-tagged open-step diagnostic regression.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: Warm is answered with Warmed (the persistent helper);
+//               hang-warm and warm-while-marked.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

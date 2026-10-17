@@ -301,6 +301,9 @@
 //               bus's clock matcher (MatcherPacketTiming), where it said
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: setSharedCaptureSupervisor() declared (the persistent
+//               helper's interface); engines do not use it yet.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -347,6 +350,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <array>
@@ -905,6 +909,15 @@ public:
     // --audio-delay-probe: every later start() turns the probe on after it
     // has started. Process-wide; set before the engine starts.
     static void setDelayProbeRequestedAtStart(bool requested);
+
+    // 2026-10-16: engines built from now on use this capture supervisor,
+    // the application's (CaptureStandby), instead of creating their own;
+    // nullptr goes back to their own.  An engine leaves a shared supervisor
+    // running when it goes, so its standing helper serves the next engine.
+    // One engine at a time uses it (a window replaces the last).  Set it
+    // before the first engine and clear it after the last, before the
+    // supervisor goes.  GUI thread only.
+    static void setSharedCaptureSupervisor(CaptureSupervisor* supervisor);
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
     // eagerly by start() with the platform-native virtual bus
@@ -1664,6 +1677,7 @@ private:
     // R-R3-36: (re)creates m_captureSupervisor from options, forwards its
     // status and applies m_txInputConfig. Never opens capture by itself.
     void installCaptureSupervisor(CaptureSupervisor::Options options);
+    static QPointer<CaptureSupervisor>& sharedCaptureSupervisor();
 
     // ── Native audio plan Task 7: the device layer ──────────────────────
     // True once the catalogue and the stream supervisor run; builds them

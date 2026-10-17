@@ -1200,6 +1200,7 @@ set(CORE_SOURCES
     # remote window's uplink.
     src/core/audio/MicUplinkCollector.cpp
     src/core/audio/CaptureSupervisor.cpp
+    src/core/audio/CaptureStandby.cpp
     # Native audio plan Task 15: the ASIO session rules (portable; the
     # driver itself loads only in nereus-audio-capture on Windows) and the
     # window's ASIO backend over the helper.

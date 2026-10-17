@@ -33,6 +33,9 @@
 //               Anthropic Claude Code.
 //   2026-10-12: inherited debug rules reach fake native queries and commands.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: the helper in a test run answers Warm with nothing listed
+//               and opens nothing (the persistent helper).  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -320,6 +323,32 @@ private slots:
         helper.send(P::encodeShutdown());
         QVERIFY(helper.finishes(3000));
         QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // 2026-10-16: the persistent helper's warm-up.  In a test run it makes
+    // no engine and lists nothing: Warmed reports -1 inputs, at once, with
+    // no status (nothing opens); a later Warm is answered again, and
+    // Shutdown still ends it cleanly.
+    void helperInATestRunWarmsWithoutAnyDevice()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        for (int round = 0; round < 2; ++round) {
+            helper.send(P::encodeWarm());
+            const auto record = helper.next(3000);
+            QVERIFY2(record.has_value(), helper.diagnostics().constData());
+            QCOMPARE(record->type, P::RecordType::Warmed);
+            const auto warmed = P::decodeWarmed(record->payload);
+            QVERIFY(warmed.has_value());
+            QCOMPARE(warmed->inputs, -1);
+            QVERIFY(warmed->startNs > 0);
+            QCOMPARE(warmed->listedNs, warmed->startNs);
+        }
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
     }
 
     void helperReportsMissingNamedDevice()

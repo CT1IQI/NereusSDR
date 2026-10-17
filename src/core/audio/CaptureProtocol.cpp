@@ -16,6 +16,9 @@
 //               ASIO codecs (AsioDescribe, AsioCaps, AsioOpen, AsioState,
 //               AsioControlPanel).  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: version 5 Warm and Warmed codecs, the persistent helper's
+//               warm-up.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureProtocol.h"
@@ -58,6 +61,8 @@ bool isKnownType(quint8 raw)
     case RecordType::AsioDescribe:
     case RecordType::AsioOpen:
     case RecordType::AsioControlPanel:
+    case RecordType::Warmed:
+    case RecordType::Warm:
         return true;
     }
     return false;
@@ -688,6 +693,62 @@ std::optional<std::int64_t> decodeProbeHit(const QByteArray& json)
         return std::nullopt;
     }
     return static_cast<std::int64_t>(value);
+}
+
+// ── Warm-up (version 5) ────────────────────────────────────────────────────
+
+namespace {
+
+// Canonical decimal only, as decodeProbeHit reads captureNs.
+std::optional<std::int64_t> readDecimalNs(const QJsonObject& obj, const QString& key)
+{
+    const auto text = readString(obj, key);
+    if (!text) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    const qlonglong value = text->toLongLong(&ok);
+    if (!ok || QString::number(value) != *text) {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+} // namespace
+
+QByteArray encodeWarm()
+{
+    return encodeRecord(RecordType::Warm, QByteArrayLiteral("{}"));
+}
+
+QByteArray encodeWarmed(const Warmed& warmed)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("inputs"), warmed.inputs);
+    obj.insert(QStringLiteral("startNs"), QString::number(static_cast<qlonglong>(warmed.startNs)));
+    obj.insert(QStringLiteral("listedNs"), QString::number(static_cast<qlonglong>(warmed.listedNs)));
+    return checkedRecord(RecordType::Warmed, toJson(obj), decodeWarmed);
+}
+
+std::optional<Warmed> decodeWarmed(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("inputs"), QStringLiteral("startNs"),
+                                        QStringLiteral("listedNs")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto inputs = readInteger(*obj, QStringLiteral("inputs"), -1, kMaxWarmedInputs);
+    const auto startNs = readDecimalNs(*obj, QStringLiteral("startNs"));
+    const auto listedNs = readDecimalNs(*obj, QStringLiteral("listedNs"));
+    if (!inputs || !startNs || !listedNs || *startNs <= 0 || *listedNs < *startNs) {
+        return std::nullopt;
+    }
+    Warmed warmed;
+    warmed.inputs = static_cast<int>(*inputs);
+    warmed.startNs = *startNs;
+    warmed.listedNs = *listedNs;
+    return warmed;
 }
 
 QByteArray encodeProbeEnable(bool enabled)

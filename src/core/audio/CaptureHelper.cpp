@@ -47,6 +47,8 @@
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: process/generation tags and debug command timestamps.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: protocol version 5's Warm is not a command here yet.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -356,6 +358,8 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
     case P::RecordType::RingAttached:
     case P::RecordType::AsioCaps:
     case P::RecordType::AsioState:
+    case P::RecordType::Warm:
+    case P::RecordType::Warmed:
         break;
     }
     return std::nullopt;
