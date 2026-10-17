@@ -17,9 +17,10 @@
 //               (issue #525). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 //   2026-10-16: A slice keyed to a pan that a layout change makes is
-//               docked on it with its flag (attachSlicesToNewPans), as the
-//               hidden pan that held it was taken up before. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               docked on it with its flag and its stream
+//               (attachSlicesToNewPans), as the hidden pan that held it was
+//               taken up before. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: A slice keyed to a pan this window does not show gets no
 //               hidden pan; one this window controls is rehomed onto its
 //               pan, as a layout change rehomes it (ruling U7). J.J. Boyd
@@ -2431,6 +2432,7 @@ void MainWindow::revealSliceInWindow(int sliceId)
             for (const QString& id : before) {
                 if (m_panStack->isFloating(id)) { floating << id; }
             }
+            const QStringList shownBefore = windowPanIds();
             m_panStack->applyLayout(grown, after);
             // applyLayout docks every floating pan; the operator's floating
             // pans go back out.
@@ -2438,7 +2440,7 @@ void MainWindow::revealSliceInWindow(int sliceId)
                 m_panStack->floatPanadapter(id);
             }
             // A slice keyed to the pan the grown layout makes goes onto it.
-            attachSlicesToNewPans(before);
+            attachSlicesToNewPans(shownBefore);
             // A slice whose flag sat on a pan the new layout retired keeps
             // its flag.
             for (SliceModel* other : m_radioModel->slices()) {
@@ -2574,7 +2576,9 @@ void MainWindow::reconcileListenPlacements()
 // fell back to. Only pans the window did not show in shownBefore are
 // looked at: a pan it already showed lists the slices it was given, and a
 // slice taken off one stays off. A slice this window placed stays where it
-// was placed.
+// was placed. A slice docked here moves its stream too: while it was on no
+// pan, rebuildFftRouting fed its stream to the active pan, and nothing
+// else in a layout change need rebuild the routing.
 void MainWindow::attachSlicesToNewPans(const QStringList& shownBefore)
 {
     if (!m_panStack || !m_radioModel) { return; }
@@ -2583,6 +2587,7 @@ void MainWindow::attachSlicesToNewPans(const QStringList& shownBefore)
         if (!shownBefore.contains(id)) { made << id; }
     }
     if (made.isEmpty()) { return; }
+    bool docked = false;
     for (SliceModel* slice : m_radioModel->slices()) {
         if (!slice) { continue; }
         const int id = slice->sliceIndex();
@@ -2592,7 +2597,9 @@ void MainWindow::attachSlicesToNewPans(const QStringList& shownBefore)
         if (!pan || pan->associatedSlices().contains(id)) { continue; }
         m_panStack->moveSliceToPan(id, key);
         rehostSliceView(slice);
+        docked = true;
     }
+    if (docked) { rebuildFftRouting(); }
 }
 
 // A pan key can name a pan this window does not show: the Core's slices

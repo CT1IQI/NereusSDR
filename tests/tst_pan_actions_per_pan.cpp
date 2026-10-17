@@ -24,7 +24,7 @@
 //                does not show is rehomed onto the window's pan, with no
 //                hidden pan. AI-assisted via Anthropic Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF. A slice keyed to a pan that a layout
-//                change then makes lands on that pan, flag and all.
+//                change then makes lands on that pan, flag, stream and all.
 //                AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
@@ -63,6 +63,7 @@
 #include "core/AppSettings.h"
 #include "core/ClarityController.h"
 #include "core/ConnectionState.h"
+#include "core/FFTRouter.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationClient.h"
@@ -738,6 +739,38 @@ private slots:
         QCOMPARE(slice->panKey(), QStringLiteral("pan-1"));
         QVERIFY(pan->associatedSlices().contains(id));
         QCOMPARE(flag->parentWidget(), pan->spectrumWidget());
+    }
+
+    // The pan that takes such a slice takes its stream too. While the slice
+    // was on no pan its stream fed the active pan. pan-0 has its own slice
+    // here, so the layout change adds no slice whose arrival would rebuild
+    // the routing anyway.
+    void aSliceDockedOnAPanALayoutChangeMakesFeedsThatPan()
+    {
+        auto window = openLocalWindow(QStringLiteral("1"));
+        RadioModel* model = window->radioModel();
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0")));
+        SliceModel* first = sliceOnPan(window.get(), QStringLiteral("pan-0"));
+        const int id = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(id >= 0);
+        SliceModel* slice = model->sliceById(id);
+        QVERIFY(slice);
+        slice->setFrequency(first->frequency() + 1'000'000.0);
+        QVERIFY(slice->streamIndex() >= 0);
+        QVERIFY(slice->streamIndex() != first->streamIndex());
+        FFTRouter* router = model->fftRouter();
+        QVERIFY(router);
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        PanadapterApplet* pan = appletFor(window.get(), QStringLiteral("pan-1"));
+        QVERIFY(pan);
+        QVERIFY(pan->associatedSlices().contains(id));
+        QCOMPARE(pan->associatedSlices().size(), 1);
+        const QList<QString> fed = router->pansForReceiver(slice->streamIndex());
+        QVERIFY2(fed.contains(QStringLiteral("pan-1")),
+                 qPrintable(QStringLiteral("stream %1 feeds %2")
+                                .arg(slice->streamIndex()).arg(fed.join(QLatin1Char(',')))));
+        QVERIFY(!fed.contains(QStringLiteral("pan-0")));
     }
 
     // A local window: a pan whose slice is closed says the same.
