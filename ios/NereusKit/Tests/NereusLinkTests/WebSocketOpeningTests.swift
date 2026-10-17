@@ -106,8 +106,8 @@ import Testing
         // before the opening's task ran (main's run 39036605824): it
         // failed before the dial, and nothing reached the listener.
         let clock = HeldDeadlineClock()
-        let dialled = clock.now
-        let deadline = dialled + WebSocketLinkTransport.openDeadline
+        let dialed = clock.now
+        let deadline = dialed + WebSocketLinkTransport.openDeadline
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: address, port: port), trust: .pairing,
                                                openDeadline: WebSocketLinkTransport.openDeadline,
                                                proxyResolver: SystemProxyResolver(), deadlineClock: clock)
@@ -130,6 +130,35 @@ import Testing
         await #expect(throws: LinkTransportError.noReply) {
             _ = try await opening.value
         }
+    }
+
+    /// The app's deadline runs on the connection's queue once its delay has
+    /// passed, never before. A busy runner may run it late, so only the
+    /// lower bound is checked; the backstop only stops a broken timer.
+    @Test func theAppsDeadlineRunsOnItsQueueAfterItsDelay() async throws {
+        let queue = DispatchQueue(label: "NereusSDR.tests.opening-deadline")
+        let onQueue = DispatchSpecificKey<Bool>()
+        queue.setSpecific(key: onQueue, value: true)
+        let fired = LockedFiring()
+        let clock = ContinuousClock()
+        let armed = clock.now
+        SystemOpeningDeadlineClock().run(after: .milliseconds(50), on: queue) {
+            fired.record(clock.now - armed, onQueue: DispatchQueue.getSpecific(key: onQueue) == true)
+        }
+        let giveUp = clock.now + TestBackstop.hang
+        while fired.value == nil && clock.now < giveUp {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let firing = try #require(fired.value, "the deadline never ran")
+        #expect(firing.elapsed >= .milliseconds(50))
+        #expect(firing.onQueue, "the deadline ran off the connection's queue")
+    }
+
+    private final class LockedFiring: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: (elapsed: Duration, onQueue: Bool)?
+        var value: (elapsed: Duration, onQueue: Bool)? { lock.withLock { stored } }
+        func record(_ elapsed: Duration, onQueue: Bool) { lock.withLock { stored = (elapsed, onQueue) } }
     }
 
     /// Time moves only when the test moves it; a deadline armed on it runs
