@@ -35,6 +35,13 @@
 //               headphones request and a receiver stream request lost to a
 //               media move are asked again once the window moves. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-17: a speaker failure's retry step that runs while the old
+//               peer is not ready, between the Core's move and the
+//               window's, is asked again by the window's move (no disable
+//               after it); a failure that is not retried has its lost
+//               disable sent again and schedules no retry
+//               (ReadinessGateTransport). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-16: a speaker failure's retry outlives a move that lost the
 //               failure's disable. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -112,6 +119,7 @@
 #include "core/session/media/DaemonAudioSource.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/IMediaTransport.h"
+#include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/media/MediaPeer.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include "core/session/media/DualPathAudio.h"
@@ -257,6 +265,109 @@ QList<QJsonObject> controlsNamed(const QSignalSpy& spy, const QString& op)
         const QJsonObject message = call.at(0).toJsonObject();
         if (message.value(QStringLiteral("op")) == op) {
             out.append(message);
+        }
+    }
+    return out;
+}
+
+// 2026-10-17: the window's real media transport (DTLS/SRTP over loopback)
+// that a test can make report not ready, as an agent that stopped hearing
+// its pair does while the Core moves (the stall rule's note in
+// RemoteMediaController). Everything else goes to the real transport.
+class ReadinessGateTransport final : public IMediaTransport {
+public:
+    explicit ReadinessGateTransport(QObject* parent)
+        : IMediaTransport(parent), m_inner(new LibDataChannelMediaTransport(this))
+    {
+        connect(m_inner, &IMediaTransport::localDescription, this, &IMediaTransport::localDescription);
+        connect(m_inner, &IMediaTransport::localCandidate, this, &IMediaTransport::localCandidate);
+        connect(m_inner, &IMediaTransport::gatheringComplete, this, &IMediaTransport::gatheringComplete);
+        connect(m_inner, &IMediaTransport::displayReceived, this, &IMediaTransport::displayReceived);
+        connect(m_inner, &IMediaTransport::iqReceived, this, &IMediaTransport::iqReceived);
+        connect(m_inner, &IMediaTransport::waveformReceived, this, &IMediaTransport::waveformReceived);
+        connect(m_inner, &IMediaTransport::waveformErrorOccurred,
+                this, &IMediaTransport::waveformErrorOccurred);
+        connect(m_inner, &IMediaTransport::waveformDropped, this, &IMediaTransport::waveformDropped);
+        connect(m_inner, &IMediaTransport::waveformWritable, this, &IMediaTransport::waveformWritable);
+        connect(m_inner, &IMediaTransport::iqErrorOccurred, this, &IMediaTransport::iqErrorOccurred);
+        connect(m_inner, &IMediaTransport::rtpReceived, this, &IMediaTransport::rtpReceived);
+        connect(m_inner, &IMediaTransport::micRtpReceived, this, &IMediaTransport::micRtpReceived);
+        connect(m_inner, &IMediaTransport::txReceived, this, &IMediaTransport::txReceived);
+        connect(m_inner, &IMediaTransport::ready, this, &IMediaTransport::ready);
+        connect(m_inner, &IMediaTransport::closed, this, &IMediaTransport::closed);
+        connect(m_inner, &IMediaTransport::connectionFailed, this, &IMediaTransport::connectionFailed);
+        connect(m_inner, &IMediaTransport::errorOccurred, this, &IMediaTransport::errorOccurred);
+        connect(m_inner, &IMediaTransport::displayWritable, this, &IMediaTransport::displayWritable);
+        connect(m_inner, &IMediaTransport::displayErrorOccurred,
+                this, &IMediaTransport::displayErrorOccurred);
+    }
+    bool start(const StartOptions& options) override { return m_inner->start(options); }
+    void stop() override { m_inner->stop(); }
+    bool acceptDescription(const QString& sdp, const QString& type) override
+    {
+        return m_inner->acceptDescription(sdp, type);
+    }
+    bool acceptCandidate(const QString& candidate, const QString& mid) override
+    {
+        return m_inner->acceptCandidate(candidate, mid);
+    }
+    bool sendDisplay(const QByteArray& message) override { return m_inner->sendDisplay(message); }
+    DisplaySendResult submitDisplay(const QByteArray& message) override
+    {
+        return m_inner->submitDisplay(message);
+    }
+    bool displayBusy() const override { return m_inner->displayBusy(); }
+    DisplaySendResult submitIq(const QByteArray& message) override
+    {
+        return m_inner->submitIq(message);
+    }
+    bool iqBusy() const override { return m_inner->iqBusy(); }
+    DisplaySendResult submitWaveform(const QByteArray& message) override
+    {
+        return m_inner->submitWaveform(message);
+    }
+    bool waveformBusy() const override { return m_inner->waveformBusy(); }
+    bool sendRtp(const QByteArray& packet) override { return m_inner->sendRtp(packet); }
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override { return m_inner->audioRtpSink(); }
+    std::shared_ptr<MediaDisplaySink> displaySink() override { return m_inner->displaySink(); }
+    bool sendMicRtp(const QByteArray& packet) override { return m_inner->sendMicRtp(packet); }
+    bool sendTx(const QByteArray& message) override { return m_inner->sendTx(message); }
+    bool setMicPacketSink(MicPacketSink sink) override
+    {
+        return m_inner->setMicPacketSink(std::move(sink));
+    }
+    bool setTxReceiptHook(TxReceiptHook hook) override
+    {
+        return m_inner->setTxReceiptHook(std::move(hook));
+    }
+    bool isReady() const override { return !notReady && m_inner->isReady(); }
+    bool gatherCandidates(const QList<IceRelayServer>& relays) override
+    {
+        return m_inner->gatherCandidates(relays);
+    }
+    std::optional<MediaIcePath> selectedPath() const override { return m_inner->selectedPath(); }
+    std::optional<qint64> rttMs() const override { return m_inner->rttMs(); }
+    bool losslessAudioNegotiated() const override { return m_inner->losslessAudioNegotiated(); }
+    bool micLosslessNegotiated() const override { return m_inner->micLosslessNegotiated(); }
+    std::optional<MediaTransportTelemetry> telemetry() const override
+    {
+        return m_inner->telemetry();
+    }
+
+    // Reported as not ready while set; the real connection carries on.
+    bool notReady = false;
+
+private:
+    LibDataChannelMediaTransport* m_inner;
+};
+
+// The audio requests the Core took naming one media connection, in order.
+QList<QJsonObject> audioRequestsOn(const QSignalSpy& spy, const QString& connectionId)
+{
+    QList<QJsonObject> out;
+    for (const QJsonObject& request : controlsNamed(spy, QStringLiteral("audio"))) {
+        if (request.value(QStringLiteral("connectionId")).toString() == connectionId) {
+            out.append(request);
         }
     }
     return out;
@@ -2345,11 +2456,144 @@ private slots:
         // The window moves, then the retry runs on the new connection.
         h.stationLink->setHoldsOutgoing(false);
         QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
-        QTest::qWait(200);
         media.holdAudioRestartForTest(false);
         QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
                                       == RemoteAudioStatus::State::Playing,
                                   h.mediaStage(media).constData(), 10000);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-17: the failure's retry step can run in the gap between the
+    // Core's move and the window's, while the old peer reports not ready, so
+    // its request cannot be made. The window's move then asks for audio on
+    // the new connection; it never turns the audio off again there.
+    void aFailureRetryThatRanMidMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        QList<QPointer<ReadinessGateTransport>> links;
+        RemoteMediaController media(&h.client, &h.remote, nullptr, nullptr,
+            [&links](QObject* parent) -> IMediaTransport* {
+                auto* link = new ReadinessGateTransport(parent);
+                links.append(link);
+                return link;
+            });
+        DaemonMediaController daemon(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QCOMPARE(links.size(), 1);
+        const QPointer<ReadinessGateTransport> oldLink = links.constFirst();
+        media.holdAudioRestartForTest(true);
+        // The Core moves first; its replace is held on the way to the window.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The speakers fail; the disable goes out on the old connection and
+        // is dropped, and the failure's retry step waits.
+        media.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerOpenFailed);
+        QTRY_VERIFY_WITH_TIMEOUT(media.audioRestartStepHeldForTest(), 10000);
+        // The old peer reports not ready; the step runs and cannot ask.
+        QVERIFY(oldLink);
+        oldLink->notReady = true;
+        media.holdAudioRestartForTest(false);
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QVERIFY(!media.audioRestartPendingForTest());
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The window moves and asks on the new connection.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        const QString newId = media.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(!audioRequestsOn(coreControls, newId).isEmpty(), 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(), 10000);
+        // Every audio request on the new connection asks for audio.
+        for (const QJsonObject& request : audioRequestsOn(coreControls, newId)) {
+            QVERIFY2(request.value(QStringLiteral("enabled")).toBool(),
+                     QJsonDocument(request).toJson(QJsonDocument::Compact).constData());
+        }
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-17: a failure that is not asked for again (a speaker buffer
+    // too large for remote playback) whose disable is lost to the move: the
+    // window's move sends the disable again on the new connection, and no
+    // retry is scheduled.
+    void aFailureNotRetriedResendsItsLostDisable()
+    {
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        media.holdAudioRestartForTest(true);
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The disable goes out on the old connection and is dropped.
+        media.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerCallbackTooLarge);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        const QString newId = media.mediaConnectionId();
+        // The disable is sent again on the new connection, and only it.
+        QTRY_VERIFY_WITH_TIMEOUT(!audioRequestsOn(coreControls, newId).isEmpty(), 5000);
+        const QList<QJsonObject> onNew = audioRequestsOn(coreControls, newId);
+        QCOMPARE(onNew.size(), 1);
+        QCOMPARE(onNew.constFirst().value(QStringLiteral("enabled")).toBool(true), false);
+        QVERIFY(!media.audioRestartPendingForTest());
+        QVERIFY(!media.audioRestartStepHeldForTest());
+        QVERIFY(media.audioStatus().state != RemoteAudioStatus::State::Playing);
         source.stop();
         speaker.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));

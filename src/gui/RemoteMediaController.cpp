@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-17: a speaker failure's retry step that runs while no request
+//               can be made (the old peer not ready while the Core moves)
+//               is asked again by the move (audioRequestUnsent); before,
+//               the move sent the failure's disable again and nothing asked
+//               until Retry. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-16: 2026.10.1 ship blocker: a speaker failure is asked for
 //               again on its own, on the restart backoff
 //               (scheduleAudioRetry), so nobody has to mute and unmute; the
@@ -1784,6 +1790,11 @@ struct RemoteMediaController::Private {
     // The latest audio request is the disable a playback failure sent
     // (sendAudioDisable); a move that loses it sends it again.
     bool audioFailureDisableSent = false;
+    // 2026-10-17: the latest audio request is one requestAudio could not
+    // make (no ready media connection, as when the old peer reports not
+    // ready while the Core moves), so a move asks again. It ends a
+    // failure's disable as the latest request: the window wants audio now.
+    bool audioRequestUnsent = false;
     QString selectedOutput;
     RemoteAudioStatus audioStatus;
     QTimer* audioStatusTimer = nullptr;
@@ -4044,6 +4055,7 @@ void RemoteMediaController::stop()
     d->audioFailure.reset();
     d->audioRestarting = false;
     d->audioFailureDisableSent = false;
+    d->audioRequestUnsent = false;
     // R-R3-43: receiver streams stop with the media connection. Their
     // sinks stay registered and are asked for again on the next one.
     d->receiverRevisions.clear();
@@ -4542,7 +4554,10 @@ void RemoteMediaController::askAgainAfterMove()
             if (!current()) { return; }
         }
     } else if (!d->audioRetryPending && !d->audioHeldForTransmit
-               && (d->audioRestarting || audioUnanswered)) {
+               && (d->audioRestarting || audioUnanswered || d->audioRequestUnsent)) {
+        // 2026-10-17: a request that could not be made at all (a failure's
+        // retry step that ran while the old peer was not ready) is asked
+        // here too, whether or not the Core answered the disable before it.
         qCInfo(lcRemoteMedia) << "Asking for audio again on the new connection";
         requestAudio();
         if (!current()) { return; }
@@ -6751,6 +6766,7 @@ void RemoteMediaController::sendAudioDisable()
         d->audioProfileRequested = true;
     }
     d->audioFailureDisableSent = true;
+    d->audioRequestUnsent = false;
     send(disable);
 }
 
@@ -6765,12 +6781,18 @@ void RemoteMediaController::requestAudio()
     // media link becoming ready), each of which the status reflects.
     if (!d->peer || !d->peer->isReady() || !d->model || !d->client
         || !d->client->mediaAvailable()) {
+        // 2026-10-17: the window wants audio now, so a failure's disable is
+        // no longer its latest request: a move asks instead of turning the
+        // audio off again (askAgainAfterMove).
+        d->audioFailureDisableSent = false;
+        d->audioRequestUnsent = true;
         refreshAudioStatus();
         return;
     }
     ++d->audioRevision;
     if (!d->audioRevision) { ++d->audioRevision; }
     d->audioFailureDisableSent = false;
+    d->audioRequestUnsent = false;
     d->lastAudioRequestMs = d->clock.elapsed();
     const bool enabled = d->model->isConnected() && !d->model->audioEngine()->masterMuted();
     const QPointer<RemoteMediaController> self(this);
