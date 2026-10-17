@@ -1,5 +1,34 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-17: a playback failure's disable that cannot be sent (the old
+//               peer not ready while the Core moves) is still owed
+//               (audioDisableUnsent) and the move sends it; before, a
+//               failure that is not retried left the Core streaming to a
+//               stopped receiver, and one after an unsent request had the
+//               move ask for audio first. The same peer becoming ready again
+//               with no move sends an owed disable or request too (the
+//               media stall check). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-17: a speaker failure's retry step that runs while no request
+//               can be made (the old peer not ready while the Core moves)
+//               is asked again by the move (audioRequestUnsent); before,
+//               the move sent the failure's disable again and nothing asked
+//               until Retry. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-16: 2026.10.1 ship blocker: a speaker failure is asked for
+//               again on its own, on the restart backoff
+//               (scheduleAudioRetry), so nobody has to mute and unmute; the
+//               retries that fail again are quiet (one toast per run of
+//               failures). Speakers asked for before this computer's first
+//               device list is in wait for it with no problem shown. A
+//               speaker problem moves with the session to a new media
+//               connection, so playing there clears it (before, a move
+//               left it showing for the rest of the session). The wait
+//               for the device list is bounded (kSpeakerDeviceListWaitMs):
+//               past it the problem shows, with Retry. A device format
+//               remote playback cannot play (SpeakerFormatUnsupported) is
+//               not asked for again. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: comments follow the receiver's ride-out rule (a playing
 //               stream asks for a fresh context after 2.5 s with no
 //               packets, JJ 2026-10-16); no behavior change here: a media
@@ -417,6 +446,11 @@ int connectStageMs(int connectDeadlineMs, bool throughService)
 // The audio status refresh, which runs only while a receiver runs or a
 // playback problem awaits recovery.
 constexpr int kAudioStatusRefreshMs = 250;
+// 2026-10-16: how long speakers asked for before this computer's first
+// device list is in wait for it with no problem shown. Past it the wait
+// shows as the speaker problem, with Retry; the window's own retry keeps
+// asking, and the list's arrival still asks at once.
+constexpr qint64 kSpeakerDeviceListWaitMs = 10'000;
 // R-R3-23: how often the lossless link trial samples playback. Its windows
 // are RemoteAudioLinkTrial::kWindowMs long; a 1 s sample closes each within
 // a second of its end.
@@ -1738,6 +1772,17 @@ struct RemoteMediaController::Private {
     // restart does nothing; a media move leaves it alone, so a restart
     // waiting across the move still runs on the new connection.
     quint64 audioRetryGeneration = 0;
+    // 2026-10-16: the revision of the last request the window's own retry
+    // made (scheduleAudioRetry). A speaker failure met at that revision
+    // while the problem it retries still shows is quiet: the operator was
+    // told once. Any other request moves the revision past it.
+    quint32 audioRetryRevision = 0;
+    // 2026-10-16: the speakers wait for this computer's first device list
+    // (AudioEngine::speakersAwaitDeviceList): when the wait began (logged
+    // once), -1 when none is under way. A wait longer than
+    // speakerDeviceListWaitMs shows as the speaker problem.
+    qint64 audioAwaitingDevicesSinceMs = -1;
+    qint64 speakerDeviceListWaitMs = kSpeakerDeviceListWaitMs;
     // Test only: while held, a restart's backoff step that comes due is
     // kept here instead of running, and runs (through its own fence) once
     // released, so a test can order events against the step without
@@ -1745,7 +1790,9 @@ struct RemoteMediaController::Private {
     bool audioRestartHeldForTest = false;
     // R-R3-44: setReceiverAudioClockForTest; empty is the receiver's own.
     RemoteAudioReceiver::Clock receiverAudioClockForTest;
-    std::function<void()> heldAudioRestartStep;
+    // In the order they came due: an ended restart's step and the step of
+    // the failure that ended it can both be held.
+    std::vector<std::function<void()>> heldAudioRestartSteps;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
     // R-R3-51: the speakers' receiver ran out of packets while the Core
@@ -1779,8 +1826,19 @@ struct RemoteMediaController::Private {
     // accepted context or stop().
     bool audioRestarting = false;
     // The latest audio request is the disable a playback failure sent
-    // (sendAudioDisable); a move that loses it sends it again.
+    // (sendAudioDisable), or owes (audioDisableUnsent); a move that loses
+    // it sends it again.
     bool audioFailureDisableSent = false;
+    // 2026-10-17: the latest audio request is one requestAudio could not
+    // make (no ready media connection, as when the old peer reports not
+    // ready while the Core moves), so a move asks again. It ends a
+    // failure's disable as the latest request: the window wants audio now.
+    bool audioRequestUnsent = false;
+    // 2026-10-17: the latest audio request is a playback failure's disable
+    // that sendAudioDisable could not send (no ready media connection), so
+    // a move sends it. audioFailureDisableSent is set with it; a request or
+    // a disable actually sent clears it.
+    bool audioDisableUnsent = false;
     QString selectedOutput;
     RemoteAudioStatus audioStatus;
     QTimer* audioStatusTimer = nullptr;
@@ -1946,6 +2004,31 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     d->stallTimer->setInterval(500);
     d->stallTimer->setObjectName(QStringLiteral("remoteMediaStallTimer"));
     connect(d->stallTimer, &QTimer::timeout, this, [this] {
+        // 2026-10-17: a failure's disable or an audio request owed because
+        // the peer was not ready goes out once this same peer is ready
+        // again. MediaPeer says ready once per connection, and no move need
+        // come: the Core streaming to a stopped receiver keeps lastAudio
+        // fresh, so the rule below never fires. A retry step that is waiting
+        // asks itself (a send now would move the revision past its fence);
+        // a request held for transmit waits for the unkey. The two flags
+        // never hold together, so a disable owed is never followed by a
+        // request from here.
+        if (d->peer && d->peer->isReady() && !d->audioRetryPending) {
+            const QPointer<RemoteMediaController> self(this);
+            if (d->audioDisableUnsent) {
+                qCInfo(lcRemoteMedia)
+                    << "Turning audio off now that the media connection is ready again";
+                sendAudioDisable();
+                if (!self) { return; }
+            } else if (d->audioRequestUnsent && !d->audioFailureDisableSent
+                       && !d->audioHeldForTransmit && d->model && d->client
+                       && d->client->mediaAvailable()) {
+                qCInfo(lcRemoteMedia)
+                    << "Asking for audio now that the media connection is ready again";
+                requestAudio();
+                if (!self) { return; }
+            }
+        }
         // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
         // Nor audioEnabled: the audio receiver gives up on a starved
@@ -2075,28 +2158,72 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             this, &RemoteMediaController::refreshAudioStatus);
     connect(d->audio.get(), &RemoteAudioReceiver::errorOccurred, this,
             [this](const QString& reason, RemoteAudioReceiver::Fault fault) {
-        // Record the failure against this session and context as they stand
-        // now, before the disable below advances the audio revision.
-        d->audioFailure = RemoteAudioFailure{fault, d->epoch, d->connectionId,
-                                             d->audioGeneration,
-                                             d->audio->telemetry().generation};
-        // The receiver's detail is for diagnosis; the operator sees the
-        // plain-English problem below.
-        qCWarning(lcRemoteMedia).noquote()
-            << QStringLiteral("Remote audio playback failed: %1").arg(reason);
+        using Fault = RemoteAudioReceiver::Fault;
+        // 2026-10-16: speakers asked for before this computer's first device
+        // list is in wait for it. That is no failure: no problem, no toast.
+        // The list's arrival opens them and asks the Core again
+        // (speakersConfigChanged); the retry below asks meanwhile. A list
+        // that has not come in after speakerDeviceListWaitMs is the
+        // speaker problem, with Retry, as any other failure to open.
+        const bool listPending = fault == Fault::SpeakerOpenFailed && d->model
+            && d->model->audioEngine()->speakersAwaitDeviceList();
+        const qint64 now = d->clock.elapsed();
+        if (listPending && d->audioAwaitingDevicesSinceMs < 0) {
+            d->audioAwaitingDevicesSinceMs = now;
+            qCInfo(lcRemoteMedia) << "Remote audio waits for this computer's audio device list";
+        }
+        const bool awaitingDevices = listPending
+            && now - d->audioAwaitingDevicesSinceMs < d->speakerDeviceListWaitMs;
+        // A failure the window's own retry met while the problem it retries
+        // still shows: the operator has been told.
+        const bool quiet = awaitingDevices
+            || (d->audioFailure && d->audioRetryRevision != 0
+                && d->audioRetryRevision == d->audioRevision);
+        if (!awaitingDevices) {
+            // Record the failure against this session and context as they
+            // stand now, before the disable below advances the audio revision.
+            d->audioFailure = RemoteAudioFailure{fault, d->epoch, d->connectionId,
+                                                 d->audioGeneration,
+                                                 d->audio->telemetry().generation};
+            // The receiver's detail is for diagnosis; the operator sees the
+            // plain-English problem below.
+            if (quiet) {
+                qCDebug(lcRemoteMedia).noquote()
+                    << QStringLiteral("Remote audio playback still failing: %1").arg(reason);
+            } else {
+                qCWarning(lcRemoteMedia).noquote()
+                    << QStringLiteral("Remote audio playback failed: %1").arg(reason);
+                if (listPending) {
+                    qCWarning(lcRemoteMedia)
+                        << "Remote audio: this computer's audio device list is still not in after"
+                        << d->speakerDeviceListWaitMs << "ms";
+                }
+            }
+        }
         d->audioEnabled = false;
         d->audio->stop();
-        // A failure is lasting: a restart waiting on its backoff step ends
-        // here (the disable below moves the revision on, so it could never
-        // run), and the next request is the operator's Retry or a change.
+        // A restart waiting on its backoff step ends here (the disable below
+        // moves the revision on, so it could never run); the failure's own
+        // retry, below, takes the next step.
         d->audioRetryPending = false;
         ++d->audioRetryGeneration;
-        d->audioHeldForTransmit = false; // R-R3-51: lasting, as above
+        d->audioHeldForTransmit = false; // R-R3-51: the failure's retry asks, not the unkey
         const QPointer<RemoteMediaController> self(this);
         sendAudioDisable();
         if (!self) { return; }
+        // 2026-10-16 (2026.10.1 ship blocker): a speaker that failed is
+        // asked for again on its own, on the restart backoff, as a mute and
+        // unmute would; the operator's Retry, a mute or a device change
+        // still asks at once. A buffer too large for remote playback and a
+        // decoder that cannot start wait for the operator's change: asking
+        // again changes neither. Nor does it change a device format remote
+        // playback cannot play (channels, rate or sample type).
+        if (fault != Fault::SpeakerCallbackTooLarge && fault != Fault::DecoderUnavailable
+            && fault != Fault::SpeakerFormatUnsupported) {
+            scheduleAudioRetry();
+        }
         refreshAudioStatus();
-        if (!self) { return; }
+        if (!self || quiet) { return; }
         emit errorOccurred(remoteAudioProblemText(fault));
     });
     connect(d->audio.get(), &RemoteAudioReceiver::restartRequested, this,
@@ -2124,26 +2251,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             return;
         }
         d->audioRestarting = true;
-        if (!d->audioRetryPending) {
-            d->audioRetryPending = true;
-            const quint64 generation = d->audioRetryGeneration;
-            const quint32 revision = d->audioRevision;
-            const int delay = int(d->audioRestartBackoff.nextDelayMs(d->clock.elapsed(),
-                                                                     d->lastAudioRequestMs));
-            const auto step = [this, generation, revision] {
-                if (generation != d->audioRetryGeneration
-                    || revision != d->audioRevision) { return; }
-                d->audioRetryPending = false;
-                requestAudio();
-            };
-            QTimer::singleShot(delay, Qt::PreciseTimer, this, [this, step] {
-                if (d->audioRestartHeldForTest) {
-                    d->heldAudioRestartStep = step;
-                    return;
-                }
-                step();
-            });
-        }
+        scheduleAudioRetry();
         refreshAudioStatus();
     });
     connect(model->audioEngine(), &AudioEngine::masterMutedChanged,
@@ -3021,6 +3129,10 @@ QString RemoteMediaController::headphonesFaultText(RemoteAudioReceiver::Fault fa
     case Fault::DecoderUnavailable:
         return QStringLiteral("The audio decoder for the headphones could not start on "
                               "this computer. Choosing the audio quality again tries once more.");
+    case Fault::SpeakerFormatUnsupported:
+        return QStringLiteral("The headphones are set to a format remote playback cannot "
+                              "play. Choose another sample rate, channel setting or other "
+                              "headphones.");
     case Fault::NoPackets:
     case Fault::DecodeFailed:
     case Fault::ClockBuffer:
@@ -3974,6 +4086,8 @@ void RemoteMediaController::stop()
     d->audioEnabled = false;
     d->audioRetryPending = false;
     ++d->audioRetryGeneration;
+    d->audioRetryRevision = 0;
+    d->audioAwaitingDevicesSinceMs = -1;
     d->audioRestartBackoff.reset();
     d->headphonesRestartBackoff.reset();
     d->audioHeldForTransmit = false;       // R-R3-51
@@ -4014,6 +4128,8 @@ void RemoteMediaController::stop()
     d->audioFailure.reset();
     d->audioRestarting = false;
     d->audioFailureDisableSent = false;
+    d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     // R-R3-43: receiver streams stop with the media connection. Their
     // sinks stay registered and are asked for again on the next one.
     d->receiverRevisions.clear();
@@ -4438,6 +4554,11 @@ void RemoteMediaController::promoteReplacement()
         if (d->lastAudio.isValid()) { d->lastAudio.restart(); }
     }
     emit networkPathChanged();
+    // 2026-10-16: a speaker problem is this computer's, not the path's. It
+    // moves with the session, so playing on the new connection clears it.
+    if (d->audioFailure && d->audioFailure->connectionId == d->connectionId) {
+        d->audioFailure->connectionId = d->replacementId;
+    }
     d->connectionId = d->replacementId;
     d->replacementId.clear();
     // The existing migration contract carries accepted display contexts to
@@ -4496,14 +4617,23 @@ void RemoteMediaController::askAgainAfterMove()
             || d->acceptedAudioContext->revision != d->audioRevision);
     if (d->audioFailureDisableSent) {
         // A playback failure's disable: the Core would keep sending a
-        // stream this computer stopped playing.
-        if (audioUnanswered) {
+        // stream this computer stopped playing. A failure that is asked for
+        // again on the restart backoff (scheduleAudioRetry) keeps its step:
+        // a new disable would move the revision past the step's fence, and
+        // the step's own request (requestAudio, which clears the flag) asks
+        // the Core on the new connection anyway. 2026-10-17: a disable that
+        // could not be sent at all (the old peer not ready) is sent here
+        // too, whether or not the Core answered the request before it.
+        if ((audioUnanswered || d->audioDisableUnsent) && !d->audioRetryPending) {
             qCInfo(lcRemoteMedia) << "Turning audio off again on the new connection";
             sendAudioDisable();
             if (!current()) { return; }
         }
     } else if (!d->audioRetryPending && !d->audioHeldForTransmit
-               && (d->audioRestarting || audioUnanswered)) {
+               && (d->audioRestarting || audioUnanswered || d->audioRequestUnsent)) {
+        // 2026-10-17: a request that could not be made at all (a failure's
+        // retry step that ran while the old peer was not ready) is asked
+        // here too, whether or not the Core answered the disable before it.
         qCInfo(lcRemoteMedia) << "Asking for audio again on the new connection";
         requestAudio();
         if (!current()) { return; }
@@ -4798,20 +4928,32 @@ bool RemoteMediaController::audioRestartPendingForTest() const
     return d->audioRetryPending;
 }
 
+void RemoteMediaController::setSpeakerDeviceListWaitForTest(qint64 ms)
+{
+    d->speakerDeviceListWaitMs = ms;
+}
+
 void RemoteMediaController::holdAudioRestartForTest(bool held)
 {
     d->audioRestartHeldForTest = held;
     if (held) {
         return;
     }
-    if (const std::function<void()> step = std::exchange(d->heldAudioRestartStep, {})) {
+    const QPointer<RemoteMediaController> self(this);
+    for (const std::function<void()>& step : std::exchange(d->heldAudioRestartSteps, {})) {
         step();
+        if (!self) { return; }
     }
 }
 
 bool RemoteMediaController::audioRestartStepHeldForTest() const
 {
-    return bool(d->heldAudioRestartStep);
+    return !d->heldAudioRestartSteps.empty();
+}
+
+int RemoteMediaController::audioRestartStepsHeldForTest() const
+{
+    return int(d->heldAudioRestartSteps.size());
 }
 
 void RemoteMediaController::setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock)
@@ -4823,6 +4965,11 @@ void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault 
 {
     emit d->audio->restartRequested(QStringLiteral("Remote audio restart raised by a test"),
                                     fault);
+}
+
+void RemoteMediaController::raiseAudioFailureForTest(RemoteAudioReceiver::Fault fault)
+{
+    emit d->audio->errorOccurred(QStringLiteral("raised by a test"), fault);
 }
 
 void RemoteMediaController::updateDirectUpgrade(bool viaTunnel)
@@ -6650,9 +6797,47 @@ void RemoteMediaController::refreshCtunState(bool restorePreference)
     }
 }
 
+void RemoteMediaController::scheduleAudioRetry()
+{
+    // R-R3-21: one step at a time, on the restart backoff (1, 2, 4 s, reset
+    // by a healthy 10 s), fenced so a request or a session change since
+    // makes it do nothing. A restart and a speaker failure share it.
+    if (d->audioRetryPending) { return; }
+    d->audioRetryPending = true;
+    const quint64 generation = d->audioRetryGeneration;
+    const quint32 revision = d->audioRevision;
+    const int delay = int(d->audioRestartBackoff.nextDelayMs(d->clock.elapsed(),
+                                                             d->lastAudioRequestMs));
+    const auto step = [this, generation, revision] {
+        if (generation != d->audioRetryGeneration
+            || revision != d->audioRevision) { return; }
+        d->audioRetryPending = false;
+        const QPointer<RemoteMediaController> self(this);
+        requestAudio();
+        if (!self) { return; }
+        // 2026-10-16: what this request meets is the window's own retry's.
+        d->audioRetryRevision = d->audioRevision;
+    };
+    QTimer::singleShot(delay, Qt::PreciseTimer, this, [this, step] {
+        if (d->audioRestartHeldForTest) {
+            d->heldAudioRestartSteps.push_back(step);
+            return;
+        }
+        step();
+    });
+}
+
 void RemoteMediaController::sendAudioDisable()
 {
-    if (!d->peer || !d->peer->isReady()) { return; }
+    if (!d->peer || !d->peer->isReady()) {
+        // 2026-10-17: the disable is still owed, so a move sends it
+        // (askAgainAfterMove); before, the Core went on streaming to a
+        // stopped receiver, or the move asked for audio again.
+        d->audioFailureDisableSent = true;
+        d->audioRequestUnsent = false;
+        d->audioDisableUnsent = true;
+        return;
+    }
     ++d->audioRevision;
     if (!d->audioRevision) { ++d->audioRevision; }
     QJsonObject disable{{QStringLiteral("op"), QStringLiteral("audio")},
@@ -6665,6 +6850,8 @@ void RemoteMediaController::sendAudioDisable()
         d->audioProfileRequested = true;
     }
     d->audioFailureDisableSent = true;
+    d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     send(disable);
 }
 
@@ -6679,12 +6866,20 @@ void RemoteMediaController::requestAudio()
     // media link becoming ready), each of which the status reflects.
     if (!d->peer || !d->peer->isReady() || !d->model || !d->client
         || !d->client->mediaAvailable()) {
+        // 2026-10-17: the window wants audio now, so a failure's disable is
+        // no longer its latest request: a move asks instead of turning the
+        // audio off again (askAgainAfterMove).
+        d->audioFailureDisableSent = false;
+        d->audioRequestUnsent = true;
+        d->audioDisableUnsent = false;
         refreshAudioStatus();
         return;
     }
     ++d->audioRevision;
     if (!d->audioRevision) { ++d->audioRevision; }
     d->audioFailureDisableSent = false;
+    d->audioRequestUnsent = false;
+    d->audioDisableUnsent = false;
     d->lastAudioRequestMs = d->clock.elapsed();
     const bool enabled = d->model->isConnected() && !d->model->audioEngine()->masterMuted();
     const QPointer<RemoteMediaController> self(this);
@@ -7622,6 +7817,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             d->audioEnabled = started;
             d->preparingAudio = false;
             if (d->audioEnabled) {
+                d->audioAwaitingDevicesSinceMs = -1;
                 qCInfo(lcRemoteMedia).noquote()
                     << QStringLiteral("Remote audio receiving: %1, context %2")
                            .arg(reportedAudioProfile(*context))

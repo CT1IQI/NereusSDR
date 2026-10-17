@@ -20,6 +20,9 @@
 //               waited, for the matcher's clock fit and its
 //               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-17: openRefusedInUse()'s note: the engine now sets the sink
+//               before the open and drops a failed open's events.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/WasapiSystemWin.h"
@@ -404,8 +407,9 @@ QString WasapiOutputBusWin::errorString() const
 
 bool WasapiOutputBusWin::openRefusedInUse() const
 {
-    // R-AUD-11: the open's DeviceBusy is posted before the engine sets the
-    // event sink, so the open result carries it instead.
+    // R-AUD-11: the engine drops the stream events of a bus whose open
+    // failed, the open's DeviceBusy among them, so the open result
+    // carries it instead.
     return !isOpen() && wasapiOpenResult(lastOpenResult()) == AudioOpenResult::InUse;
 }
 

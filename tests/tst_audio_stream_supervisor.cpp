@@ -27,6 +27,9 @@
 //               default that is the chosen device plays as the chosen
 //               device, with no retry.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: the first list's default change, and any that names the
+//               device an output plays on, reopens nothing.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: a start before the catalog's first list waits for it, for
 //               what the catalog has left of its start's wait, and not at
 //               all once that is gone (R-AUD-03).  J.J. Boyd (KG4VCF),
@@ -988,6 +991,64 @@ private slots:
         QCOMPARE(changed.size(), 0);
         QCOMPARE(rig.st(AudioRole::Speakers), speakers);
         QCOMPARE(rig.st(AudioRole::TxInput), mic);
+    }
+
+    // 2026-10-16 launch check: the first device list of a run says the
+    // devices changed and then that the default did. The outputs open on
+    // the first; the second names the device they opened on, so nothing
+    // closes or opens again. A real move still follows at once (R-AUD-12).
+    void firstListOpensDefaultOutputsOnce()
+    {
+        Rig rig;
+        rig.sup->setChoice(AudioRole::Speakers, platformDefault());
+        rig.sup->setChoice(AudioRole::Headphones, platformDefault());
+        rig.start();
+        QCOMPARE(rig.host.opens.size(), 0);
+
+        addStandardOutputs(rig.catalogue);
+        rig.catalogue.changed();
+        rig.catalogue.defaultMoved(AudioDeviceDirection::Output);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Headphones).size(), 1);
+        QCOMPARE(rig.host.closes.size(), 0);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kBuiltName);
+
+        rig.catalogue.add(output(kPodsOutId, kPodsName, AudioTransport::Bluetooth));
+        rig.catalogue.setDefault(AudioDeviceDirection::Output, kPodsOutId);
+        rig.catalogue.changed();
+        rig.catalogue.defaultMoved(AudioDeviceDirection::Output);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 2);
+        QVERIFY(!rig.host.opensFor(AudioRole::Speakers).last().device.has_value());
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kPodsName);
+    }
+
+    // The same for a chosen output playing on its fallback: a default that
+    // did not move leaves the fallback playing; one that moved follows.
+    void fallbackStaysWhenTheDefaultDidNotMove()
+    {
+        Rig rig;
+        addStandardOutputs(rig.catalogue);
+        rig.catalogue.remove(AudioDeviceDirection::Output, kUsbId);
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.start();
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QVERIFY(!rig.host.opensFor(AudioRole::Speakers).last().device.has_value());
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kBuiltName);
+        rig.host.clear();
+
+        rig.catalogue.defaultMoved(AudioDeviceDirection::Output);
+        QCOMPARE(rig.host.opens.size(), 0);
+        QCOMPARE(rig.host.closes.size(), 0);
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kBuiltName);
+
+        rig.catalogue.add(output(kPodsOutId, kPodsName, AudioTransport::Bluetooth));
+        rig.catalogue.setDefault(AudioDeviceDirection::Output, kPodsOutId);
+        rig.catalogue.changed();
+        rig.catalogue.defaultMoved(AudioDeviceDirection::Output);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QVERIFY(!rig.host.opensFor(AudioRole::Speakers).last().device.has_value());
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kPodsName);
     }
 
     // R-AUD-03 (2026-10-16): a start asked before the catalog's first list

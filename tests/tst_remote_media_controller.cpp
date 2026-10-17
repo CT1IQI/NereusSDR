@@ -19,6 +19,32 @@
 //                                    600 px stack; the crop row's 4 kHz
 //                                    overlap is restored. AI-assisted via
 //                                    Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF  2026.10.1 ship blocker: a speaker
+//                                    failure is asked for again on its own,
+//                                    toasting once, until it plays
+//                                    (speakerFaultRetriesOnItsOwnUntilIt-
+//                                    Plays); speakers waiting for this
+//                                    computer's device list show no problem
+//                                    (speakersWaitForTheDeviceListWithout-
+//                                    AProblem); the lasting-failure cases
+//                                    now expect the quiet retry; a speaker
+//                                    problem clears once it plays on a new
+//                                    media connection (speakerProblem-
+//                                    ClearsOncePlayingOnANewConnection).
+//                                    Review round: a format remote playback
+//                                    cannot play, a callback too large and a
+//                                    decoder that cannot start are not asked
+//                                    for again (aSpeakerFormatRemotePlayback-
+//                                    CannotPlayIsNotAskedForAgain, lasting-
+//                                    SpeakerFaultsAreNotAskedForAgain); a
+//                                    failure after a recovery toasts again;
+//                                    the retry ends with the session
+//                                    (aSpeakerFailureRetryEndsWithThe-
+//                                    Session); the device-list wait is
+//                                    bounded (aDeviceListThatNeverComes-
+//                                    ShowsTheProblemAfterTheWait); the quiet
+//                                    retry is waited on, not timed.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF  Remote audio rides out short stalls
 //                                    (JJ, 2026-10-16): new
 //                                    aShortAudioGapKeepsTheContextAndPlaysOn,
@@ -11046,9 +11072,399 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
-    // R-R3-23 (a): a real speaker loss becomes a lasting playback problem
-    // with Retry. Mute, unmute, a device change, a disabled context and
-    // time do not clear it while the speaker is still gone.
+    // 2026-10-16 (2026.10.1 ship blocker): a speaker that fails is asked
+    // for again on its own, on the restart backoff (1, 2, 4 s), so nobody
+    // has to mute and unmute it back. The operator is told once: the
+    // attempts that fail again are quiet, the problem shows until the
+    // speaker plays, and it clears with nothing done here.
+    void speakerFaultRetriesOnItsOwnUntilItPlays()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        int enabledContexts = 0;
+        connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
+            const std::optional<RemoteAudioContextMessage> context =
+                remoteMedia.acceptedAudioContext();
+            if (context && context->enabled) { ++enabledContexts; }
+        });
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+
+        // The speaker stops reporting its timing while it plays.
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+        const int atFault = enabledContexts;
+
+        // Nothing here mutes, retries or changes a device. The window asks
+        // the Core again by itself, twice, and both attempts fail quietly.
+        QTRY_VERIFY_WITH_TIMEOUT(enabledContexts >= atFault + 2, 8000);
+        QCOMPARE(errors.size(), 1);
+        RemoteAudioStatus status = remoteMedia.audioStatus();
+        QCOMPARE(status.state, State::PlaybackProblem);
+        QVERIFY(status.retryAvailable);
+
+        // The speaker comes back: the next automatic attempt plays, and the
+        // problem clears.
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        status = remoteMedia.audioStatus();
+        QVERIFY(!status.problem.has_value());
+        QVERIFY(!status.retryAvailable);
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(!h.remote.audioEngine()->masterMuted());
+
+        // A failure after the recovery is news: the operator is told again.
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 2, 5000);
+        QCOMPARE(errors.at(1).at(0).toString(),
+                 remoteAudioProblemText(RemoteAudioReceiver::Fault::SpeakerTimingUnavailable));
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (review): a device format remote playback cannot play (here
+    // six channels) is told once and not asked for again: asking cannot
+    // change the format. The operator's change of device or format asks
+    // again, and plays.
+    void aSpeakerFormatRemotePlaybackCannotPlayIsNotAskedForAgain()
+    {
+        using State = RemoteAudioStatus::State;
+        using Fault = RemoteAudioReceiver::Fault;
+        Test::RemoteAudioSessionHarness h;
+        QVERIFY(h.remoteBus->open(AudioFormat{48000, 6, AudioFormat::Sample::Float32}));
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg,
+                             "Remote audio playback failed: Remote audio cannot play on a "
+                             "speaker device set to 6 channels at 48000 Hz");
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, h.kMediaConnectionWaitMs);
+        RemoteAudioStatus status = remoteMedia.audioStatus();
+        QCOMPARE(status.state, State::PlaybackProblem);
+        QVERIFY(status.problem == Fault::SpeakerFormatUnsupported);
+        QVERIFY(status.retryAvailable);
+        QCOMPARE(errors.at(0).at(0).toString(),
+                 remoteAudioProblemText(Fault::SpeakerFormatUnsupported));
+        // No retry waits on the backoff.
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(remoteMedia.audioRestartStepsHeldForTest(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::ClientDisabled),
+                                 5000);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+
+        // The operator sets the device to stereo: that asks again, and plays.
+        remoteMedia.holdAudioRestartForTest(false);
+        QVERIFY(h.remoteBus->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        emit h.remote.audioEngine()->speakersConfigChanged(
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QVERIFY(!remoteMedia.audioStatus().problem.has_value());
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (review): the speaker faults asking again cannot change
+    // wait for the operator; a speaker that could not open is asked for
+    // again on its own (the row that shows the check can fail).
+    void lastingSpeakerFaultsAreNotAskedForAgain_data()
+    {
+        using Fault = RemoteAudioReceiver::Fault;
+        QTest::addColumn<RemoteAudioReceiver::Fault>("fault");
+        QTest::addColumn<bool>("retried");
+        QTest::newRow("callback too large") << Fault::SpeakerCallbackTooLarge << false;
+        QTest::newRow("decoder unavailable") << Fault::DecoderUnavailable << false;
+        QTest::newRow("format unsupported") << Fault::SpeakerFormatUnsupported << false;
+        QTest::newRow("open failed") << Fault::SpeakerOpenFailed << true;
+    }
+    void lastingSpeakerFaultsAreNotAskedForAgain()
+    {
+        using State = RemoteAudioStatus::State;
+        QFETCH(RemoteAudioReceiver::Fault, fault);
+        QFETCH(bool, retried);
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg, "Remote audio playback failed: raised by a test");
+        remoteMedia.raiseAudioFailureForTest(fault);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+        QCOMPARE(remoteMedia.audioRestartPendingForTest(), retried);
+
+        remoteMedia.holdAudioRestartForTest(false);
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (review): a speaker failure's own retry ends with the
+    // session. Its step, come due after the disconnect, asks for nothing,
+    // on that session or the next.
+    void aSpeakerFailureRetryEndsWithTheSession()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        int requests = 0;
+        connect(&h.server, &StationServer::mediaControlReceived, this,
+                [&](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("audio")
+                && control.value(QStringLiteral("enabled")).toBool()) {
+                ++requests;
+            }
+        });
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+
+        // The failure's step is held, so it comes due after the session ends.
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        h.client.disconnectFromStation(QStringLiteral("end the session"));
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 10000);
+
+        // The next session plays. The old step, released, asks for nothing:
+        // a mute and unmute after it is the only request the Core sees.
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        const int atPlaying = requests;
+        remoteMedia.holdAudioRestartForTest(false);
+        QCOMPARE(remoteMedia.audioRestartStepsHeldForTest(), 0);
+        const quint32 beforeMute = remoteMedia.acceptedAudioContext()->generation;
+        h.remote.audioEngine()->setMasterMuted(true);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, beforeMute,
+                                             RemoteAudioOffReason::ClientDisabled), 5000);
+        h.remote.audioEngine()->setMasterMuted(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(requests, atPlaying + 1);
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: a speaker problem is this computer's, not the network
+    // path's. The window moves its media to a new connection while the
+    // problem shows (it does so by itself after a silence on a direct
+    // path), and the speaker playing on the new connection clears it.
+    void speakerProblemClearsOncePlayingOnANewConnection()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+
+        // The window's own retry waits until the move has finished.
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+
+        const QString before = remoteMedia.mediaConnectionId();
+        QVERIFY(remoteMedia.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.mediaConnectionId() != before
+                                     && !remoteMedia.replacingConnection(),
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+
+        // The speaker comes back and the retry asks again: it plays on the
+        // new connection, and the problem clears with nothing done here.
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartStepHeldForTest(), 5000);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QVERIFY(!remoteMedia.audioStatus().problem.has_value());
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: the Core's audio can arrive before this computer's first
+    // device list is in (on macOS 27 the Voice Isolation storm holds it for
+    // many seconds). The speakers wait for the list: no problem, no toast,
+    // Waiting for audio, and the window keeps asking quietly. The list's
+    // arrival opens the speakers (speakersConfigChanged), which asks the
+    // Core again, and audio plays.
+    void speakersWaitForTheDeviceListWithoutAProblem()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        AudioStatusHistory history(remoteMedia);
+        int enabledContexts = 0;
+        connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
+            const std::optional<RemoteAudioContextMessage> context =
+                remoteMedia.acceptedAudioContext();
+            if (context && context->enabled) { ++enabledContexts; }
+        });
+        // The device layer has not listed the speakers' device: playback
+        // cannot start on them (the injected speaker reports no timing),
+        // and the engine says why.
+        AudioEngine* const engine = h.remote.audioEngine();
+        engine->setSpeakersAwaitDeviceListForTest(true);
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(enabledContexts >= 1, h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        // The window asks again by itself, on the 1 s step.
+        QTRY_VERIFY_WITH_TIMEOUT(enabledContexts >= 2, 5000);
+        RemoteAudioStatus status = remoteMedia.audioStatus();
+        QCOMPARE(status.state, State::WaitingForAudio);
+        QVERIFY(!status.problem.has_value());
+        QVERIFY(!status.retryAvailable);
+        QCOMPARE(errors.size(), 0);
+
+        // The list comes in and the device layer opens the speakers. The
+        // automatic step is held, so it is the open that asks again.
+        remoteMedia.holdAudioRestartForTest(true);
+        engine->setSpeakersAwaitDeviceListForTest(std::nullopt);
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        emit engine->speakersConfigChanged(
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(errors.size(), 0);
+        QVERIFY(std::none_of(history.statuses.cbegin(), history.statuses.cend(),
+                             [](const RemoteAudioStatus& seen) {
+                                 return seen.state == State::PlaybackProblem
+                                     || seen.problem.has_value();
+                             }));
+        remoteMedia.holdAudioRestartForTest(false);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (review): the wait for the device list is bounded, from the
+    // first failure that waited. Past it the wait shows as the speaker
+    // problem, with Retry, told once; the window keeps asking quietly, and
+    // the list's arrival plays.
+    void aDeviceListThatNeverComesShowsTheProblemAfterTheWait()
+    {
+        using State = RemoteAudioStatus::State;
+        using Fault = RemoteAudioReceiver::Fault;
+        constexpr qint64 kWaitMs = 1500;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        int enabledContexts = 0;
+        quint32 lastEnabledGeneration = 0;
+        connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
+            const std::optional<RemoteAudioContextMessage> context =
+                remoteMedia.acceptedAudioContext();
+            if (context && context->enabled) {
+                ++enabledContexts;
+                lastEnabledGeneration = context->generation;
+            }
+        });
+        remoteMedia.setSpeakerDeviceListWaitForTest(kWaitMs);
+        AudioEngine* const engine = h.remote.audioEngine();
+        engine->setSpeakersAwaitDeviceListForTest(true);
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        // The window's own retry is held: the first failure is the only
+        // attempt until the wait has run out.
+        remoteMedia.holdAudioRestartForTest(true);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1,
+                                  h.kMediaConnectionWaitMs);
+        RemoteAudioStatus status = remoteMedia.audioStatus();
+        QCOMPARE(status.state, State::WaitingForAudio);
+        QVERIFY(!status.problem.has_value());
+        QVERIFY(!status.retryAvailable);
+        QCOMPARE(errors.size(), 0);
+
+        // At least the whole wait passes after that first failure; the held
+        // retry, released, fails past the wait and shows the problem.
+        QTest::qWait(int(kWaitMs) + 100);
+        QTest::ignoreMessage(QtWarningMsg, kSpeakerOpenFailedLog);
+        QTest::ignoreMessage(QtWarningMsg,
+                             "Remote audio: this computer's audio device list is still not "
+                             "in after 1500 ms");
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 10000);
+        status = remoteMedia.audioStatus();
+        QCOMPARE(status.state, State::PlaybackProblem);
+        QVERIFY(status.problem == Fault::SpeakerOpenFailed);
+        QVERIFY(status.retryAvailable);
+        QCOMPARE(errors.at(0).at(0).toString(),
+                 remoteAudioProblemText(Fault::SpeakerOpenFailed));
+
+        // The next attempt fails again, quietly.
+        const int atProblem = enabledContexts;
+        QTRY_VERIFY_WITH_TIMEOUT(enabledContexts >= atProblem + 1, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, lastEnabledGeneration,
+                                             RemoteAudioOffReason::ClientDisabled), 5000);
+        QCOMPARE(errors.size(), 1);
+
+        // The list comes in and opens the speakers: audio plays and the
+        // problem clears.
+        engine->setSpeakersAwaitDeviceListForTest(std::nullopt);
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        emit engine->speakersConfigChanged(
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QVERIFY(!remoteMedia.audioStatus().problem.has_value());
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // R-R3-23 (a): a real speaker loss becomes a playback problem with
+    // Retry. Mute, unmute, a device change, a disabled context and the
+    // window's own retries (2026-10-16) do not clear it while the speaker
+    // is still gone, and the retries that fail again toast nothing.
     void speakerLossPersistsAcrossMuteDeviceChangeAndDisabledContext()
     {
         using State = RemoteAudioStatus::State;
@@ -11060,6 +11476,16 @@ private slots:
         DaemonMediaController daemonMedia(&h.server, &h.station);
         QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
         AudioStatusHistory history(remoteMedia);
+        int enabledContexts = 0;
+        quint32 lastEnabledGeneration = 0;
+        connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
+            const std::optional<RemoteAudioContextMessage> context =
+                remoteMedia.acceptedAudioContext();
+            if (context && context->enabled) {
+                ++enabledContexts;
+                lastEnabledGeneration = context->generation;
+            }
+        });
         QTimer* const statusTimer = audioStatusTimer(remoteMedia);
         QVERIFY(statusTimer);
         QCOMPARE(remoteMedia.audioStatus().state, State::NotConnected);
@@ -11094,13 +11520,20 @@ private slots:
         QVERIFY(!toast.contains(QLatin1Char('[')));
 
         // Core confirms the disable the fault sent. A disabled context
-        // clears nothing, and neither does time.
+        // clears nothing, and neither do the window's own retries while the
+        // speaker is gone: each fails again, quietly.
         QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::ClientDisabled),
                                  5000);
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
-        QTest::qWait(3 * 250);
+        // The window's own retry asks once more; wait for that attempt and
+        // for the Core to confirm the disable its failure sent.
+        const int atFault = enabledContexts;
+        QTRY_VERIFY_WITH_TIMEOUT(enabledContexts >= atFault + 1, 8000);
+        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, lastEnabledGeneration,
+                                             RemoteAudioOffReason::ClientDisabled), 5000);
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
         QVERIFY(statusTimer->isActive()); // The problem awaits recovery.
+        QCOMPARE(errors.size(), 1);
 
         // Muted here: the mute is what shows, and the problem stays behind it.
         const quint32 beforeMute = remoteMedia.acceptedAudioContext()->generation;
@@ -11228,9 +11661,11 @@ private slots:
     // context of its own at the current revision while the restart waits
     // (today it does so only on a radio change or a new media connection,
     // each of which the window answers with its own request first), and that
-    // context cannot open this computer's speaker. The failure is lasting, as
-    // any other: no automatic request follows it, and the operator's Retry
-    // plays again once the speaker is back.
+    // context cannot open this computer's speaker. 2026-10-16: the failure
+    // takes the next backoff step itself (its own retry, fenced apart from
+    // the restart's), so the ended restart's step asks for nothing while
+    // the failure's asks once, fails again quietly, and plays once the
+    // speaker is back, with no Retry.
     void aPlaybackFailureEndsAWaitingRestart()
     {
         using State = RemoteAudioStatus::State;
@@ -11293,25 +11728,29 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 2000);
         QCOMPARE(requests, atContext);
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
-        // Nothing is left waiting.
-        QVERIFY(!remoteMedia.audioRestartPendingForTest());
-        // The 4 s step comes due while held; released, it finds the
-        // restart ended and asks for nothing: the failure waits for Retry.
-        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartStepHeldForTest(), 10000);
+        // The failure's own retry waits on the next step (still 4 s: the
+        // streak carries on).
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        // Both steps come due while held. Released, the ended restart's
+        // finds itself fenced off and asks for nothing; the failure's asks
+        // once and, the speaker still gone, fails again with no toast.
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 2, 10000);
         QCOMPARE(requests, atContext);
         remoteMedia.holdAudioRestartForTest(false);
         QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
-        QTest::qWait(200);
-        QCOMPARE(requests, atContext);
-        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QTRY_COMPARE_WITH_TIMEOUT(requests, atContext + 1, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartPendingForTest(), 2000);
+        QCOMPARE(requests, atContext + 1);
+        QCOMPARE(errors.size(), 1);
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
 
-        // The speaker is back and the Core's audio too: Retry plays again.
+        // The speaker is back and the Core's audio too: the next automatic
+        // step plays again, with no Retry.
         h.remoteBus->setOutputPacingAvailableForTesting(true);
         audio.source.start();
-        remoteMedia.retryAudio();
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
                                   h.mediaStage(remoteMedia).constData(), 10000);
+        QCOMPARE(errors.size(), 1);
 
         display.timer.stop();
         audio.stop();
@@ -11904,6 +12343,9 @@ private slots:
         QTest::ignoreMessage(QtWarningMsg, kSpeakerOpenFailedLog);
         h.remote.audioEngine()->setMasterMuted(false);
         QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        // This case is the operator's Retry: the failure's own automatic
+        // step (2026-10-16) is held so it cannot ask first.
+        remoteMedia.holdAudioRestartForTest(true);
         RemoteAudioStatus status = remoteMedia.audioStatus();
         QCOMPARE(status.state, State::PlaybackProblem);
         QVERIFY(status.problem == Fault::SpeakerOpenFailed);
@@ -14691,7 +15133,7 @@ private slots:
         for (Fault fault : {Fault::SpeakerOpenFailed, Fault::SpeakerTimingUnavailable,
                             Fault::SpeakerCallbackTooLarge, Fault::SpeakerStalled,
                             Fault::SpeakerWriteFailed, Fault::DecoderUnavailable,
-                            Fault::NoPackets,
+                            Fault::SpeakerFormatUnsupported, Fault::NoPackets,
                             Fault::DecodeFailed, Fault::ClockBuffer}) {
             const QString text = RemoteMediaController::headphonesFaultText(fault);
             QVERIFY(!text.isEmpty());
@@ -14721,6 +15163,13 @@ namespace {
 const QStringList kAudioFunctions{
     QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
+    QStringLiteral("speakerFaultRetriesOnItsOwnUntilItPlays"),
+    QStringLiteral("speakerProblemClearsOncePlayingOnANewConnection"),
+    QStringLiteral("speakersWaitForTheDeviceListWithoutAProblem"),
+    QStringLiteral("aDeviceListThatNeverComesShowsTheProblemAfterTheWait"),
+    QStringLiteral("aSpeakerFormatRemotePlaybackCannotPlayIsNotAskedForAgain"),
+    QStringLiteral("lastingSpeakerFaultsAreNotAskedForAgain"),
+    QStringLiteral("aSpeakerFailureRetryEndsWithTheSession"),
     QStringLiteral("speakerLossPersistsAcrossMuteDeviceChangeAndDisabledContext"),
     QStringLiteral("retryClearsTheProblemOnlyOnceTheNewContextPlays"),
     QStringLiteral("lateFaultFromAnEndedSessionChangesNothing"),

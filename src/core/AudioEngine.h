@@ -21,9 +21,20 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : makeBus() sets a stream event sink before the open;
+//                 makeStreamEventSink() takes the bus's generation, and
+//                 m_lastBusGeneration hands each one out once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-17 : pullVaxTxMicKeepingBacklog() comment: what the Mac guard
 //                 keeps, and that only the Mac has it. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 : openRemoteSpeakers() and speakersAwaitDeviceList(): a
+//                 remote window opens its speakers at window start, and
+//                 says when they wait for this computer's first device
+//                 list. beginRemotePlayback() says why it refused
+//                 (RemotePlaybackRefusal). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-16 : pullVaxTxMicKeepingBacklog() for a remote window's
 //                 uplink. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -411,6 +422,11 @@ struct AsioStatus {
 // carry neither (VAX design 6.3).
 enum class RemotePlaybackOutput : int { Speakers = 0, Headphones = 1 };
 
+// 2026-10-16: why beginRemotePlayback() refused. Format lasts until the
+// device or its format changes, so asking again cannot help; Unavailable
+// may clear by itself (the device comes back, the device list comes in).
+enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 };
+
 // R-R3-45: where the transmit monitor (MON) plays, chosen by the operator
 // beside the MON button. Independent of the receivers' own routes: MON is
 // how you sound on air, and it goes where you want to hear it.
@@ -686,8 +702,10 @@ public:
     // headphones output open (the Enabled box, or a remote window's start,
     // opens it) and fails in plain words when none is. A context on one
     // output never touches the other.
+    // `refusal`, when given, says why begin failed (None when it began).
     bool beginRemotePlayback(QString* error = nullptr,
-                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
+                             RemotePlaybackRefusal* refusal = nullptr);
     void endRemotePlayback(RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<AudioFormat> remotePlaybackFormat(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
@@ -1070,6 +1088,20 @@ public:
     // setVaxBusFactoryForTest() supplies. Owner thread.
     void openVaxOutputs();
 
+    // 2026-10-16: a remote window opens its speakers at window start, as
+    // start() opens a local radio's before the radio streams, so remote
+    // playback finds them open, or the device layer opens them the moment
+    // this computer's device list comes in (speakersConfigChanged). Opened
+    // only at the Core's first audio, they failed whenever the list was
+    // still out. Does nothing while the engine runs. Owner thread.
+    void openRemoteSpeakers();
+
+    // 2026-10-16: the speakers wait for this computer's first device list:
+    // the device layer started without it (the list took longer than
+    // AudioDeviceCatalog::kStartWaitMs) and opens them when it comes in.
+    // Owner thread.
+    bool speakersAwaitDeviceList() const;
+
     // 2026-10-15: whether the VAX transmit device (what apps write to
     // "NereusSDR TX") is open: a remote window sends it as its microphone
     // when VAX is the transmit source. Owner thread.
@@ -1143,6 +1175,14 @@ public:
     // Test seam — inject a fake IAudioBus into the speakers slot so unit
     // tests can verify speakers tee without opening a PortAudio device.
     void setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus);
+
+    // Test seam (2026-10-16): what speakersAwaitDeviceList() answers, for a
+    // window test whose speakers are an injected bus; nullopt (the
+    // default) answers from the device layer.
+    void setSpeakersAwaitDeviceListForTest(std::optional<bool> waiting)
+    {
+        m_speakersAwaitDeviceListForTest = waiting;
+    }
 
     // Test seam — inject a fake IAudioBus into the headphones slot.
     void setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus);
@@ -1671,10 +1711,13 @@ private:
     // because another program holds the device (R-AUD-11).
     // `role`, when given, is the role the output plays (an ASIO use names
     // it to the helper, Task 17).
+    // `eventSink`, when given, is the bus's stream event sink, set before
+    // it opens.
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
                                        bool capture,
                                        bool* inUse = nullptr,
-                                       std::optional<AudioRole> role = std::nullopt);
+                                       std::optional<AudioRole> role = std::nullopt,
+                                       std::function<void(const AudioStreamEvent&)> eventSink = {});
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
@@ -1735,9 +1778,11 @@ private:
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
     AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
-    // The bus's stream events, posted to this thread; dropped once the
-    // role's bus has been replaced or closed.
-    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role);
+    // The stream events of the bus given `generation`, posted to this
+    // thread; dropped unless the role's generation is still that one (the
+    // bus opened and has not been replaced or closed).
+    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role,
+                                                                     quint64 generation);
     AudioOpenResult openMicRole(AudioEngineKind engine,
                                 const std::optional<AudioDeviceInfo>& device,
                                 const AudioDeviceConfig& config);
@@ -1798,7 +1843,7 @@ private:
     // m_headphonesBusMutex, as m_remotePlayback is by the speakers'.
     bool m_remoteHeadphonesPlayback{false};
     AudioFormat m_remoteHeadphonesFormat;
-    bool beginRemoteHeadphonesPlayback(QString* error);
+    bool beginRemoteHeadphonesPlayback(QString* error, RemotePlaybackRefusal* refusal);
     // Test-injected TX input only (setTxInputBusForTest); production reads
     // the capture supervisor's reader. R-R3-36.
     std::unique_ptr<IAudioBus> m_txInputBus;
@@ -1823,9 +1868,13 @@ private:
     AudioEngineKind m_defaultEngine{AudioEngineKind::PortAudio};
     std::unique_ptr<AudioDeviceCatalog> m_catalogue;
     std::unique_ptr<AudioStreamSupervisor> m_streamSupervisor;
-    // Per role: bumped on every open and close, so a late stream event
-    // from a replaced bus is dropped; the engine of the open bus.
+    // Per role: a new generation on every open and close, so a late
+    // stream event from a replaced bus is dropped; the engine of the open
+    // bus.  Every generation comes from m_lastBusGeneration, so none is
+    // given twice: a bus has its own before it opens, and the role takes
+    // it once the bus has opened.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
+    quint64 m_lastBusGeneration{0};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
     // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
     void noteSpeakersWorkgroup(const IAudioBus* bus);
@@ -1954,6 +2003,7 @@ private:
 #ifdef NEREUS_BUILD_TESTS
     std::function<std::unique_ptr<IAudioBus>(int)> m_vaxBusFactoryForTest;
     DeviceBusFactory m_deviceBusFactoryForTest;
+    std::optional<bool> m_speakersAwaitDeviceListForTest;
 #endif
     MasterMixer m_masterMix;
 

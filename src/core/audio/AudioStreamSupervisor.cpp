@@ -19,6 +19,11 @@
 //               device itself takes that open as the chosen device's, with
 //               no retry.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: a default change that names the device an output plays on
+//               reopens nothing (playsOnCurrentDefault): the first device
+//               list of a run reports its default as a change, and the
+//               speakers that had just opened were closed and opened again.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: a start before the catalog's first list waits for it, as
 //               long as the catalog's start would have (R-AUD-03).  J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -599,6 +604,9 @@ void AudioStreamSupervisor::evaluateDefaultOutput(AudioRole role, bool defaultMo
         s.silentReason = AudioRoleReason::NoDevice;
         return;
     }
+    if (defaultMoved && playsOnCurrentDefault(role)) {
+        defaultMoved = false;   // it names the device this plays on
+    }
     if (!defaultMoved && !s.forceReopen) {
         if (s.open && s.onDefault) {
             return;
@@ -747,11 +755,13 @@ bool AudioStreamSupervisor::openSystemDefault(AudioRole role)
 {
     RoleState& s = state(role);
     s.forceReopen = false;
+    const std::optional<AudioDeviceInfo> openedOn = systemDefault(role);
     const AudioOpenResult result = m_host.openRole(role, engineOf(role), std::nullopt, s.config);
     if (result == AudioOpenResult::Opened) {
         s.open = true;
         s.onDefault = true;
         s.openDevice.reset();
+        s.openDefaultId = openedOn ? openedOn->id : QString();
         if (kindOf(role) != ChoiceKind::Chosen) {
             s.silentReason = AudioRoleReason::None;
         }
@@ -779,6 +789,18 @@ bool AudioStreamSupervisor::openSystemDefault(AudioRole role)
     return false;
 }
 
+bool AudioStreamSupervisor::playsOnCurrentDefault(AudioRole role) const
+{
+    // Open on the system default, and the default is still the device it
+    // opened on: a default change that names it moved nothing.
+    const RoleState& s = state(role);
+    if (!s.open || !s.onDefault || s.openDefaultId.isEmpty()) {
+        return false;
+    }
+    const std::optional<AudioDeviceInfo> def = systemDefault(role);
+    return def && def->id == s.openDefaultId;
+}
+
 void AudioStreamSupervisor::ensureFallback(AudioRole role, bool defaultMoved)
 {
     RoleState& s = state(role);
@@ -792,7 +814,7 @@ void AudioStreamSupervisor::ensureFallback(AudioRole role, bool defaultMoved)
         s.silentReason = s.trouble;
         return;
     }
-    if (s.open && s.onDefault && !defaultMoved) {
+    if (s.open && s.onDefault && (!defaultMoved || playsOnCurrentDefault(role))) {
         return;
     }
     if (!openSystemDefault(role)) {

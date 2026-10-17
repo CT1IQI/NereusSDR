@@ -23,6 +23,10 @@
 //               arrivals and not by what the jitter hold released when
 //               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: a device format begin refuses is reported as
+//               SpeakerFormatUnsupported, apart from a device that could
+//               not open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/AudioEngine.h"
 #include "core/audio/RealtimeAudioPriority.h"
@@ -556,14 +560,17 @@ bool RemoteAudioReceiver::start(quint32 ssrc, quint32 firstTimestamp, RemoteAudi
 {
     stop();
     QString error;
+    RemotePlaybackRefusal refusal = RemotePlaybackRefusal::Unavailable;
     // R-R3-43: a PCM sink needs no speaker.
-    if (!d->sink && (!d->engine || !d->engine->beginRemotePlayback(&error, d->output))) {
+    if (!d->sink && (!d->engine || !d->engine->beginRemotePlayback(&error, d->output, &refusal))) {
         emit errorOccurred(error.isEmpty()
                                ? (d->output == RemotePlaybackOutput::Headphones
                                       ? QStringLiteral("Headphones playback is unavailable")
                                       : QStringLiteral("Speaker playback is unavailable"))
                                : error,
-                            Fault::SpeakerOpenFailed);
+                            refusal == RemotePlaybackRefusal::Format
+                                ? Fault::SpeakerFormatUnsupported
+                                : Fault::SpeakerOpenFailed);
         return false;
     }
     // R-R3-23: the speaker's rate and channel count, as begin accepted them.
