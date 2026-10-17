@@ -930,12 +930,22 @@ private slots:
 
     // A pause longer than kQuietNs (the Core stopped the slice, a link
     // outage) restarts playback, once per pause, and grows nothing: no
-    // reserve would have covered it. The audio plays again after each one.
+    // reserve would have covered it. The audio plays again after each one,
+    // whether the pause's backlog is lost or delivered when the link comes
+    // back (it is cut to one Opus packet rather than overflowing the ring).
+    void aPausePastQuietRecoversWithoutGrowing_data()
+    {
+        QTest::addColumn<bool>("backlogSent");
+        QTest::newRow("backlog lost") << false;
+        QTest::newRow("backlog delivered after") << true;
+    }
+
     void aPausePastQuietRecoversWithoutGrowing()
     {
 #ifndef HAVE_WDSP
         QSKIP("WDSP is disabled");
 #else
+        QFETCH(bool, backlogSent);
         qint64 now = 0;
         SimulatedVaxOutput output;
         output.now = &now;
@@ -959,8 +969,10 @@ private slots:
                 ++pauses;  // its restart has come
             }
             if (paused) {
-                // The pause's backlog is not sent later: the Core stopped.
-                queuedPackets = 0;
+                if (!backlogSent) {
+                    // The Core stopped: nothing of the pause comes later.
+                    queuedPackets = 0;
+                }
             } else {
                 for (; queuedPackets > 0; --queuedPackets) {
                     const std::vector<float> block =
@@ -989,6 +1001,55 @@ private slots:
         const RemoteVaxFeederStats stats = feeder.stats();
         QCOMPARE(playingChecks, pauses);
         QCOMPARE(stats.restarts, pauses);
+        QCOMPARE(stats.matcherRingFrames, RemoteVaxFeeder::kMatcherRingFrames);
+#endif
+    }
+
+    // Two slices mixed on the channel; one goes silent with no stop notice
+    // (its stream simply ends). Until kQuietNs passes it still counts in
+    // the mix, so the matcher runs dry once; that is the source stopping,
+    // not a pause, and grows nothing. The other slice plays on.
+    void aSliceGoneSilentGrowsNothing()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("WDSP is disabled");
+#else
+        qint64 now = 0;
+        SimulatedVaxOutput output;
+        output.now = &now;
+        RemoteVaxFeeder feeder(1, output.port(), [&now] { return now; });
+        feeder.setSourceSlices({3, 1});
+
+        constexpr qint64 kMs = 1'000'000;
+        quint64 framesB = 0;
+        quint64 framesD = 0;
+        quint64 dryAtRecovered = 0;
+        for (now = 0; now <= 20'000 * kMs; now += kMs) {
+            if (now % (40 * kMs) == 0) {
+                const std::vector<float> block = toneBlock(framesB, kOpusFrames, 1579.0, 0.10);
+                feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+                framesB += kOpusFrames;
+            }
+            // Slice 3's stream ends at 12 s.
+            if (now % (40 * kMs) == 20 * kMs && now < 12'000 * kMs) {
+                const std::vector<float> block = toneBlock(framesD, kOpusFrames, 617.0, 0.12);
+                feeder.receiverAudioBlock(3, block.data(), kOpusFrames);
+                framesD += kOpusFrames;
+            }
+            if (now % (5 * kMs) == 0) {
+                feeder.pump();
+            }
+            if (now == 14'000 * kMs) {
+                output.advance();
+                QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+                dryAtRecovered = output.dryFrames;
+            }
+        }
+        output.advance();
+        const RemoteVaxFeederStats stats = feeder.stats();
+        QCOMPARE(stats.state, RemoteVaxFeederStats::State::Playing);
+        QCOMPARE(output.dryFrames, dryAtRecovered);
+        QVERIFY2(stats.restarts <= 1, qPrintable(QString::number(stats.restarts)));
         QCOMPARE(stats.matcherRingFrames, RemoteVaxFeeder::kMatcherRingFrames);
 #endif
     }

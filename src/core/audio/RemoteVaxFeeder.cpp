@@ -17,8 +17,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: The matcher's reserve grows after a dropout the audio
 //                 comes back from, and shrinks at a quiet restart; its
-//                 ratio is held and moved slowly from each window's highest
-//                 fill, as the remote microphone's is.
+//                 ratio is held and moved slowly from each window's mean
+//                 fill (arrival-compensated), as the remote microphone's is.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -317,6 +317,11 @@ void RemoteVaxFeeder::restartMatcher(int ringFrames)
     // the fill window and the level it holds start afresh.
     m_ratioWindowStartNs = -1;
     m_ratioFillReference = -1;
+    // A restart answers any pending growth itself; what is queued by the
+    // time audio comes back is a backlog.
+    m_growPending = false;
+    m_trimOnReturn = true;
+    m_playedSinceRestart = false;
     if (ringFrames != m_matcherRingFrames) {
         m_matcherRingFrames = ringFrames;
         m_matcherReady = m_matcher.configure(kInputChunkFrames, kOutputBlockFrames,
@@ -340,13 +345,28 @@ void RemoteVaxFeeder::quietRestart(qint64 now)
 
 bool RemoteVaxFeeder::audioWaiting(qint64 now) const
 {
+    // As drainHandoff() reads it: a chunk goes in only when every live
+    // slice holds one, so one slice gone silent is not audio back.
+    bool live = false;
     for (const Source& source : m_sources) {
-        if (isLive(source, now)
-            && source.handoff->usedBytes() / kFrameBytes >= std::size_t(kInputChunkFrames)) {
-            return true;
+        if (!isLive(source, now)) { continue; }
+        live = true;
+        if (source.handoff->usedBytes() / kFrameBytes < std::size_t(kInputChunkFrames)) {
+            return false;
         }
     }
-    return false;
+    return live;
+}
+
+unsigned RemoteVaxFeeder::liveSlots(qint64 now) const
+{
+    unsigned live = 0;
+    for (std::size_t i = 0; i < m_sources.size(); ++i) {
+        if (isLive(m_sources[i], now)) {
+            live |= 1u << i;
+        }
+    }
+    return live;
 }
 
 int RemoteVaxFeeder::drainHandoff(bool paced, qint64 now)
@@ -601,29 +621,34 @@ void RemoteVaxFeeder::pump()
         return;
     }
 
-    if (m_growPending && m_matcherReady) {
-        if (now - m_lastInputNs > kQuietNs) {
-            // The source stopped rather than paused: no more reserve.
-            quietRestart(now);
-        } else if (audioWaiting(now)) {
+    if (m_growPending && m_matcherReady
+        && (now - m_lastInputNs > kQuietNs
+            || (m_liveAtUnderflow & ~liveSlots(now)) != 0)) {
+        // The source stopped rather than paused (all of it, or one slice
+        // of the mix): no more reserve.
+        quietRestart(now);
+    } else if ((m_growPending || m_trimOnReturn) && m_matcherReady && audioWaiting(now)) {
+        if (m_growPending) {
             // The link's audio is back within kQuietNs: a pause the
             // reserve should ride out next time. The matcher is rebuilt
-            // before this audio goes in. The pause's backlog past one Opus
-            // packet is dropped: the app has heard the gap already, and on
-            // top of the restarted matcher's half ring it would only add
-            // its length to the delay for good.
-            m_growPending = false;
+            // before this audio goes in.
             m_lastDropoutNs = m_underflowNs;
-            constexpr std::size_t kKeepFrames = std::size_t(10 * kInputChunkFrames);
-            for (Source& source : m_sources) {
-                if (!isLive(source, now)) { continue; }
-                const std::size_t used = source.handoff->usedBytes() / kFrameBytes;
-                if (used > kKeepFrames) {
-                    trimHandoff(source, used - kKeepFrames);
-                }
-            }
+            m_growPending = false;
             if (m_matcherRingFrames < kMaxMatcherRingFrames) {
                 restartMatcher(std::min(2 * m_matcherRingFrames, kMaxMatcherRingFrames));
+            }
+        }
+        // The backlog past one Opus packet is dropped: the app has heard
+        // the gap already, and on top of the restarted matcher's half ring
+        // it would only add its length to the delay for good (or, after an
+        // outage, overflow the ring).
+        m_trimOnReturn = false;
+        constexpr std::size_t kKeepFrames = std::size_t(10 * kInputChunkFrames);
+        for (Source& source : m_sources) {
+            if (!isLive(source, now)) { continue; }
+            const std::size_t used = source.handoff->usedBytes() / kFrameBytes;
+            if (used > kKeepFrames) {
+                trimHandoff(source, used - kKeepFrames);
             }
         }
     }
@@ -674,18 +699,24 @@ void RemoteVaxFeeder::pump()
         // the ring), and after an underflow only if the audio comes back
         // within kQuietNs.
         ++m_restarts;
-        if (matcherStats.overflows > 0) {
+        if (matcherStats.overflows > 0 && m_playedSinceRestart) {
             m_lastDropoutNs = now;
             restartMatcher(std::min(2 * m_matcherRingFrames, kMaxMatcherRingFrames));
+        } else if (matcherStats.overflows > 0) {
+            // A first fill bigger than the ring: a backlog, not a burst
+            // the reserve should hold next time.
+            restartMatcher();
         } else {
             // Whether it was a dropout or the source stopping shows when the
             // audio comes back (or does not).
             restartMatcher();
             m_growPending = true;
             m_underflowNs = now;
+            m_liveAtUnderflow = liveSlots(now);
         }
         m_state = State::WaitingForAudio;
     } else {
+        m_playedSinceRestart = true;
         holdRatio(matcherStats, now);
     }
     publish(m_state, queued);

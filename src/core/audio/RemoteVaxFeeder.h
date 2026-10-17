@@ -46,7 +46,13 @@
 // back from within kQuietNs doubles the reserve, up to 250 ms; a source
 // that stops (a link outage, the Core ending the slice) grows nothing. The
 // pause's backlog past one Opus packet is dropped when it comes back, so
-// the delay is the reserve and not the reserve plus the pause.
+// the delay is the reserve and not the reserve plus the pause. The same
+// trim follows every restart, so an outage longer than kQuietNs that
+// delivers its backlog afterwards neither adds that backlog to the delay
+// nor overflows the new matcher. (When the output side underflows with
+// the input steady, the trim can drop up to one input chunk, 191 frames,
+// of audio that was on time.) An overflow grows the reserve only once the
+// matcher has played since its restart.
 // The reserve shrinks a step only where playback restarts anyway (the Core
 // went quiet) and no dropout came for kShrinkAfterNs: rebuilding the
 // matcher mid-stream would itself be a gap.
@@ -61,8 +67,9 @@
 // stays put through a pause and its burst, where the plain mean falls by
 // about p^2/(2 * 2000) ms for a p ms pause. The level held is the first
 // window's after a restart, so the reserve the start gave is kept; the
-// P-only control settles 1 ms from it per 50 ppm of clock difference. The held ratio survives a rebuilt matcher, so it keeps the
-// clock rate it learned, as Thetis IVAC keeps its forced var across
+// P-only control settles 1 ms from it per 50 ppm of clock difference.
+// The held ratio survives a rebuilt matcher, so it keeps the clock rate
+// it learned, as Thetis IVAC keeps its forced var across
 // create_rmatchV (ivac.c:38-44 [v2.10.3.15]).
 //
 // An output that reports no playback timing (the Linux pactl pipe) is
@@ -326,6 +333,7 @@ private:
     void quietRestart(qint64 now);
     // A live slice has a chunk waiting for the matcher.
     bool audioWaiting(qint64 now) const;
+    unsigned liveSlots(qint64 now) const;
     // Takes this pump's matcher fill into the window; at the window's end,
     // moves the held ratio. Not during rmatch's startup.
     void holdRatio(const RemoteAudioRateMatcherStats& matcherStats, qint64 now);
@@ -353,6 +361,14 @@ private:
     // kQuietNs (grow) or not (the source stopped).
     bool m_growPending = false;
     qint64 m_underflowNs = 0;
+    // The slices live at that underflow (bit per m_sources slot): one that
+    // has dropped out by the time audio is back stopped; it did not pause.
+    unsigned m_liveAtUnderflow = 0;
+    // Set by every restart: the first audio back is cut to one Opus packet.
+    bool m_trimOnReturn = false;
+    // The matcher has played since its last restart: only then is an
+    // overflow a burst bigger than the ring rather than a first fill.
+    bool m_playedSinceRestart = false;
     // The last dropout the reserve grew for (or was at its cap for).
     qint64 m_lastDropoutNs = 0;
     double m_ratio = 1.0;
