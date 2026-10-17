@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF. A local slice keyed to a pan the layout
+//                does not show is rehomed onto the window's pan, with no
+//                hidden pan. AI-assisted via Anthropic Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF. A slice keyed to a pan that a layout
+//                change then makes lands on that pan, flag, stream and all.
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03  J.J. Boyd / KG4VCF. STEP propagation, pan wheel and stale
@@ -57,6 +63,7 @@
 #include "core/AppSettings.h"
 #include "core/ClarityController.h"
 #include "core/ConnectionState.h"
+#include "core/FFTRouter.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationClient.h"
@@ -72,6 +79,7 @@
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/TuneStepLabel.h"
+#include "gui/widgets/VfoWidget.h"
 #include "core/TxSliceArbiter.h"
 #include "core/safety/TransmitHolder.h"
 #include "gui/meters/MeterPoller.h"
@@ -670,6 +678,99 @@ private slots:
         // The radio going offline at the Core ends it.
         h.reportRadioOffline();
         QTRY_COMPARE(pan1->visibleNoSliceHint(), QString());
+    }
+
+    // A local window holds only the pans its layout shows. A slice added
+    // with a pan key the layout does not show gets no pan of its own; it is
+    // rehomed onto the window's pan, as a layout change rehomes it.
+    void localSliceKeyedToAPanTheLayoutLacksIsRehomed()
+    {
+        auto window = openLocalWindow(QStringLiteral("1"));
+        RadioModel* model = window->radioModel();
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("1"));
+        const int id = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(id >= 0);
+        SliceModel* slice = model->sliceById(id);
+        QVERIFY(slice);
+        PanadapterApplet* pan = appletFor(window.get(), QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        QTRY_COMPARE(slice->panKey(), QStringLiteral("pan-0"));
+        QTRY_VERIFY(pan->associatedSlices().contains(id));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("1"));
+        QCOMPARE(stack->allApplets().size(), 1);
+        QVERIFY(!appletFor(window.get(), QStringLiteral("pan-1")));
+    }
+
+    // The same slice, but the layout grows to show its pan before the
+    // window gets back to its event loop (a slice made, then the layout
+    // applied, as a station restore or a test does). The pan the layout
+    // makes takes the slice and its flag, as the hidden pan that held it
+    // used to when the layout took that pan up.
+    void localSliceKeyedToAPanALayoutChangeMakesLandsOnIt()
+    {
+        auto window = openLocalWindow(QStringLiteral("1"));
+        RadioModel* model = window->radioModel();
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        const int id = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(id >= 0);
+        SliceModel* slice = model->sliceById(id);
+        QVERIFY(slice);
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        PanadapterApplet* pan = appletFor(window.get(), QStringLiteral("pan-1"));
+        QVERIFY(pan);
+        QCOMPARE(slice->panKey(), QStringLiteral("pan-1"));
+        QVERIFY(pan->associatedSlices().contains(id));
+        QVERIFY(!appletFor(window.get(), QStringLiteral("pan-0"))->associatedSlices().contains(id));
+        VfoWidget* flag = nullptr;
+        int flags = 0;
+        for (VfoWidget* each : window->findChildren<VfoWidget*>()) {
+            if (each->sliceIndex() == id) { flag = each; ++flags; }
+        }
+        QCOMPARE(flags, 1);
+        QCOMPARE(flag->parentWidget(), pan->spectrumWidget());
+        // The rehome queued when the slice came in finds it on a pan this
+        // window shows and leaves it there.
+        QTest::qWait(kSettleMs);
+        QCOMPARE(slice->panKey(), QStringLiteral("pan-1"));
+        QVERIFY(pan->associatedSlices().contains(id));
+        QCOMPARE(flag->parentWidget(), pan->spectrumWidget());
+    }
+
+    // The pan that takes such a slice takes its stream too. While the slice
+    // was on no pan its stream fed the active pan. pan-0 has its own slice
+    // here, so the layout change adds no slice whose arrival would rebuild
+    // the routing anyway.
+    void aSliceDockedOnAPanALayoutChangeMakesFeedsThatPan()
+    {
+        auto window = openLocalWindow(QStringLiteral("1"));
+        RadioModel* model = window->radioModel();
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0")));
+        SliceModel* first = sliceOnPan(window.get(), QStringLiteral("pan-0"));
+        const int id = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(id >= 0);
+        SliceModel* slice = model->sliceById(id);
+        QVERIFY(slice);
+        slice->setFrequency(first->frequency() + 1'000'000.0);
+        QVERIFY(slice->streamIndex() >= 0);
+        QVERIFY(slice->streamIndex() != first->streamIndex());
+        FFTRouter* router = model->fftRouter();
+        QVERIFY(router);
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        PanadapterApplet* pan = appletFor(window.get(), QStringLiteral("pan-1"));
+        QVERIFY(pan);
+        QVERIFY(pan->associatedSlices().contains(id));
+        QCOMPARE(pan->associatedSlices().size(), 1);
+        const QList<QString> fed = router->pansForReceiver(slice->streamIndex());
+        QVERIFY2(fed.contains(QStringLiteral("pan-1")),
+                 qPrintable(QStringLiteral("stream %1 feeds %2")
+                                .arg(slice->streamIndex()).arg(fed.join(QLatin1Char(',')))));
+        QVERIFY(!fed.contains(QStringLiteral("pan-0")));
     }
 
     // A local window: a pan whose slice is closed says the same.

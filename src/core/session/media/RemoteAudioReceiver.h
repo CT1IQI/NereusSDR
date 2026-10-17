@@ -2,6 +2,11 @@
 // no-port-check: NereusSDR-original remote audio lifecycle and worker wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: a playing stream rides out up to 2.5 s with no packets
+//               (kNoPacketsRestartNs, JJ's approval of 2026-10-16, revising
+//               R-R3-21's 500 ms) and picks the stream up again when it
+//               comes back. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-10: into a bus's own clock matcher, a packet is written only
 //               when the matcher has room for it (R-AUD-15, bench
 //               regression). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -201,9 +206,10 @@ struct RemoteAudioReceiverTelemetry {
 // A lost lossless packet plays as 4 ms of silence. The jitter window and
 // the arrival bound are the same 320 ms for both profiles, and both grow
 // with the adaptive hold (R-R3-21). Only a true outage (nothing arrives,
-// late packets included, for 500 ms once the speaker has started) or a
-// real fault asks for a fresh context; a stream gap or an arrival burst
-// re-anchors on this computer.
+// late packets included, for kNoPacketsRestartNs, 2.5 s, once the speaker
+// has started; 500 ms before anything plays) or a real fault asks for a
+// fresh context; a stream gap, an arrival burst or a shorter stall
+// re-anchors on this computer (2026-10-16).
 // R-R3-23: the speaker plays at whatever rate and channel count it opened
 // at (AudioEngine::remotePlaybackFormat()): the rate matcher matches the
 // 48 kHz stream to the device's rate and clock, and a mono device hears
@@ -236,6 +242,21 @@ public:
         NoPackets, DecodeFailed, ClockBuffer,
     };
     Q_ENUM(Fault)
+
+    /// How long a playing stream may go with no packets at all, late ones
+    /// included, before the receiver asks for a fresh context
+    /// (Fault::NoPackets). 2.5 s, approved by JJ on 2026-10-16; it revises
+    /// R-R3-21's 500 ms. A Wi-Fi, cellular or VPN link that stalls for 0.5
+    /// to 0.9 s with no loss is concealed and the stream picked up again on
+    /// this computer, as a fresh context would add 1.3 to 2.4 s of silence
+    /// of its own and throw the jitter state away. A failure the media
+    /// transport reports, and a lost control heartbeat, still end the audio
+    /// at once (RemoteMediaController).
+    static constexpr qint64 kNoPacketsRestartNs = 2'500'000'000;
+    /// Before anything of the context has played, a context that receives
+    /// no packet asks again after 500 ms, as before: there is no stream yet
+    /// to keep.
+    static constexpr qint64 kNoPacketsBeforePlayNs = 500'000'000;
 
     /// Monotonic nanoseconds, never negative, callable from any thread.
     using Clock = std::function<qint64()>;

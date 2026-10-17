@@ -29,6 +29,12 @@
 //               remote playback cannot play (SpeakerFormatUnsupported) is
 //               not asked for again. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: comments follow the receiver's ride-out rule (a playing
+//               stream asks for a fresh context after 2.5 s with no
+//               packets, JJ 2026-10-16); no behavior change here: a media
+//               transport failure or a lost heartbeat still stops the
+//               audio at once. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: the VAX collector keeps the VAX TX device's backlog (up
 //               to the Core's deepest transmit buffer), not the device's
 //               16 ms guard. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -456,7 +462,10 @@ constexpr std::size_t kMaxPendingClockProbes = 8;
 bool linkInterruption(RemoteAudioReceiver::Fault fault)
 {
     // R-R3-21: bursts, gaps and stalls no longer restart; the link trial
-    // reads them from the receiver's linkInterruptions instead.
+    // reads them from the receiver's linkInterruptions instead. Since
+    // 2026-10-16 (JJ) a playing stream restarts for no packets only after
+    // 2.5 s; a shorter quiet spell beyond the deepest hold counts in
+    // linkInterruptions instead, as the restart it used to cause did.
     return fault == RemoteAudioReceiver::Fault::NoPackets;
 }
 
@@ -2023,7 +2032,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
         // Nor audioEnabled: the audio receiver gives up on a starved
-        // stream within a second and waits to be asked again, which a dead
+        // stream after RemoteAudioReceiver::kNoPacketsRestartNs (2.5 s,
+        // 2026-10-16) and waits to be asked again, which a dead
         // connection never does. What counts is that audio came on this
         // connection and this window still wants it (not muted).
         const bool wanted = d->model && !d->model->audioEngine()->masterMuted();

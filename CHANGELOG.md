@@ -23,6 +23,15 @@
 - Normalization, noise-floor and peak-value markers, and Track floor choices
   are saved for each pan. Level calibration temporarily suspends tracking and
   restores each pan's own choice afterward.
+- The FFT tab's Setup defaults link opens Setup > FFT & Engine, where FFT
+  size, window and frame rate are set.
+
+### Pans
+
+- A slice you control that was placed on a pan this window does not show now
+  moves onto the window's first pan. Before, it sat on a hidden pan: it played
+  but could not be seen, and the hidden pan still drew a spectrum. The window's
+  layout is not changed.
 
 ### Wideband view
 
