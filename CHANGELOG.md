@@ -623,6 +623,10 @@ Advanced, and each control appears on one page only.
   because another program, such as an Android emulator, holds the same IPv4
   port. Before, the other program could get the traffic and the connection
   timed out.
+- Keying again while the radio is still finishing an unkey no longer leaves
+  the receive S-ATT at its transmit value. Before, the next receive kept the
+  transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
+  preamp stayed off.
 
 ## [2026.10.0] - 2026-10-05
 
