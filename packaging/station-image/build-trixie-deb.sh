@@ -20,6 +20,20 @@ apt-get install -y --no-install-recommends \
     libpipewire-0.3-dev libpulse-dev libgl1-mesa-dev libxkbcommon-dev \
     autoconf automake libtool wget git python3
 
+# The workflow's pinned dependency downloads, when it passes them
+# (release.yml, build-deb-trixie): anything missing is fetched with
+# retries, every archive is checked against its SHA-256 and every git
+# mirror against its pinned commit, and git is sent to those mirrors, so
+# the configure below needs no upstream git host. The mirrors belong to
+# the runner's user, not this container's root, hence safe.directory.
+if [ -n "${NEREUS_DEPENDENCY_ARCHIVE_DIR:-}" ]; then
+    git config --global --add safe.directory '*'
+    cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+          -DNEREUS_GIT_MIRROR_CONFIG=/tmp/nereus-git-mirrors.gitconfig \
+          -P cmake/FetchDependencyArchives.cmake
+    git config --global --add include.path /tmp/nereus-git-mirrors.gitconfig
+fi
+
 bash packaging/station-image/build-dfnr-source.sh
 test -s third_party/deepfilter/lib/linux-aarch64/libdeepfilter.a
 test -s third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz
