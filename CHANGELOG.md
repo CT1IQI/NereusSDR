@@ -659,6 +659,13 @@ Advanced, and each control appears on one page only.
   while transmitting. Before, the next receive, or the next connect, used the
   transmit attenuation (31 dB, or the band's TX ATT), and on HPSDR boards the
   preamp stayed off.
+- Changing band while transmitting no longer saves the transmit attenuation,
+  or on HPSDR boards the preamp the key turned off, as the receive values of
+  the band you left. The S-ATT readout keeps showing the transmit value until
+  you unkey, and the unkey puts back the new band's receive S-ATT and sends it
+  to the radio. Before, the readout jumped to the new band's value while the
+  radio stayed on the transmit value, and the unkey put back the old band's
+  value on the new band.
 - A floating container window that would be shown with its header off every
   screen is moved back where it can be reached: when it is shown again, at the
   end of a transmit, or when a monitor is added, removed or resized. Before,
