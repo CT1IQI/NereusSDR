@@ -19,6 +19,13 @@
 //                                    600 px stack; the crop row's 4 kHz
 //                                    overlap is restored. AI-assisted via
 //                                    Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF  Remote audio rides out short stalls
+//                                    (JJ, 2026-10-16): new
+//                                    aShortAudioGapKeepsTheContextAndPlaysOn,
+//                                    anAudioGapPastTheBoundAsksForAFreshContext
+//                                    and aTransportFailureDuringAGapRestarts-
+//                                    AtOnce. AI-assisted via Anthropic Claude
+//                                    Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  A remote window's rigctld key sends
 //                                    what programs play into VAX TX, never
 //                                    the PC microphone, whichever source
@@ -11525,6 +11532,120 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-10-16 (JJ): a short stall keeps the audio context. The Core's
+    // audio stops for 0.7 s with the media connection and the control
+    // heartbeat up (as on a Wi-Fi, cellular or VPN link that goes quiet),
+    // then goes on from where it stopped. The window asks the Core for
+    // nothing, keeps the context and its receiver, and plays again.
+    void aShortAudioGapKeepsTheContextAndPlaysOn()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioTelemetry().decodedPackets > 25, 5000);
+        const std::optional<RemoteAudioContextMessage> context = remoteMedia.acceptedAudioContext();
+        QVERIFY(context);
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+        const RemoteAudioReceiverTelemetry before = remoteMedia.audioTelemetry();
+
+        audio.source.stop();
+        QTest::qWait(700);
+        audio.source.start();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            remoteMedia.audioTelemetry().decodedPackets > before.decodedPackets + 25, 5000);
+
+        const RemoteAudioReceiverTelemetry after = remoteMedia.audioTelemetry();
+        QVERIFY(after.running);
+        QCOMPARE(after.generation, before.generation);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+        QVERIFY(remoteMedia.acceptedAudioContext());
+        QCOMPARE(remoteMedia.acceptedAudioContext()->generation, context->generation);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(remoteMedia.audioStatus().state, State::Playing);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (JJ): a gap past the approved 2.5 s still asks the Core
+    // for a fresh context; 2 s in, nothing has been asked for.
+    void anAudioGapPastTheBoundAsksForAFreshContext()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        CoreDisplayKeepAlive display;
+        DaemonMediaController daemonMedia(&h.server, &h.station, nullptr, display.factory());
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioTelemetry().decodedPackets > 25, 5000);
+        const quint64 generation = remoteMedia.audioTelemetry().generation;
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+
+        display.timer.start();
+        audio.source.stop();
+        QTest::qWait(2'000);
+        QVERIFY(remoteMedia.audioTelemetry().running);
+        QCOMPARE(remoteMedia.audioTelemetry().generation, generation);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartPendingForTest()
+                                     || enabledRequests(coreControls, QStringLiteral("audio"))
+                                         > speakers,
+                                 2'000);
+        audio.source.start();
+        QTRY_COMPARE_WITH_TIMEOUT(enabledRequests(coreControls, QStringLiteral("audio")),
+                                  speakers + 1, 6'000);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing
+                                      && remoteMedia.audioTelemetry().generation > generation,
+                                  h.mediaStage(remoteMedia).constData(), 10'000);
+
+        display.timer.stop();
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16 (JJ): the media transport's own failure still ends the
+    // audio at once, inside a gap the receiver would otherwise ride out:
+    // recovery is asked for and the receiver stopped in the same call,
+    // with no wait for the 2.5 s bound.
+    void aTransportFailureDuringAGapRestartsAtOnce()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioTelemetry().decodedPackets > 25, 5000);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
+
+        audio.source.stop();
+        QTest::qWait(300);
+        QVERIFY(remoteMedia.audioTelemetry().running);
+        remoteMedia.dropMediaPeerForTest();
+        QCOMPARE(recoveries.size(), 1);
+        QVERIFY(!remoteMedia.audioTelemetry().running);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // R-R3-51: a restart held while keyed that something else already
     // answered (here the operator's Retry while keyed, with the Core's
     // audio back, as with the monitor on) is over: the unkey asks for
@@ -14645,6 +14766,9 @@ const QStringList kAudioFunctions{
     QStringLiteral("transmitSilenceFromAnOlderCoreBacksOffAsBefore"),
     QStringLiteral("otherRestartsWhileTransmittingBackOffAsBefore"),
     QStringLiteral("unkeyAsksNothingWhenAudioAlreadyPlaysAgain"),
+    QStringLiteral("aShortAudioGapKeepsTheContextAndPlaysOn"),
+    QStringLiteral("anAudioGapPastTheBoundAsksForAFreshContext"),
+    QStringLiteral("aTransportFailureDuringAGapRestartsAtOnce"),
 };
 
 // The test functions QtTest would run: private slots with no arguments,
