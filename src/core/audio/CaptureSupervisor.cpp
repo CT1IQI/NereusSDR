@@ -667,7 +667,7 @@ private:
                                lead < 0 ? QStringLiteral("after") : QStringLiteral("before"),
                                QString::fromLatin1(first->site));
         } else {
-            against = QStringLiteral("the window has made no native audio call yet");
+            against = QStringLiteral("the window had made no native audio call by then");
         }
         qCInfo(lcAudio).noquote()
             << QStringLiteral("capture: helper %1 %2 in %3 ms, at steady %4 ms, %5 ms after it "
