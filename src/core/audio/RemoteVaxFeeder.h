@@ -42,18 +42,28 @@
 //
 // The rate matcher starts with 90 ms of reserve. A link that delivers in
 // clumps (a pause of 80 to 115 ms, then the backlog at once) runs that dry,
-// and each time the app hears a gap. So a dropout while the output reads
-// doubles the reserve, up to 250 ms, for the feeder's life.
+// and each time the app hears a gap. So a dropout the link's audio comes
+// back from within kQuietNs doubles the reserve, up to 250 ms; a source
+// that stops (a link outage, the Core ending the slice) grows nothing. The
+// pause's backlog past one Opus packet is dropped when it comes back, so
+// the delay is the reserve and not the reserve plus the pause.
+// The reserve shrinks a step only where playback restarts anyway (the Core
+// went quiet) and no dropout came for kShrinkAfterNs: rebuilding the
+// matcher mid-stream would itself be a gap.
 //
 // The matcher's ratio is held, not left to WDSP rmatch's own control: that
 // control answers each pause and burst with a ratio swing of up to 1.2
 // percent, which moved a 1579 Hz tone by up to 25 Hz (FT8's tones are
 // 6.25 Hz apart). As the remote microphone's matcher does (RemoteMicFeed),
-// the ratio moves the matcher's average fill over each 2 s window toward
-// half its ring at 50 ppm per ms of deviation, at most 500 ppm (under a
-// cent of pitch). The held ratio survives a rebuilt matcher, so it keeps
-// the clock rate it learned, as Thetis IVAC keeps its forced var across
-// create_rmatchV (ivac.c:38-44).
+// the ratio moves at 50 ppm per ms of deviation, at most 500 ppm (under a
+// cent of pitch), once per 2 s window. What it measures is the window's
+// mean fill with what has played since the last arrival added back: that
+// stays put through a pause and its burst, where the plain mean falls by
+// about p^2/(2 * 2000) ms for a p ms pause. The level held is the first
+// window's after a restart, so the reserve the start gave is kept; the
+// P-only control settles 1 ms from it per 50 ppm of clock difference. The held ratio survives a rebuilt matcher, so it keeps the
+// clock rate it learned, as Thetis IVAC keeps its forced var across
+// create_rmatchV (ivac.c:38-44 [v2.10.3.15]).
 //
 // An output that reports no playback timing (the Linux pactl pipe) is
 // written as the audio arrives, paced by the Core's stream alone.
@@ -158,6 +168,9 @@ struct RemoteVaxFeederStats {
     // The rate matcher's ring; it starts half full, so half of it is the
     // reserve. Grows after a dropout (RemoteVaxFeeder::kMaxMatcherRingFrames).
     int matcherRingFrames = 0;
+    // Ratio windows that wanted more than kMaxRatioPpm: clocks further
+    // apart than the held ratio corrects.
+    int ratioWindowsAtCap = 0;
     // The output reports playback timing, so the feeder paces by it.
     bool paced = false;
     int delayFrames() const { return queuedFrames + matcherFillFrames + handoffFrames; }
@@ -178,8 +191,12 @@ public:
     // rides out the 80 to 115 ms pauses a busy link shows. A pause past
     // kQuietNs restarts playback whatever the reserve.
     static constexpr int kMaxMatcherRingFrames = 24000;
-    // The held ratio: each window's average matcher fill moves it toward
-    // half the ring, at kRatioPpmPerMs per ms of deviation and at most
+    // No dropout for this long: the next quiet restart halves the ring,
+    // never below kMatcherRingFrames.
+    static constexpr qint64 kShrinkAfterNs = 600'000'000'000;
+    // The held ratio: each window's level (the mean matcher fill, with what
+    // played since the last arrival added back) moves it toward the first
+    // window's, at kRatioPpmPerMs per ms of deviation and at most
     // kMaxRatioPpm, the remote microphone's figures
     // (RemoteMicConfig::kRatioPpmPerMs, kMaxRatioPpm).
     static constexpr qint64 kRatioWindowNs = 2'000'000'000;
@@ -300,10 +317,16 @@ private:
     // Drops the oldest `frames` of a slice's ring and counts them.
     void trimHandoff(Source& source, std::size_t frames);
     qint64 pausedNs() const;
-    // Restarts the rate matcher, at the held ratio; `grow` doubles its
-    // ring first (a dropout), up to kMaxMatcherRingFrames.
-    void restartMatcher(bool grow = false);
-    // Adds this pump's matcher fill to the window; at the window's end,
+    // Restarts the rate matcher, at the held ratio, with a ring of
+    // `ringFrames` (the same: a reset).
+    void restartMatcher(int ringFrames);
+    void restartMatcher() { restartMatcher(m_matcherRingFrames); }
+    // The Core went quiet: a restart, and a step smaller after
+    // kShrinkAfterNs with no dropout.
+    void quietRestart(qint64 now);
+    // A live slice has a chunk waiting for the matcher.
+    bool audioWaiting(qint64 now) const;
+    // Takes this pump's matcher fill into the window; at the window's end,
     // moves the held ratio. Not during rmatch's startup.
     void holdRatio(const RemoteAudioRateMatcherStats& matcherStats, qint64 now);
     // Sums whole chunks from the live slices' rings into the matcher (or,
@@ -326,10 +349,18 @@ private:
     bool m_matcherReady = false;
     bool m_matcherTried = false;
     int m_matcherRingFrames = kMatcherRingFrames;
+    // An underflow waits to see whether the audio comes back within
+    // kQuietNs (grow) or not (the source stopped).
+    bool m_growPending = false;
+    qint64 m_underflowNs = 0;
+    // The last dropout the reserve grew for (or was at its cap for).
+    qint64 m_lastDropoutNs = 0;
     double m_ratio = 1.0;
     qint64 m_ratioWindowStartNs = -1;
-    double m_ratioFillSum = 0.0;
-    int m_ratioFillSamples = 0;
+    double m_ratioLevelSum = 0.0;
+    int m_ratioLevelSamples = 0;
+    int m_ratioFillReference = -1;
+    int m_ratioWindowsAtCap = 0;
     QVector<float> m_chunk;
     QVector<float> m_part;
     QVector<float> m_matcherChunk;

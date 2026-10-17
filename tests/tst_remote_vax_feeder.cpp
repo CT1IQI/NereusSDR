@@ -913,22 +913,25 @@ private slots:
         // It grew only as far as the pauses needed.
         QCOMPARE(stats.matcherRingFrames, ringFrames);
         QCOMPARE(stats.droppedFrames, quint64(0));
-        // The rebuilt matcher kept a sane ratio: within rmatch's clamp and
-        // steady.
-        QVERIFY(ratioMin >= kMatcherRatioMin && ratioMax <= kMatcherRatioMax);
-        QVERIFY2(ratioMax - ratioMin < 0.002,
-                 qPrintable(QStringLiteral("ratio %1..%2").arg(ratioMin).arg(ratioMax)));
-        // The pitch held well inside an FT8 tone step through every clump.
+        // The held ratio follows the clocks, not the pauses: steady within
+        // 200 ppm (a pause-following ratio swings to the 500 ppm cap), and
+        // never at the cap here (the output is 50 ppm off).
+        QVERIFY2(ratioMax - ratioMin < 200e-6,
+                 qPrintable(QStringLiteral("ratio %1..%2").arg(ratioMin, 0, 'f', 6)
+                                .arg(ratioMax, 0, 'f', 6)));
+        QCOMPARE(stats.ratioWindowsAtCap, 0);
+        // The pitch held through every clump, well inside an FT8 tone step
+        // (a ratio that follows the pauses moves it 0.8 Hz at the cap).
         QVERIFY(toneMaxHz > 0.0);
-        QVERIFY2(std::abs(toneMinHz - 1579.0) < 2.0 && std::abs(toneMaxHz - 1579.0) < 2.0,
+        QVERIFY2(std::abs(toneMinHz - 1579.0) < 0.5 && std::abs(toneMaxHz - 1579.0) < 0.5,
                  qPrintable(QStringLiteral("tone %1..%2 Hz").arg(toneMinHz).arg(toneMaxHz)));
 #endif
     }
 
-    // A pause longer than kQuietNs still restarts playback (the Core went
-    // quiet), whatever the reserve; the reserve stops at its cap and the
-    // audio plays again after each one.
-    void aPausePastQuietRecovers()
+    // A pause longer than kQuietNs (the Core stopped the slice, a link
+    // outage) restarts playback, once per pause, and grows nothing: no
+    // reserve would have covered it. The audio plays again after each one.
+    void aPausePastQuietRecoversWithoutGrowing()
     {
 #ifndef HAVE_WDSP
         QSKIP("WDSP is disabled");
@@ -942,13 +945,23 @@ private slots:
         constexpr qint64 kMs = 1'000'000;
         quint64 sourceFrames = 0;
         int queuedPackets = 0;
+        int pauses = 0;
+        int playingChecks = 0;
+        quint64 dryAtRecovered = 0;
         for (now = 0; now <= 60'000 * kMs; now += kMs) {
             if (now % (40 * kMs) == 0) {
                 ++queuedPackets;
             }
-            // 660 ms pauses every 5 s.
-            const bool paused = now % (5000 * kMs) < 660 * kMs && now >= 5000 * kMs;
-            if (!paused) {
+            // 660 ms pauses every 5 s, from 5 s on.
+            const qint64 phase = now % (5000 * kMs);
+            const bool paused = phase < 660 * kMs && now >= 5000 * kMs;
+            if (phase == 200 * kMs && now >= 5000 * kMs) {
+                ++pauses;  // its restart has come
+            }
+            if (paused) {
+                // The pause's backlog is not sent later: the Core stopped.
+                queuedPackets = 0;
+            } else {
                 for (; queuedPackets > 0; --queuedPackets) {
                     const std::vector<float> block =
                         toneBlock(sourceFrames, kOpusFrames, 1579.0, 0.19);
@@ -959,11 +972,121 @@ private slots:
             if (now % (5 * kMs) == 0) {
                 feeder.pump();
             }
+            // Playing again 1.5 s after each pause began, and with no gap
+            // from then to the next pause.
+            if (now >= 5000 * kMs && phase == 1500 * kMs) {
+                output.advance();
+                QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+                dryAtRecovered = output.dryFrames;
+            }
+            if (now >= 5000 * kMs && phase == 4999 * kMs) {
+                output.advance();
+                QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+                QCOMPARE(output.dryFrames, dryAtRecovered);
+                ++playingChecks;
+            }
         }
         const RemoteVaxFeederStats stats = feeder.stats();
+        QCOMPARE(playingChecks, pauses);
+        QCOMPARE(stats.restarts, pauses);
+        QCOMPARE(stats.matcherRingFrames, RemoteVaxFeeder::kMatcherRingFrames);
+#endif
+    }
+
+    // The reserve a bursty link grew comes back down a step at a quiet
+    // restart once kShrinkAfterNs passes with no dropout, and not before.
+    void aGrownReserveShrinksAtAQuietRestart()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("WDSP is disabled");
+#else
+        qint64 now = 0;
+        SimulatedVaxOutput output;
+        output.now = &now;
+        RemoteVaxFeeder feeder(1, output.port(), [&now] { return now; });
+        feeder.setSourceSlice(1);
+
+        constexpr qint64 kMs = 1'000'000;
+        constexpr qint64 kClumpsEndNs = 20'000 * kMs;
+        // Quiet pauses: one before kShrinkAfterNs has passed, one after.
+        const qint64 earlyQuietNs = kClumpsEndNs + 60'000 * kMs;
+        const qint64 lateQuietNs = kClumpsEndNs + RemoteVaxFeeder::kShrinkAfterNs + 30'000 * kMs;
+        quint64 sourceFrames = 0;
+        int queuedPackets = 0;
+        qint64 pauseUntil = -1;
+        int ringAfterClumps = 0;
+        int ringAfterEarly = 0;
+        for (now = 0; now <= lateQuietNs + 10'000 * kMs; now += kMs) {
+            if (now % (40 * kMs) == 0) {
+                ++queuedPackets;
+            }
+            if (now < kClumpsEndNs && now > 0 && now % (3000 * kMs) == 0) {
+                pauseUntil = now + 115 * kMs;  // a clump: the backlog follows
+            }
+            const bool quiet = (now >= earlyQuietNs && now < earlyQuietNs + 660 * kMs)
+                || (now >= lateQuietNs && now < lateQuietNs + 660 * kMs);
+            if (quiet) {
+                queuedPackets = 0;
+            } else if (now >= pauseUntil) {
+                for (; queuedPackets > 0; --queuedPackets) {
+                    const std::vector<float> block =
+                        toneBlock(sourceFrames, kOpusFrames, 1579.0, 0.19);
+                    feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+                    sourceFrames += kOpusFrames;
+                }
+            }
+            if (now % (5 * kMs) == 0) {
+                feeder.pump();
+            }
+            if (now == earlyQuietNs - kMs) {
+                ringAfterClumps = feeder.stats().matcherRingFrames;
+            }
+            if (now == earlyQuietNs + 5000 * kMs) {
+                ringAfterEarly = feeder.stats().matcherRingFrames;
+            }
+        }
+        const RemoteVaxFeederStats stats = feeder.stats();
+        QCOMPARE(ringAfterClumps, 2 * RemoteVaxFeeder::kMatcherRingFrames);
+        QCOMPARE(ringAfterEarly, ringAfterClumps);
+        QCOMPARE(stats.matcherRingFrames, RemoteVaxFeeder::kMatcherRingFrames);
         QCOMPARE(stats.state, RemoteVaxFeederStats::State::Playing);
-        QVERIFY(stats.matcherRingFrames <= RemoteVaxFeeder::kMaxMatcherRingFrames);
-        QVERIFY(stats.matcherRingFrames >= RemoteVaxFeeder::kMatcherRingFrames);
+#endif
+    }
+
+    // Clocks further apart than the held ratio's 500 ppm: the ratio sits at
+    // the cap, the stats count it, and the reserve covers the remaining
+    // 100 ppm for minutes.
+    void clocksPastTheCapAreCounted()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("WDSP is disabled");
+#else
+        qint64 now = 0;
+        SimulatedVaxOutput output;
+        output.now = &now;
+        output.ppm = 600;
+        RemoteVaxFeeder feeder(1, output.port(), [&now] { return now; });
+        feeder.setSourceSlice(1);
+
+        constexpr qint64 kMs = 1'000'000;
+        quint64 sourceFrames = 0;
+        for (now = 0; now <= 120'000 * kMs; now += kMs) {
+            if (now % (40 * kMs) == 0) {
+                const std::vector<float> block =
+                    toneBlock(sourceFrames, kOpusFrames, 1579.0, 0.19);
+                feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+                sourceFrames += kOpusFrames;
+            }
+            if (now % (5 * kMs) == 0) {
+                feeder.pump();
+            }
+        }
+        const RemoteVaxFeederStats stats = feeder.stats();
+        QVERIFY(stats.ratio.has_value());
+        QCOMPARE(*stats.ratio, 1.0 + RemoteVaxFeeder::kMaxRatioPpm * 1e-6);
+        QVERIFY2(stats.ratioWindowsAtCap > 10,
+                 qPrintable(QStringLiteral("%1 windows at the cap").arg(stats.ratioWindowsAtCap)));
+        QCOMPARE(stats.restarts, 0);
 #endif
     }
 
