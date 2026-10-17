@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-16: a media move asks again for the speakers' audio, the
+//               headphones mix, the transmit monitor, receiver streams and
+//               displays whose request made around the move is still
+//               unanswered (lost to the move), so a restart after a stall
+//               plays on; an unanswered receiver stream or waveform stop,
+//               or a playback failure's audio disable, is sent again, and a
+//               closed display's lost subscribe becomes its release
+//               (sendAudioDisable). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-15: a control path whose ICE pair is not known yet keeps the
 //               direct-path media rules, as before it ranked as relayed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1632,11 +1641,15 @@ struct RemoteMediaController::Private {
     // connection, so a slice id's revision only ever grows, even when a new
     // slice reuses the id; a new connection starts afresh.
     QHash<int, quint32> receiverRevisions;
+    // Slices whose latest receiver-audio request is a stop the Core has not
+    // answered yet; a move asks again (askAgainAfterMove).
+    QSet<int> receiverStopsUnanswered;
     using WaveformKey = std::pair<int, WaveformKind>;
     struct WaveformStream {
         bool wanted = false;
         bool enabled = false;
         quint32 revision = 0;
+        quint32 answeredRevision = 0; // the revision the Core's last context answered
         quint64 sourceGeneration = 0;
         quint64 deliveryGeneration = 0;
         quint64 lastSerial = 0;
@@ -1736,6 +1749,9 @@ struct RemoteMediaController::Private {
     // An interruption whose automatic retry is scheduled, until the next
     // accepted context or stop().
     bool audioRestarting = false;
+    // The latest audio request is the disable a playback failure sent
+    // (sendAudioDisable); a move that loses it sends it again.
+    bool audioFailureDisableSent = false;
     QString selectedOutput;
     RemoteAudioStatus audioStatus;
     QTimer* audioStatusTimer = nullptr;
@@ -2047,21 +2063,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         ++d->audioRetryGeneration;
         d->audioHeldForTransmit = false; // R-R3-51: lasting, as above
         const QPointer<RemoteMediaController> self(this);
-        if (d->peer && d->peer->isReady()) {
-            ++d->audioRevision;
-            if (!d->audioRevision) { ++d->audioRevision; }
-            QJsonObject disable{{QStringLiteral("op"), QStringLiteral("audio")},
-                                {QStringLiteral("revision"), double(d->audioRevision)},
-                                {QStringLiteral("enabled"), false}};
-            if (audioProfileNegotiated()) {
-                disable.insert(QStringLiteral("profile"), remoteAudioProfileToWire(
-                    d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback
-                        ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus));
-                d->audioProfileRequested = true;
-            }
-            send(disable);
-            if (!self) { return; }
-        }
+        sendAudioDisable();
+        if (!self) { return; }
         refreshAudioStatus();
         if (!self) { return; }
         emit errorOccurred(remoteAudioProblemText(fault));
@@ -3977,9 +3980,11 @@ void RemoteMediaController::stop()
     // A playback problem belongs to its session and ends with it.
     d->audioFailure.reset();
     d->audioRestarting = false;
+    d->audioFailureDisableSent = false;
     // R-R3-43: receiver streams stop with the media connection. Their
     // sinks stay registered and are asked for again on the next one.
     d->receiverRevisions.clear();
+    d->receiverStopsUnanswered.clear();
     for (auto& [sliceId, stream] : d->iqStreams) {
         Q_UNUSED(sliceId);
         stream.enabled = false;
@@ -4435,6 +4440,151 @@ void RemoteMediaController::promoteReplacement()
                .arg(d->dualFromOld).arg(d->dualFromNew)
                .arg(d->dual->duplicatesDropped()).arg(d->dual->leadMs());
     noteMicLine();
+    askAgainAfterMove();
+}
+
+void RemoteMediaController::askAgainAfterMove()
+{
+    // A request made around the move may have been lost. The Core takes a
+    // request only on its current connection, so one naming the old
+    // connection after the Core moved is dropped, and one the old peer
+    // could not send was never made. The Core sends its answer before its
+    // replace on the same ordered channel, so a request still unanswered
+    // here is lost: ask again on the new connection, each with a newer
+    // revision. Without this a restart after a stall that met a move left
+    // the audio silent until mute and unmute.
+    const QPointer<RemoteMediaController> self(this);
+    const QPointer<MediaPeer> peer = d->peer;
+    const auto current = [this, &self, &peer] { return self && d->peer == peer; };
+    // The speakers' stream. A pending restart step asks on the new
+    // connection itself (it is fenced by revision, not connection).
+    const bool audioUnanswered = d->audioRevision != 0
+        && (!d->acceptedAudioContext
+            || d->acceptedAudioContext->revision != d->audioRevision);
+    if (d->audioFailureDisableSent) {
+        // A playback failure's disable: the Core would keep sending a
+        // stream this computer stopped playing.
+        if (audioUnanswered) {
+            qCInfo(lcRemoteMedia) << "Turning audio off again on the new connection";
+            sendAudioDisable();
+            if (!current()) { return; }
+        }
+    } else if (!d->audioRetryPending && !d->audioHeldForTransmit
+               && (d->audioRestarting || audioUnanswered)) {
+        qCInfo(lcRemoteMedia) << "Asking for audio again on the new connection";
+        requestAudio();
+        if (!current()) { return; }
+    }
+    // The headphones mix. Its restart step is fenced by connection, so a
+    // step waiting across the move would never run: ask now instead.
+    const bool headphonesUnanswered = d->headphonesRevision != 0
+        && (!d->headphonesContext
+            || d->headphonesContext->revision != d->headphonesRevision);
+    if (!d->headphonesHeldForTransmit
+        && (d->headphonesRetryPending || headphonesUnanswered)) {
+        qCInfo(lcRemoteMedia) << "Asking for the headphones mix again on the new connection";
+        requestHeadphonesAudio();
+        if (!current()) { return; }
+    }
+    // The transmit monitor's route.
+    if (d->monitorRevision != 0
+        && (!d->monitorContext || d->monitorContext->revision != d->monitorRevision)) {
+        qCInfo(lcRemoteMedia) << "Asking for the transmit monitor again on the new connection";
+        requestMonitorAudio();
+        if (!current()) { return; }
+    }
+    // Receiver streams for apps on this computer; their restart steps are
+    // fenced by connection too.
+    QList<int> receivers;
+    for (const auto& [sliceId, stream] : d->receiverStreams) {
+        const auto asked = d->receiverRevisions.constFind(sliceId);
+        if (stream.faulted || asked == d->receiverRevisions.cend()) { continue; }
+        if (stream.retryPending || !stream.context
+            || stream.context->revision != asked.value()) {
+            receivers.append(sliceId);
+        }
+    }
+    for (int sliceId : receivers) {
+        if (d->receiverStreams.count(sliceId) == 0) { continue; }
+        qCInfo(lcRemoteMedia) << "Asking for receiver audio again on the new connection"
+                              << sliceId;
+        sendReceiverAudioRequest(sliceId, true);
+        if (!current()) { return; }
+    }
+    // A receiver stream's stop (its last app closed, or it failed here)
+    // that the Core has not answered: without it the Core keeps sending a
+    // stream nothing plays.
+    QList<int> stops;
+    for (int sliceId : std::as_const(d->receiverStopsUnanswered)) {
+        const auto stream = d->receiverStreams.find(sliceId);
+        if (stream == d->receiverStreams.end() || stream->second.faulted) {
+            stops.append(sliceId);
+        }
+    }
+    for (int sliceId : stops) {
+        if (!d->receiverStopsUnanswered.contains(sliceId)) { continue; }
+        qCInfo(lcRemoteMedia) << "Stopping receiver audio again on the new connection"
+                              << sliceId;
+        sendReceiverAudioRequest(sliceId, false);
+        if (!current()) { return; }
+    }
+    // Waveform streams: promoteReplacement asks again for each one wanted;
+    // a stop the Core has not answered is sent again here.
+    QList<Private::WaveformKey> waveformStops;
+    for (const auto& [key, stream] : d->waveformStreams) {
+        if (!stream.wanted && stream.revision != 0
+            && stream.answeredRevision != stream.revision) {
+            waveformStops.append(key);
+        }
+    }
+    for (const auto& key : waveformStops) {
+        const auto stream = d->waveformStreams.find(key);
+        if (stream == d->waveformStreams.end() || stream->second.wanted) { continue; }
+        qCInfo(lcRemoteMedia) << "Stopping a waveform stream again on the new connection"
+                              << key.first;
+        sendWaveformRequest(key.first, key.second, false);
+        if (!current()) { return; }
+    }
+    // Displays: an allocation request still waiting for its answer is sent
+    // again as it was, with a newer revision, so a late answer to the lost
+    // one cannot be taken for it. Its charge and kind are unchanged, except
+    // that a closed display's subscribe becomes its release. If this answer
+    // is lost too, the acknowledgement timeout still applies from here.
+    QList<quint32> displays;
+    for (const auto& [endpointId, binding] : d->bindings) {
+        if (binding.pending) { displays.append(endpointId); }
+    }
+    for (quint32 endpointId : displays) {
+        auto found = d->bindings.find(endpointId);
+        if (found == d->bindings.end() || !found->second.pending) { continue; }
+        Private::Binding& binding = found->second;
+        ++binding.revision;
+        if (binding.revision == 0) { ++binding.revision; }
+        if (binding.retiring
+            && binding.pending->kind == Private::Binding::PendingKind::Subscribe) {
+            // A closed display's lost subscribe is not asked for again: it
+            // is released, keeping the largest reservation the Core may
+            // hold until it confirms the release (as an overdue one is).
+            binding.pending = Private::Binding::Pending{
+                Private::Binding::PendingKind::Unsubscribe, binding.revision, {},
+                maximumCharge(binding.acceptedCharge, binding.pending->charge),
+                QStringLiteral("retire"), d->allocationClock(), false};
+        }
+        binding.pending->revision = binding.revision;
+        binding.pending->sentAtMs = d->allocationClock();
+        binding.pending->timedOut = false;
+        const bool unsubscribe =
+            binding.pending->kind == Private::Binding::PendingKind::Unsubscribe;
+        QJsonObject wire = unsubscribe ? QJsonObject{} : binding.pending->request;
+        wire.insert(QStringLiteral("op"), unsubscribe ? QStringLiteral("unsubscribe")
+                                                      : QStringLiteral("subscribe"));
+        wire.insert(QStringLiteral("endpointId"), static_cast<qint64>(endpointId));
+        wire.insert(QStringLiteral("revision"), static_cast<qint64>(binding.revision));
+        qCInfo(lcRemoteMedia) << "Asking for display" << endpointId
+                              << "again on the new connection";
+        send(wire);
+        if (!current()) { return; }
+    }
 }
 
 void RemoteMediaController::retireOldPeer()
@@ -6467,6 +6617,24 @@ void RemoteMediaController::refreshCtunState(bool restorePreference)
     }
 }
 
+void RemoteMediaController::sendAudioDisable()
+{
+    if (!d->peer || !d->peer->isReady()) { return; }
+    ++d->audioRevision;
+    if (!d->audioRevision) { ++d->audioRevision; }
+    QJsonObject disable{{QStringLiteral("op"), QStringLiteral("audio")},
+                        {QStringLiteral("revision"), double(d->audioRevision)},
+                        {QStringLiteral("enabled"), false}};
+    if (audioProfileNegotiated()) {
+        disable.insert(QStringLiteral("profile"), remoteAudioProfileToWire(
+            d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback
+                ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus));
+        d->audioProfileRequested = true;
+    }
+    d->audioFailureDisableSent = true;
+    send(disable);
+}
+
 void RemoteMediaController::requestAudio()
 {
     d->audio->stop();
@@ -6483,6 +6651,7 @@ void RemoteMediaController::requestAudio()
     }
     ++d->audioRevision;
     if (!d->audioRevision) { ++d->audioRevision; }
+    d->audioFailureDisableSent = false;
     d->lastAudioRequestMs = d->clock.elapsed();
     const bool enabled = d->model->isConnected() && !d->model->audioEngine()->masterMuted();
     const QPointer<RemoteMediaController> self(this);
@@ -6660,6 +6829,7 @@ void RemoteMediaController::receiveWaveformContext(const QJsonObject& payload)
                      || int(rate) != WaveformCodec::sampleRate(*kind) || !found->second.wanted))
         || (!enabled && (availability != QLatin1String("Unavailable") || rate != 0))) { return; }
     Private::WaveformStream& stream = found->second;
+    stream.answeredRevision = stream.revision;
     if (stream.sourceGeneration != *source || stream.deliveryGeneration != *delivery || stream.enabled != enabled) {
         stream.lastSerial = 0; stream.nextSequence = 0; stream.lastDroppedTotal = 0;
     }
@@ -6929,6 +7099,11 @@ void RemoteMediaController::sendReceiverAudioRequest(int sliceId, bool enabled)
     quint32& revision = d->receiverRevisions[sliceId];
     ++revision;
     if (!revision) { ++revision; }
+    if (enabled) {
+        d->receiverStopsUnanswered.remove(sliceId);
+    } else {
+        d->receiverStopsUnanswered.insert(sliceId);
+    }
     const auto found = d->receiverStreams.find(sliceId);
     if (found != d->receiverStreams.end()) {
         found->second.heldBy.reset();
@@ -6968,6 +7143,10 @@ void RemoteMediaController::receiveReceiverAudioContext(const QJsonObject& paylo
         decodeReceiverAudioContext(payload);
     if (!message) { return; }
     const int sliceId = message->sliceId;
+    // The Core answered this slice's latest request, a stop among them.
+    if (message->context.revision == d->receiverRevisions.value(sliceId)) {
+        d->receiverStopsUnanswered.remove(sliceId);
+    }
     const auto found = d->receiverStreams.find(sliceId);
     // A released stream's late answer changes nothing.
     if (found == d->receiverStreams.end()) { return; }
