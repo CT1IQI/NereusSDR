@@ -5,8 +5,10 @@
 //               (audioDisableUnsent) and the move sends it; before, a
 //               failure that is not retried left the Core streaming to a
 //               stopped receiver, and one after an unsent request had the
-//               move ask for audio first. J.J. Boyd (KG4VCF), AI-assisted
-//               via Anthropic Claude Code.
+//               move ask for audio first. The same peer becoming ready again
+//               with no move sends an owed disable or request too (the
+//               media stall check). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-17: a speaker failure's retry step that runs while no request
 //               can be made (the old peer not ready while the Core moves)
 //               is asked again by the move (audioRequestUnsent); before,
@@ -1973,7 +1975,32 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     d->stallTimer->setInterval(500);
     d->stallTimer->setObjectName(QStringLiteral("remoteMediaStallTimer"));
     connect(d->stallTimer, &QTimer::timeout, this, [this] {
-        // Not isReady(): an agent that stopped hearing its pair may say it
+        // 2026-10-17: a failure's disable or an audio request owed because
+        // the peer was not ready goes out once this same peer is ready
+        // again. MediaPeer says ready once per connection, and no move need
+        // come: the Core streaming to a stopped receiver keeps lastAudio
+        // fresh, so the rule below never fires. A retry step that is waiting
+        // asks itself (a send now would move the revision past its fence);
+        // a request held for transmit waits for the unkey. The two flags
+        // never hold together, so a disable owed is never followed by a
+        // request from here.
+        if (d->peer && d->peer->isReady() && !d->audioRetryPending) {
+            const QPointer<RemoteMediaController> self(this);
+            if (d->audioDisableUnsent) {
+                qCInfo(lcRemoteMedia)
+                    << "Turning audio off now that the media connection is ready again";
+                sendAudioDisable();
+                if (!self) { return; }
+            } else if (d->audioRequestUnsent && !d->audioFailureDisableSent
+                       && !d->audioHeldForTransmit && d->model && d->client
+                       && d->client->mediaAvailable()) {
+                qCInfo(lcRemoteMedia)
+                    << "Asking for audio now that the media connection is ready again";
+                requestAudio();
+                if (!self) { return; }
+            }
+        }
+        // Not isReady():an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
         // Nor audioEnabled: the audio receiver gives up on a starved
         // stream within a second and waits to be asked again, which a dead
