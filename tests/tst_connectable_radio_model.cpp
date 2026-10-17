@@ -37,9 +37,13 @@
 //   2026-10-12 -- A connect keeps the saved FFT plans in the folder the
 //                 process was given (DspCacheLocation). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-17 -- Teardown stops the TX worker before the audio engine
+//                 drops the input it reads (main CI crash at 4066a86b6).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -47,20 +51,112 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <thread>
 
 #include "core/AppSettings.h"
+#include "core/AudioEngine.h"
 #include "core/DspCacheLocation.h"
 #include "core/PureSignal.h"
 #include "core/RxChannel.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/WdspEngine.h"
+#include "core/audio/TxMicSource.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 #include "fakes/ConnectableRadioModel.h"
+#include "fakes/FakeAudioBus.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::ConnectableRadioModel;
+
+namespace {
+
+// What the TX worker did with a HeldReadBus. Shared with the test, so it
+// outlives the bus.
+struct HeldReadState {
+    // Set by the test: the next read stays inside the bus until this mic
+    // source stops, which is the first thing TxWorkerThread::stopPump does.
+    std::atomic<const TxMicSource*> holdUntilStopped{nullptr};
+    std::atomic<bool> held{false};
+    std::atomic<int> readsInside{0};
+    std::atomic<bool> destroyed{false};
+    std::atomic<bool> destroyedDuringRead{false};
+};
+
+// A TX input (PC microphone or VAX TX) for the worker to read. Its
+// destructor records whether the worker was still inside a read, then
+// waits for that read to leave, so a wrong teardown order fails the test
+// instead of crashing it.
+class HeldReadBus : public FakeAudioBus {
+public:
+    explicit HeldReadBus(std::shared_ptr<HeldReadState> state)
+        : FakeAudioBus(QStringLiteral("Held TX input")), m_state(std::move(state)) {}
+
+    ~HeldReadBus() override
+    {
+        m_state->destroyed.store(true);
+        if (m_state->readsInside.load() > 0) {
+            m_state->destroyedDuringRead.store(true);
+        }
+        while (m_state->readsInside.load() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    qint64 pull(char* data, qint64 maxBytes) override
+    {
+        Q_UNUSED(data);
+        Q_UNUSED(maxBytes);
+        read();
+        return 0;
+    }
+
+    qint64 pullKeepingBacklog(char* data, qint64 maxBytes, qint64 maxBacklogBytes) override
+    {
+        Q_UNUSED(maxBacklogBytes);
+        return pull(data, maxBytes);
+    }
+
+private:
+    void read()
+    {
+        m_state->readsInside.fetch_add(1);
+        if (const TxMicSource* const source = m_state->holdUntilStopped.exchange(nullptr)) {
+            m_state->held.store(true);
+            const QDeadlineTimer deadline(10000);
+            while (source->isRunning() && !m_state->destroyed.load()
+                   && !deadline.hasExpired()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        m_state->readsInside.fetch_sub(1);
+    }
+
+    std::shared_ptr<HeldReadState> m_state;
+};
+
+AudioFormat stereoFloat48k()
+{
+    AudioFormat format;
+    format.sampleRate = 48000;
+    format.channels = 2;
+    format.sample = AudioFormat::Sample::Float32;
+    return format;
+}
+
+std::unique_ptr<IAudioBus> openedBus(std::unique_ptr<FakeAudioBus> bus)
+{
+    const bool opened = bus->open(stereoFloat48k());
+    Q_ASSERT(opened);
+    Q_UNUSED(opened);
+    return bus;
+}
+
+} // namespace
 
 class TestConnectableRadioModel : public QObject {
     Q_OBJECT
@@ -376,6 +472,65 @@ private slots:
         QCOMPARE(harness->model().connectionState(), ConnectionState::Connected);
         QVERIFY2(QFileInfo(folder).isDir(), qPrintable(folder));
         harness.reset();
+    }
+
+    // Main CI at 4066a86b6: AudioEngine::stop() dropped the TX input while
+    // the TX worker was still inside pullTxMic, because teardownConnection
+    // stopped the audio engine before the TX pump. The worker's read here
+    // stays inside the bus until stopPump begins, so with the old order the
+    // bus is always destroyed under it. The PC row is the injected input
+    // the CI crash read; the VAX row is the VAX TX bus a user's session
+    // reads (the PC microphone itself is the capture reader, which outlives
+    // stop()).
+    void teardownStopsTheTxWorkerBeforeItsInputGoes_data()
+    {
+        QTest::addColumn<bool>("vax");
+        QTest::newRow("PC microphone") << false;
+        QTest::newRow("VAX TX") << true;
+    }
+
+    void teardownStopsTheTxWorkerBeforeItsInputGoes()
+    {
+        QFETCH(bool, vax);
+        const auto state = std::make_shared<HeldReadState>();
+
+        std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, [state, vax](RadioModel& model) {
+                model.audioEngine()->setStartInitializerForTest(
+                    [state, vax](AudioEngine& engine) {
+                        engine.setSpeakersBusForTest(openedBus(
+                            std::make_unique<FakeAudioBus>(QStringLiteral("Fake speakers"))));
+                        std::unique_ptr<IAudioBus> held =
+                            openedBus(std::make_unique<HeldReadBus>(state));
+                        if (vax) {
+                            engine.setTxInputBusForTest(openedBus(
+                                std::make_unique<FakeAudioBus>(QStringLiteral("Fake TX input"))));
+                            engine.setVaxTxBusForTest(std::move(held));
+                        } else {
+                            engine.setTxInputBusForTest(std::move(held));
+                        }
+                    });
+            });
+        QVERIFY(harness != nullptr);
+        RadioModel& radio = harness->model();
+        if (vax) {
+            radio.transmitModel().setVaxSourceAvailable(true);
+        }
+        radio.transmitModel().setMicSource(vax ? MicSource::Vax : MicSource::Pc);
+        QCOMPARE(radio.transmitModel().micSource(), vax ? MicSource::Vax : MicSource::Pc);
+
+        const TxMicSource* const source = radio.txMicSourceForTest();
+        QVERIFY(source != nullptr);
+        QVERIFY(source->isRunning());
+        state->holdUntilStopped.store(source);
+        QVERIFY2(QTest::qWaitFor([&state]() { return state->held.load(); }, 10000),
+                 "the TX worker never read the selected input");
+
+        harness.reset();
+
+        QVERIFY(state->destroyed.load());
+        QVERIFY2(!state->destroyedDuringRead.load(),
+                 "the audio engine destroyed the TX input while the TX worker was reading it");
     }
 };
 
