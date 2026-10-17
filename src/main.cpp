@@ -8,6 +8,7 @@
 #include "core/BuildIdentity.h"
 #include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/CaptureStandby.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
@@ -41,6 +42,8 @@ Q_LOGGING_CATEGORY(lcMainAccessibility, "nereus.gui.accessibility")
 #include <QFile>
 #include <QStandardPaths>
 #include <QStringList>
+
+#include <memory>
 
 // Parse --profile <name> out of argv *before* constructing QApplication so
 // AppSettings can pin the right path on first access. QCommandLineParser
@@ -174,7 +177,8 @@ int main(int argc, char* argv[])
     // (issue #203). The OS only prompts when something actually engages
     // TCC; relying on PortAudio's CoreAudio backend to do so is unreliable
     // on machines without a built-in mic, so call AVCaptureDevice directly.
-    NereusSDR::requestMicrophonePermission();
+    // 2026-10-16: asked with the first session's start (below), so on the
+    // Mac it comes after the standing capture helper's first audio call.
 
     // Re-parse properly so --help / --version / unknown options surface
     // via Qt's standard machinery. The earlyProfile pass above already
@@ -349,6 +353,23 @@ int main(int argc, char* argv[])
     // their transport workers before the main window is shown.
     NereusSDR::ExternalVariableEngine::instance().init();
 
+#if defined(Q_OS_MAC)
+    // 2026-10-16: the microphone's capture helper starts here, before any
+    // window, and stands by for the whole application: every window's
+    // AudioEngine uses its supervisor, across Core switches.  A bundled
+    // app's first Core Audio call makes macOS read the app's stored Mic
+    // Mode, and with Voice Isolation stored a new Core Audio client then
+    // blocks in its first call for 40 to 100 s; a running one does not, and
+    // the helper has no bundle id.  So the first session (and the
+    // microphone permission query) starts once the helper has listed its
+    // devices, or after CaptureStandby::kWarmWaitMs, from the event loop:
+    // nothing waits here, and the window's own first audio call comes after
+    // the helper's.  See
+    // docs/architecture/2026-09-22-optional-microphone-capture-design.md.
+    auto standingCapture = std::make_unique<NereusSDR::CaptureStandby>();
+    NereusSDR::AudioEngine::setSharedCaptureSupervisor(standingCapture->supervisor());
+#endif
+
     // R-R3-38: one application owner replaces complete local/remote sessions.
     // It resolves credentials as a single target tuple, installs a fresh proxy
     // before each remote model, and retires the window before its backend.
@@ -357,11 +378,26 @@ int main(int argc, char* argv[])
     {
         NereusSDR::GuiConnectionController connections;
         connections.sessions()->configureDesktopStation(activeProfile, ownership.ownsProfile());
+#if defined(Q_OS_MAC)
+        standingCapture->whenWarm(&connections, [&connections, &request]() {
+            NereusSDR::requestMicrophonePermission();
+            connections.start(request);
+        });
+#else
+        NereusSDR::requestMicrophonePermission();
         connections.start(request);
+#endif
         rc = app.exec();
         background = connections.sessions()->backgroundServiceOptions();
         connections.shutdown();
     }
+
+#if defined(Q_OS_MAC)
+    // Every window and its AudioEngine has gone; the helper goes last,
+    // within its stop bound.
+    NereusSDR::AudioEngine::setSharedCaptureSupervisor(nullptr);
+    standingCapture.reset();
+#endif
 
     // Graceful shutdown so worker threads drain before the engine
     // singleton is destroyed.

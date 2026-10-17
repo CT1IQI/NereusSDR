@@ -13,11 +13,16 @@
 //   2026-10-12: PortAudio starts on first need, not at launch
 //               (ensureStarted, addUser, removeUser). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: Pa_Initialize marks the process's first native audio call
+//               (NativeAudioFirstCall), for the persistent capture helper's
+//               timing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/audio/PortAudioLibrary.h"
 
 #include "core/LogCategories.h"
+#include "core/audio/NativeAudioFirstCall.h"
 #include "core/audio/PortAudioBus.h"
 
 #include <portaudio.h>
@@ -67,6 +72,7 @@ PaError paInitialize()
         return PaError(g_initializeForTest());
     }
 #endif
+    markNativeAudioCall("PortAudio start");
     return Pa_Initialize();
 }
 

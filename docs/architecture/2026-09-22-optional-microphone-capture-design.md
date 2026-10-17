@@ -210,3 +210,105 @@ implementation plan fixes exact IPC/lifecycle parameters
 and file/test ownership, including a native permission/latency experiment before
 replacing production capture. Unproven native behavior is an explicit dependency,
 not a guessed API contract. R3 completion and the full Core/GUI goal remain open.
+
+## Addendum 2026-10-16: one helper for the whole session (macOS)
+
+**Status:** approved by the operator on 2026-10-16 ("yes, build the
+persistent helper"). Requirement R-R3-36, unchanged in its protections.
+
+### What the Mac showed
+
+- On macOS 27, a bundled app's first Core Audio call reads the Mic Mode
+  stored for its bundle id. When that mode is Voice Isolation, Core Audio
+  re-applies voice isolation across the system for 40 to 100 seconds, with
+  about 30 to 40 processes reacting (a "storm"). Over 18 hours of system logs,
+  a stored Voice Isolation mode stormed on 6 of 6 window launches; a stored
+  Standard mode stormed on 0 of 92 first calls.
+- During a storm, a process that is new to Core Audio blocks in its first call
+  (the HAL client check-in, waiting on the audio server) until the storm ends.
+  A process that is already a Core Audio client keeps working: the window
+  opened its speakers in the middle of one.
+- The helper was started for each open, so every open was a new client. Its
+  first call stalled between "audio engine made" and "devices listed", the
+  10-second open deadline killed it, and the next one stalled the same way:
+  the microphone reached Ready 45 to 110 seconds after launch.
+- The helper has no bundle id. macOS logs that voice isolation is unavailable
+  for a client without one, and the helper never reads the Mic Mode.
+- Picking Standard for NereusSDR in Control Center did not change the stored
+  mode in the operator's test, so asking users to change it is not a fix.
+  Writing the stored mode ourselves (a private setter) and an opt-out made
+  before the first call (whose own Mic Mode read started the storm) were both
+  set aside.
+
+### The change
+
+- **One standing helper for the application.** On macOS, `main()` makes a
+  `CaptureStandby` before any session or window starts. It owns the
+  application's one `CaptureSupervisor` and holds its
+  `CaptureSupervisor::Demand::Standby`, which keeps one helper running with
+  no microphone open. Every window's AudioEngine uses that supervisor
+  (`AudioEngine::setSharedCaptureSupervisor`) in place of its own and leaves
+  it running when it goes, so the helper outlives a window: switching Cores
+  retires the window and its AudioEngine, and the next window's opens run on
+  the same helper. Windows, Linux, nereusd and the tests hold no standby and
+  run as before.
+- **The start is ordered, not raced.** The first session (and with it the
+  window, its device catalogue, its speakers and the launch's microphone
+  permission query) starts from the event loop once the helper has answered
+  Warmed, or after 3 seconds (`CaptureStandby::kWarmWaitMs`), whichever comes
+  first. Nothing blocks meanwhile: the GUI thread runs its event loop, and
+  when no helper is installed nothing is held. The helper's first audio call
+  and device list therefore come before the window's first native audio call
+  unless the helper takes longer than the bound. The log records how long the
+  start was held and what ended the hold.
+- **Warm.** Protocol version 5 adds `Warm` (window to helper, `{}`) and
+  `Warmed` (helper to window, `{"inputs","startNs","listedNs"}`). The
+  supervisor sends Warm after the helper's hello while standby is held. The
+  helper makes its audio engine backends and lists the default engine's
+  devices, opening nothing, and answers with the number of inputs and when the
+  listing began and ended on the steady clock both processes share. A test run
+  lists nothing and answers at once.
+- **Opens during the warm-up.** The helper runs its commands in order, so an
+  open sent during the warm-up would only wait behind it. The supervisor keeps
+  such a generation Opening and sends its Configure and Open once the helper
+  has warmed; the 10-second open deadline starts then. The warm-up has its own
+  deadline, 120 seconds (`warmTimeoutMs`), longer than any storm seen: a
+  helper that has not answered Warmed by then is killed, and a generation that
+  was waiting on it fails as Timeout.
+- **Reuse.** Every generation after that (an open, a close, a device change, a
+  retry, a remote window's uplink, a network reconnect, a Core switch) runs on
+  the same helper. Closing the microphone stops its generation only, as an
+  ASIO demand already did; the helper ends when the application quits.
+- **Protections kept.** The window never waits on the helper: the held start
+  is bounded at 3 seconds and runs from the event loop, and no other path
+  waits for Warmed. The hello (3 s), open (10 s) and stop (2 s) deadlines are
+  unchanged, and a helper that misses one is killed as before. Failed still
+  persists; no generation is retried by itself. Receiving, reconnecting and
+  quitting do not wait on the microphone; quitting is still bounded by the
+  stop deadline.
+- **Replacement.** When a helper that standby holds ends (killed at a
+  deadline, crashed, or exited), one fresh helper starts at once and warms,
+  with no microphone open. Another replacement is allowed only after that
+  helper has answered Warmed, so a helper that cannot start does not loop.
+  A fresh helper is never started for an open while one is running.
+- **No microphone while idle.** Warm opens no input, so macOS shows no
+  microphone indicator until a demand opens one, and the helper still never
+  reads the Mic Mode.
+- **Measurement.** Each process marks its first native audio call
+  (`NativeAudioFirstCall`, fed by the traced Core Audio queries, the Core
+  Audio stream opens, the VAX device watch, the real-time workgroup lookups
+  and the PortAudio start) and logs it once. On Warmed the supervisor logs
+  how long the helper took to list its devices and whether that ended before
+  or after the window's first native audio call. The mark is a measurement:
+  nothing waits on it.
+
+### Boundaries
+
+- If the helper has not warmed within the 3-second bound (a slow start, or a
+  storm another app set off), the window starts anyway and its first native
+  audio call can come first. The helper's warm-up then waits out the storm,
+  up to its 120-second deadline, and an open waits with it, Opening. The log
+  lines above show which came first.
+- The launch-time hold delays the first window by up to 3 seconds; how long it
+  is in practice, and whether the microphone is Ready within seconds with
+  Voice Isolation stored, are still to be measured on a bench launch.

@@ -43,8 +43,14 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: attribute open-step diagnostics to their process/generation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-16: the persistent helper's interface: a Standby lease is
-//               accepted and opens no microphone; helperAvailable().
+//   2026-10-16: the persistent helper.  A Standby demand keeps one helper
+//               running with no microphone open and warms it (Warm, then
+//               Warmed, logged against the window's first native audio
+//               call); every generation reuses it.  A standing helper that
+//               ends is replaced by one fresh helper, and by another only
+//               after that one answered Warmed.  An open asked for during
+//               the warm-up waits for it (no open deadline until Warmed);
+//               the warm-up has its own bound, warmTimeoutMs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -58,6 +64,7 @@
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QCoreApplication>
 
@@ -101,6 +108,21 @@ constexpr int kRingWriteBlockFrames = 64;      // the helper's matcher write blo
 constexpr int kForceKillWaitMs = 200;          // shutdown fallback after the stop bound
 constexpr int kShutdownSlackMs = 300;          // wait beyond stopTimeoutMs for a clean end
 constexpr int kShutdownBoundSlackMs = 500;     // shutdown() total bound beyond stopTimeoutMs
+// A standing helper that ends is replaced this many times before a
+// replacement answers Warmed (which renews the count), so a helper that
+// cannot start is not restarted without end.
+constexpr int kStandbyRespawnsPerWarm = 1;
+
+// No helper can be started from this program path: unset, or an absolute
+// path to nothing.  A relative name is left to QProcess.
+bool programMissing(const QString& program)
+{
+    if (program.isEmpty()) {
+        return true;
+    }
+    const QFileInfo info(program);
+    return info.isAbsolute() && !info.exists();
+}
 
 bool sameConfig(const AudioDeviceConfig& a, const AudioDeviceConfig& b)
 {
@@ -202,6 +224,7 @@ public:
     using PublishHop = std::function<void(quint32, double)>;
     using PublishAsioCaps = std::function<void(const P::AsioCapsRecord&)>;
     using PublishAsioState = std::function<void(const P::AsioState&)>;
+    using PublishWarmed = std::function<void(qint64)>;
 
     CaptureSupervisorWorker(const CaptureSupervisor::Options& options,
                             std::shared_ptr<CaptureAudioBus> reader,
@@ -209,7 +232,7 @@ public:
                             std::shared_ptr<std::atomic<qint64>> lastHelperPid,
                             Publish publish, PublishProbeHit publishProbeHit,
                             PublishHop publishHop, PublishAsioCaps publishAsioCaps,
-                            PublishAsioState publishAsioState)
+                            PublishAsioState publishAsioState, PublishWarmed publishWarmed)
         : m_options(options)
         , m_reader(std::move(reader))
         , m_helperPid(std::move(helperPid))
@@ -219,22 +242,27 @@ public:
         , m_publishHop(std::move(publishHop))
         , m_publishAsioCaps(std::move(publishAsioCaps))
         , m_publishAsioState(std::move(publishAsioState))
+        , m_publishWarmed(std::move(publishWarmed))
         , m_hops(std::make_shared<HopLog>())
         , m_helloTimer(new QTimer(this))
         , m_openTimer(new QTimer(this))
         , m_stopTimer(new QTimer(this))
+        , m_warmTimer(new QTimer(this))
         , m_delayTimer(new QTimer(this))
     {
         m_helloTimer->setSingleShot(true);
         m_openTimer->setSingleShot(true);
         m_stopTimer->setSingleShot(true);
+        m_warmTimer->setSingleShot(true);
         m_helloTimer->setTimerType(Qt::PreciseTimer);        // deadlines, not cadences
         m_openTimer->setTimerType(Qt::PreciseTimer);
         m_stopTimer->setTimerType(Qt::PreciseTimer);
+        m_warmTimer->setTimerType(Qt::PreciseTimer);
         m_delayTimer->setInterval(kDelayWindowMs);
         connect(m_helloTimer, &QTimer::timeout, this, [this]() { onHelloTimeout(); });
         connect(m_openTimer, &QTimer::timeout, this, [this]() { onOpenTimeout(); });
         connect(m_stopTimer, &QTimer::timeout, this, [this]() { onStopTimeout(); });
+        connect(m_warmTimer, &QTimer::timeout, this, [this]() { onWarmTimeout(); });
         connect(m_delayTimer, &QTimer::timeout, this, [this]() { logDelayWindow(); });
         m_hops->hopsNs.reserve(kDelaySamplesMax);
     }
@@ -257,7 +285,7 @@ public:
             startGeneration();
             return;
         }
-        if (!asioWanted()) {
+        if (!keepAlive()) {
             m_pendingSpawn = false;
         }
         const bool failed = (m_status.state == State::Failed);
@@ -268,8 +296,9 @@ public:
             }
             return;
         }
-        if (asioWanted()) {
-            // Task 15: the helper keeps playing ASIO; only the microphone stops.
+        if (keepAlive()) {
+            // Task 15: the helper keeps playing ASIO, or (2026-10-16) stands
+            // by for the next generation; only the microphone stops.
             stopGenerationOnly();
             if (!failed) {
                 publish(State::Closed, Reason::None);
@@ -318,6 +347,10 @@ public:
             fired |= CaptureSupervisor::StopDeadline;
             onStopTimeout();
         }
+        if ((deadlines & CaptureSupervisor::WarmDeadline) && m_warmTimer->isActive()) {
+            fired |= CaptureSupervisor::WarmDeadline;
+            onWarmTimeout();
+        }
         return fired;
     }
 
@@ -359,6 +392,26 @@ public:
             return;
         }
         m_asioOpen.reset();
+        stopIdleHelper();
+    }
+
+    // ── The standing helper (2026-10-16) ────────────────────────────────────
+
+    // Held: a helper runs with no microphone open and is warmed once it says
+    // hello; every generation reuses it.  Released: it stops when nothing
+    // else holds it.
+    void setStandby(bool standby)
+    {
+        if (m_shuttingDown || standby == m_standby) {
+            return;
+        }
+        m_standby = standby;
+        if (standby) {
+            m_standbyRespawns = kStandbyRespawnsPerWarm;
+            ensureProcess();
+            maybeSendWarm();
+            return;
+        }
         stopIdleHelper();
     }
 
@@ -414,6 +467,7 @@ public:
     {
         m_shuttingDown = true;
         m_demanded = false;
+        m_standby = false;
         m_asioDemanded = false;
         m_asioOpen.reset();
         m_pendingAsio.clear();
@@ -458,7 +512,7 @@ private:
             m_status.configuredDevice.clear();
             m_status.actualDevice.clear();
             qCInfo(lcAudio) << "capture: no microphone chosen; nothing is opened";
-            if (asioWanted()) {
+            if (keepAlive()) {
                 stopGenerationOnly();
             } else {
                 beginStop();
@@ -498,7 +552,7 @@ private:
         m_awaitingStopped = false;
         m_stopTimer->stop();
         if (m_helloReceived) {
-            sendConfigureOpen();
+            sendConfigureOpenAfterWarm();
         }
     }
 
@@ -539,6 +593,87 @@ private:
         return m_asioDemanded || m_asioDescribes > 0 || !m_pendingAsio.isEmpty();
     }
 
+    // The helper is kept running with no microphone open: for ASIO, or as
+    // the standing helper (2026-10-16).
+    bool keepAlive() const
+    {
+        return m_standby || asioWanted();
+    }
+
+    // The standing helper's warm-up, once per process, after its hello.
+    void maybeSendWarm()
+    {
+        if (!m_standby || !m_process || !m_helloReceived || m_dying || m_warmSent) {
+            return;
+        }
+        m_warmSent = true;
+        write(P::encodeWarm());
+        m_warmClock.start();
+        m_warmTimer->start(m_options.warmTimeoutMs);
+    }
+
+    // Warm sent, Warmed not yet back: the helper's commands run in order,
+    // so an Open now would only wait behind the warm-up.
+    bool warmPending() const
+    {
+        return m_warmSent && !m_warmAnswered;
+    }
+
+    // The generation's Configure and Open go out now, or once the helper
+    // has warmed; its open deadline starts with them, never during the
+    // warm-up, whose own deadline is warmTimeoutMs.
+    void sendConfigureOpenAfterWarm()
+    {
+        if (warmPending()) {
+            qCInfo(lcAudio) << "capture: generation" << m_generation
+                            << "opens once the helper has warmed";
+            return;
+        }
+        sendConfigureOpen();
+    }
+
+    void handleWarmed(const QByteArray& payload)
+    {
+        const auto warmed = P::decodeWarmed(payload);
+        if (!warmed) {
+            protocolError(QStringLiteral("invalid warm-up answer"));
+            return;
+        }
+        if (!m_warmSent || m_warmAnswered) {
+            protocolError(QStringLiteral("a warm-up answer nobody asked for"));
+            return;
+        }
+        m_warmAnswered = true;
+        m_warmTimer->stop();
+        m_standbyRespawns = kStandbyRespawnsPerWarm;
+        const qint64 pid = m_process->processId();
+        const auto ms = [](std::int64_t ns) { return QString::number(double(ns) / 1e6, 'f', 1); };
+        const QString listed = warmed->inputs < 0
+                                   ? QStringLiteral("listed no devices")
+                                   : QStringLiteral("listed %1 inputs").arg(warmed->inputs);
+        QString against;
+        if (const std::optional<NativeAudioFirstCall> first = firstNativeAudioCall()) {
+            const std::int64_t lead = first->ns - warmed->listedNs;
+            against = QStringLiteral("%1 ms %2 the window's first native audio call (%3)")
+                          .arg(ms(lead < 0 ? -lead : lead),
+                               lead < 0 ? QStringLiteral("after") : QStringLiteral("before"),
+                               QString::fromLatin1(first->site));
+        } else {
+            against = QStringLiteral("the window has made no native audio call yet");
+        }
+        qCInfo(lcAudio).noquote()
+            << QStringLiteral("capture: helper %1 %2 in %3 ms, at steady %4 ms, %5 ms after it "
+                              "was started; %6")
+                   .arg(QString::number(pid), listed, ms(warmed->listedNs - warmed->startNs),
+                        QString::number(warmed->listedNs / 1'000'000),
+                        ms(warmed->listedNs - m_spawnNs), against);
+        m_publishWarmed(pid);
+        // A generation asked for during the warm-up opens now.
+        if (m_open && !m_dying && !m_stopGenerationOpen) {
+            sendConfigureOpen();
+        }
+    }
+
     // A running helper is kept (a Stop it was about to get is dropped);
     // otherwise one is started, or started once the old one has gone.
     void ensureProcess()
@@ -572,7 +707,7 @@ private:
     // Nothing holds the helper any more: it is stopped as before.
     void stopIdleHelper()
     {
-        if (m_demanded || asioWanted() || !m_process || m_dying) {
+        if (m_demanded || keepAlive() || !m_process || m_dying) {
             return;
         }
         beginStop();
@@ -752,11 +887,7 @@ private:
 
     bool helperMissing() const
     {
-        if (m_options.program.isEmpty()) {
-            return true;
-        }
-        const QFileInfo info(m_options.program);
-        return info.isAbsolute() && !info.exists();
+        return programMissing(m_options.program);
     }
 
     // ── Process ──────────────────────────────────────────────────────────────
@@ -769,6 +900,7 @@ private:
         m_dying = false;
         m_stderrPending.clear();
         m_lastOpenStep.clear();
+        m_spawnNs = audioProbeNowNs();
         QProcess* process = m_process;
         connect(process, &QProcess::started, this, [this, process]() {
             if (process == m_process) {
@@ -1002,6 +1134,26 @@ private:
         m_process->kill();
     }
 
+    // The standing helper never finished its warm-up: stuck in its first
+    // audio call.  Killed like any helper past a deadline; a generation
+    // that was waiting for it fails.
+    void onWarmTimeout()
+    {
+        if (!m_process || !warmPending() || m_dying) {
+            return;
+        }
+        if (rearmIfEarly(m_warmTimer, m_warmClock, m_options.warmTimeoutMs)) {
+            return;
+        }
+        qCWarning(lcAudio) << "capture: helper did not finish warming within"
+                           << m_options.warmTimeoutMs << "ms; killing it";
+        if (m_open) {
+            failGeneration(Reason::Timeout, true);
+        } else {
+            killChildProcess();
+        }
+    }
+
     // ── Child output ─────────────────────────────────────────────────────────
 
     void onStdout()
@@ -1094,8 +1246,9 @@ private:
             m_helloReceived = true;
             m_helloTimer->stop();
             qCInfo(lcAudio) << "capture: helper" << hello->pid << "build" << hello->build << "ready";
+            maybeSendWarm();
             if (m_open && !m_dying) {
-                sendConfigureOpen();
+                sendConfigureOpenAfterWarm();
             }
             if (!m_dying) {
                 flushAsio();
@@ -1121,6 +1274,9 @@ private:
             return;
         case P::RecordType::AsioState:
             handleAsioState(record.payload);
+            return;
+        case P::RecordType::Warmed:
+            handleWarmed(record.payload);
             return;
         default:
             protocolError(QStringLiteral("unexpected record type %1").arg(static_cast<int>(record.type)));
@@ -1300,6 +1456,7 @@ private:
     {
         m_helloTimer->stop();
         m_stopTimer->stop();
+        m_warmTimer->stop();
         m_helperPid->store(0);
         m_process->disconnect(this);
         m_process->deleteLater();
@@ -1309,6 +1466,8 @@ private:
         m_helloReceived = false;
         m_awaitingStopped = false;
         m_stopGenerationOpen = false;
+        m_warmSent = false;
+        m_warmAnswered = false;
     }
 
     void afterProcessGone()
@@ -1319,20 +1478,23 @@ private:
             done();
             return;
         }
-        if (!m_demanded) {
-            if (m_status.state != State::Failed) {
-                publish(State::Closed, Reason::None);
-            }
-            if (!m_pendingSpawn || !asioWanted()) {
-                m_pendingSpawn = false;
-                return;
-            }
+        if (!m_demanded && m_status.state != State::Failed) {
+            publish(State::Closed, Reason::None);
         }
-        if (m_pendingSpawn) {
-            m_pendingSpawn = false;
-            if (m_open || asioWanted()) {
-                spawn();
-            }
+        // A generation is only ever open under demand, so with no demand
+        // this spawns for a held keep-alive only.
+        const bool pending = m_pendingSpawn;
+        m_pendingSpawn = false;
+        if (pending && (m_open || keepAlive())) {
+            spawn();
+            return;
+        }
+        // 2026-10-16: the standing helper ended (killed past a deadline,
+        // exited or failed): one fresh helper stands by in its place.
+        if (m_standby && m_standbyRespawns > 0) {
+            --m_standbyRespawns;
+            qCInfo(lcAudio) << "capture: starting a fresh helper to stand by";
+            spawn();
         }
     }
 
@@ -1364,11 +1526,13 @@ private:
     PublishHop m_publishHop;
     PublishAsioCaps m_publishAsioCaps;
     PublishAsioState m_publishAsioState;
+    PublishWarmed m_publishWarmed;
     std::shared_ptr<HopLog> m_hops;
 
     QTimer* m_helloTimer;                     // Qt parent ownership
     QTimer* m_openTimer;
     QTimer* m_stopTimer;
+    QTimer* m_warmTimer;                      // the standing helper's warm-up (2026-10-16)
     QTimer* m_delayTimer;
 
     // Demand and configuration, mirrored from the owner.
@@ -1384,6 +1548,10 @@ private:
     std::optional<P::AsioOpen> m_asioOpen;    // the uses the helper plays
     QList<QByteArray> m_pendingAsio;          // sent once the helper says hello
 
+    // The standing helper (2026-10-16).
+    bool m_standby = false;
+    int m_standbyRespawns = 0;                // replacements left before a Warmed
+
     // Child process.
     QProcess* m_process = nullptr;            // Qt parent ownership; deleteLater on exit
     P::RecordReader m_records;
@@ -1395,6 +1563,9 @@ private:
     bool m_awaitingStopped = false;
     bool m_stopGenerationOpen = false;        // the child holds an Open for m_generation
     bool m_pendingSpawn = false;
+    bool m_warmSent = false;                  // this process was sent Warm
+    bool m_warmAnswered = false;              // and answered Warmed
+    std::int64_t m_spawnNs = 0;               // audioProbeNowNs() at spawn
 
     // Generation.
     quint32 m_generation = 0;
@@ -1407,6 +1578,7 @@ private:
     QElapsedTimer m_openClock;
     QElapsedTimer m_helloClock;               // started with m_helloTimer
     QElapsedTimer m_stopClock;                // started with m_stopTimer
+    QElapsedTimer m_warmClock;                // started with m_warmTimer
 
     // The generation's shared ring (R-AUD-17).
     std::unique_ptr<CaptureShmRegion> m_region;
@@ -1521,6 +1693,13 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
                     emit asioState(state);
                 }
             }, Qt::QueuedConnection);
+        },
+        [this](qint64 pid) {
+            QMetaObject::invokeMethod(this, [this, pid]() {
+                if (!m_shutDown) {
+                    emit helperWarmed(pid);
+                }
+            }, Qt::QueuedConnection);
         });
     m_worker->moveToThread(&m_thread);
     m_thread.start();
@@ -1571,6 +1750,11 @@ CaptureSupervisor::Lease CaptureSupervisor::acquire(Demand demand)
         return Lease(this, id);
     }
     if (demand == Demand::Standby) {
+        if (standbyLeaseCount() == 1) {
+            CaptureSupervisorWorker* worker = m_worker.get();
+            QMetaObject::invokeMethod(worker, [worker]() { worker->setStandby(true); },
+                                      Qt::QueuedConnection);
+        }
         return Lease(this, id);
     }
     if (micLeaseCount() == 1) {
@@ -1604,6 +1788,10 @@ void CaptureSupervisor::releaseLease(quint64 id)
         return;
     }
     if (demand == Demand::Standby) {
+        if (standbyLeaseCount() == 0) {
+            QMetaObject::invokeMethod(worker, [worker]() { worker->setStandby(false); },
+                                      Qt::QueuedConnection);
+        }
         return;
     }
     if (micLeaseCount() == 0) {
@@ -1730,11 +1918,7 @@ qint64 CaptureSupervisor::lastHelperProcessId() const
 
 bool CaptureSupervisor::helperAvailable() const
 {
-    if (m_options.program.isEmpty()) {
-        return false;
-    }
-    const QFileInfo info(m_options.program);
-    return !info.isAbsolute() || info.exists();
+    return !programMissing(m_options.program);
 }
 
 int CaptureSupervisor::fireDeadlinesNowForTest(int deadlines)

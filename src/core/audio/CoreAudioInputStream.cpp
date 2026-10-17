@@ -9,6 +9,10 @@
 //   2026-10-09: Task 8 fix (R-AUD-17): the capture clock offset is
 //               re-measured in every callback. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: marks the process's first native audio call
+//               (NativeAudioFirstCall), for the persistent capture helper's
+//               timing.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/audio/CoreAudioInputStream.h"
@@ -19,6 +23,7 @@
 #include "core/audio/CoreAudioHalProperties.h"
 #include "core/audio/CoreAudioOutputBus.h"
 #include "core/audio/DeviceSampleFormat.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QtGlobal>
 
@@ -175,6 +180,7 @@ struct CoreAudioInputStream::Impl {
         description.componentType = kAudioUnitType_Output;
         description.componentSubType = kAudioUnitSubType_HALOutput;
         description.componentManufacturer = kAudioUnitManufacturer_Apple;
+        markNativeAudioCall("Core Audio input open");
         AudioComponent component = AudioComponentFindNext(nullptr, &description);
         if (component == nullptr) {
             return fail(QStringLiteral("The system audio input unit is missing"), noErr);

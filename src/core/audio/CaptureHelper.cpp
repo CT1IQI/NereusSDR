@@ -47,8 +47,9 @@
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: process/generation tags and debug command timestamps.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-16: protocol version 5's Warm is not a command here yet.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: Warm lists the default engine's devices with no microphone
+//               open and answers Warmed (the persistent helper).  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -284,7 +285,7 @@ struct CommandQueue {
 
 // Parses one parent record.  Anything but a valid Configure / AttachRing /
 // Open / Stop / Shutdown / ProbeEnable / AsioDescribe / AsioOpen /
-// AsioControlPanel is a protocol error.
+// AsioControlPanel / Warm is a protocol error.
 std::optional<ParentCommand> parseCommand(const P::Record& record)
 {
     ParentCommand command;
@@ -347,6 +348,7 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
         return command;
     }
     case P::RecordType::AsioControlPanel:
+    case P::RecordType::Warm:
         if (record.payload.trimmed() != QByteArrayLiteral("{}")) {
             return std::nullopt;
         }
@@ -358,7 +360,6 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
     case P::RecordType::RingAttached:
     case P::RecordType::AsioCaps:
     case P::RecordType::AsioState:
-    case P::RecordType::Warm:
     case P::RecordType::Warmed:
         break;
     }
@@ -654,6 +655,9 @@ private:
                 qCInfo(lcAudio) << "capture helper: no ASIO session for the control panel";
             }
             break;
+        case P::RecordType::Warm:
+            warm();
+            break;
         default:
             break;
         }
@@ -758,7 +762,39 @@ private:
         }
     }
 
-    IAudioEngineBackend* backendFor(AudioEngineKind engine)
+    // 2026-10-16: the persistent helper's warm-up.  Its first engine call
+    // and device list happen now, before the window makes its own first
+    // call, and no microphone opens.  A test run lists nothing.
+    void warm()
+    {
+        P::Warmed warmed;
+        warmed.startNs = audioProbeNowNs();
+        if (PortAudioBus::portAudioBarredForTestRun() || audioDevicesBarredForTestRun()) {
+            warmed.listedNs = warmed.startNs;
+            write(P::encodeWarmed(warmed));
+            return;
+        }
+        makeBackends();
+        const AudioEngineKind engine = defaultAudioEngine(m_backends);
+        // The older drivers would start PortAudio; only a native engine lists.
+        IAudioEngineBackend* backend =
+            engine == AudioEngineKind::PortAudio ? nullptr : backendFor(engine);
+        if (backend != nullptr && backend->running()) {
+            int inputs = 0;
+            for (const AudioDeviceInfo& info : backend->enumerate()) {
+                if (info.direction == AudioDeviceDirection::Input) {
+                    ++inputs;
+                }
+            }
+            warmed.inputs = std::min(inputs, P::kMaxWarmedInputs);
+        }
+        warmed.listedNs = std::max(audioProbeNowNs(), warmed.startNs);
+        qCInfo(lcAudio) << "capture helper: warmed with" << warmed.inputs << "inputs on"
+                        << audioEngineLabel(engine);
+        write(P::encodeWarmed(warmed));
+    }
+
+    void makeBackends()
     {
         if (!m_backendsMade) {
             AudioBackendContext context;
@@ -766,6 +802,11 @@ private:
             m_backends = makeSystemAudioBackends(context);
             m_backendsMade = true;
         }
+    }
+
+    IAudioEngineBackend* backendFor(AudioEngineKind engine)
+    {
+        makeBackends();
         const AudioBackendId id = audioBackendFor(engine);
         for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
             if (backend && backend->id() == id) {

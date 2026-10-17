@@ -301,8 +301,9 @@
 //               bus's clock matcher (MatcherPacketTiming), where it said
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-16: setSharedCaptureSupervisor() declared (the persistent
-//               helper's interface); engines do not use it yet.
+//   2026-10-16: setSharedCaptureSupervisor(): on the Mac every engine
+//               uses the application's capture supervisor and its
+//               standing helper (CaptureStandby) instead of its own.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
@@ -1677,6 +1678,9 @@ private:
     // R-R3-36: (re)creates m_captureSupervisor from options, forwards its
     // status and applies m_txInputConfig. Never opens capture by itself.
     void installCaptureSupervisor(CaptureSupervisor::Options options);
+    // 2026-10-16: makes supervisor this engine's (its own or the shared
+    // one): the signal links, a held ASIO demand and m_txInputConfig.
+    void attachCaptureSupervisor(CaptureSupervisor* supervisor);
     static QPointer<CaptureSupervisor>& sharedCaptureSupervisor();
 
     // ── Native audio plan Task 7: the device layer ──────────────────────
@@ -1773,8 +1777,12 @@ private:
     // the capture helper. Created in the constructor; lives until the
     // engine is destroyed, so its reader pointer stays valid for the TX
     // worker across start()/stop().
+    // 2026-10-16: m_captureSupervisor is the engine's own
+    // (m_ownedCaptureSupervisor) or the application's shared one, which
+    // outlives the engine.
     AudioDeviceConfig m_txInputConfig;
-    std::unique_ptr<CaptureSupervisor> m_captureSupervisor;
+    std::unique_ptr<CaptureSupervisor> m_ownedCaptureSupervisor;
+    QPointer<CaptureSupervisor> m_captureSupervisor;
 
     // Native audio plan Task 7: the device layer (main thread).  The
     // supervisor refers to the catalogue and to this engine, so it is

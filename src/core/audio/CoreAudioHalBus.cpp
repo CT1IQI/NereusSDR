@@ -33,12 +33,17 @@
 //                 on a dispatch queue of their own, instead of walking every
 //                 device on each call. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-16: the reader watch marks the process's first native audio
+//                 call (NativeAudioFirstCall), for the persistent capture
+//                 helper's timing. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "CoreAudioHalBus.h"
 
 #include "core/LogCategories.h"
 #include "core/PerfMonitor.h"
+#include "core/audio/NativeAudioFirstCall.h"
 
 #include <QLoggingCategory>
 
@@ -173,6 +178,7 @@ struct CoreAudioHalBus::ReaderWatch {
         runningListener = Block_copy(^(UInt32, const AudioObjectPropertyAddress*) {
             self->readRunning();
         });
+        markNativeAudioCall("VAX device watch");
         AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &kDevicesAddress,
                                             queue, devicesListener);
         // The first answer before open() returns, so a caller asking right

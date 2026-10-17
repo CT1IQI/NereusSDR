@@ -364,9 +364,11 @@
 //               packet's timing (MatcherPacketTiming), where it passed
 //               only whether the packet had waited for room (R-AUD-15).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-16: setSharedCaptureSupervisor() stores the supervisor (the
-//               persistent helper's interface); engines do not use it yet.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: an engine uses the application's shared capture
+//               supervisor when one is set (setSharedCaptureSupervisor(),
+//               the Mac's standing helper) and leaves it running when it
+//               goes.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -660,7 +662,18 @@ AudioEngine::AudioEngine(QObject* parent)
     // (application-less unit tests) has no capture input, exactly like an
     // engine whose capture never became Ready.
     if (QCoreApplication::instance() != nullptr) {
-        installCaptureSupervisor({});
+        // 2026-10-16: on the Mac the application's standing helper serves
+        // every engine (CaptureStandby); a failure the last window saw is
+        // not this one's, as a supervisor of its own would start Closed.
+        if (CaptureSupervisor* const shared = sharedCaptureSupervisor().data()) {
+            attachCaptureSupervisor(shared);
+            if (shared->status().state == CaptureSupervisor::Status::State::Failed
+                && !shared->hasDemand()) {
+                shared->retry();
+            }
+        } else {
+            installCaptureSupervisor({});
+        }
     }
 
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
@@ -684,8 +697,16 @@ AudioEngine::~AudioEngine()
     }
     m_asioLease.release();
     // Bounded (stop deadline plus slack); kills a helper that ignores Stop.
-    if (m_captureSupervisor) {
-        m_captureSupervisor->shutdown();
+    if (m_ownedCaptureSupervisor) {
+        m_ownedCaptureSupervisor->shutdown();
+    } else if (m_captureSupervisor) {
+        // 2026-10-16: the shared supervisor and its helper stay for the
+        // next engine; only this engine's uses of it end.
+        if (m_delayProbeEnabled.load(std::memory_order_acquire)) {
+            m_captureSupervisor->setProbeEnabled(false);
+        }
+        m_delayProbeLease.release();
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
     }
     // Pa_Terminate when this was the last engine and PortAudio was started.
     PortAudioLibrary::removeUser();
@@ -1509,8 +1530,29 @@ void AudioEngine::ensureSpeakersOpen()
 void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
 {
     m_asioLease.release();
-    m_captureSupervisor.reset();
-    m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    if (m_captureSupervisor) {
+        disconnect(m_captureSupervisor, nullptr, this, nullptr);
+    }
+    m_captureSupervisor.clear();
+    m_ownedCaptureSupervisor.reset();
+    m_ownedCaptureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    attachCaptureSupervisor(m_ownedCaptureSupervisor.get());
+}
+
+QPointer<CaptureSupervisor>& AudioEngine::sharedCaptureSupervisor()
+{
+    static QPointer<CaptureSupervisor> shared;
+    return shared;
+}
+
+void AudioEngine::setSharedCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    sharedCaptureSupervisor() = supervisor;
+}
+
+void AudioEngine::attachCaptureSupervisor(CaptureSupervisor* supervisor)
+{
+    m_captureSupervisor = supervisor;
     // Task 15: the helper's ASIO answers go to the ASIO backend; a held
     // ASIO demand moves to the new supervisor.
     connect(m_captureSupervisor.get(), &CaptureSupervisor::asioCaps, this,
@@ -1538,17 +1580,6 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
     connect(m_captureSupervisor.get(), &CaptureSupervisor::probeHit,
             this, [this](qint64 captureNs) { onDelayProbeHit(captureNs); });
     m_captureSupervisor->configure(m_txInputConfig);
-}
-
-QPointer<CaptureSupervisor>& AudioEngine::sharedCaptureSupervisor()
-{
-    static QPointer<CaptureSupervisor> shared;
-    return shared;
-}
-
-void AudioEngine::setSharedCaptureSupervisor(CaptureSupervisor* supervisor)
-{
-    sharedCaptureSupervisor() = supervisor;
 }
 
 std::atomic<bool>& AudioEngine::delayProbeRequestedAtStart()
