@@ -630,6 +630,9 @@ Advanced, and each control appears on one page only.
   monitor, streams for programs on this computer and pan displays. Before, the
   receive audio could stay silent until you muted and unmuted, and a display
   being set up could stall.
+- In a remote window, a pan whose span the Core narrowed no longer asks for a
+  larger FFT as if you had zoomed in. It sizes the FFT from the span it asked
+  for, the same span it sends.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
 - On Linux, a window closed while maximized or full screen comes back with
