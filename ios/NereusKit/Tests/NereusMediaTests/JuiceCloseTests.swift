@@ -64,6 +64,18 @@ struct JuiceCloseTests {
         }
     }
 
+    /// True once the agent itself has read its Allocate success: libjuice
+    /// adds the relay candidate as it stores the relayed address. The fake
+    /// counts the allocation as created when it sends that success, so its
+    /// count alone can run ahead of the agent. A close begun in between
+    /// waits on a pending Allocate and sends one more release when the
+    /// success lands (see lateAllocateGetsOneFreshRelease).
+    private func hasRelayCandidate(_ agent: OpaquePointer) -> Bool {
+        var buffer = [CChar](repeating: 0, count: Int(JUICE_MAX_SDP_STRING_LEN))
+        guard juice_get_local_description(agent, &buffer, buffer.count) == 0 else { return false }
+        return String(cString: buffer).contains(" typ relay")
+    }
+
     @Test("no relay completes close without a retry window")
     func noRelayNeedsNoWait() throws {
         var config = juice_config_t()
@@ -139,6 +151,43 @@ struct JuiceCloseTests {
         #expect(turn.allocationCount("live") == 0)
     }
 
+    @Test("a late Allocate success during close gets one fresh release")
+    func lateAllocateGetsOneFreshRelease() async throws {
+        let directory = try LocalRendezvous.scratch()
+        defer { LocalRendezvous.remove(directory) }
+        let hold = directory.appendingPathComponent("allocate-success")
+        let turn = try await LocalRendezvous.TurnFake(
+            in: directory, options: ["--drop-all-release-requests",
+                                     "--hold-allocate-success-file", hold.path])
+        defer { turn.stop() }
+        let agent = try #require(self.agent(turn: turn, user: "late"))
+        defer { juice_destroy(agent) }
+        #expect(juice_gather_candidates(agent) == 0)
+        // The fake has created the allocation; the agent has not heard so.
+        try await LocalRendezvous.waitUntil("the held Allocate success", within: TestBackstop.hang,
+                                            whileAlive: { turn.exitDiagnostic }) {
+            turn.saw("HELD_ALLOCATE ")
+        }
+        #expect(turn.allocationCount("created") == 1)
+        #expect(!hasRelayCandidate(agent))
+        // Begin close sends the first release before it returns. The held
+        // success goes at once, so it has as much of the close deadline as
+        // possible to reach the agent: one that lands after it is dropped.
+        #expect(juice_begin_close(agent) == 0)
+        #expect(FileManager.default.createFile(atPath: hold.path, contents: Data()))
+        try await LocalRendezvous.waitUntil("the close deadline", within: .seconds(8),
+                                            whileAlive: { turn.exitDiagnostic }) {
+            juice_close_status(agent) == JUICE_CLOSE_EXPIRED
+        }
+        // The four scheduled sends, and one fresh transaction for the
+        // allocation the late success made known.
+        let transactions = turn.releaseTransactions
+        #expect(transactions.count == 5)
+        #expect(Set(transactions).count == 2)
+        #expect(turn.saw("SENT_HELD_ALLOCATE "))
+        #expect(turn.allocationCount("live") == 1)
+    }
+
     @Test("total loss expires at the bounded deadline while another poll agent gathers")
     func totalLossLeavesAnotherAgentResponsive() async throws {
         let directory = try LocalRendezvous.scratch()
@@ -157,6 +206,9 @@ struct JuiceCloseTests {
         #expect(juice_gather_candidates(firstAgent) == 0)
         try await LocalRendezvous.waitUntil("the first allocation", within: .seconds(20)) {
             turn.allocationCount("created") == 1
+        }
+        try await LocalRendezvous.waitUntil("the first agent's relay", within: .seconds(5)) {
+            hasRelayCandidate(firstAgent)
         }
         let started = ContinuousClock.now
         #expect(juice_begin_close(firstAgent) == 0)
@@ -222,6 +274,10 @@ struct JuiceCloseTests {
         try await LocalRendezvous.waitUntil("allocation before resolver release", within: .seconds(5),
                                             whileAlive: { turn.exitDiagnostic }) {
             turn.allocationCount("created") == 1
+        }
+        try await LocalRendezvous.waitUntil("the agent's relay before resolver release", within: .seconds(5),
+                                            whileAlive: { turn.exitDiagnostic }) {
+            hasRelayCandidate(agent)
         }
         let closeStarted = ContinuousClock.now
         #expect(juice_begin_close(agent) == 0)

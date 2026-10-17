@@ -10,6 +10,9 @@
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 37 (R-IOS-13), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-16: Device ids are logged in hex, as the other transmit
+//                 logs do; they are binary and printed as raw bytes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/StarvationPolicy.h"
@@ -58,7 +61,7 @@ bool StarvationPolicy::onStarved(const QByteArray& deviceId, bool starved)
         return false;
     }
     if (m_hooks.microphoneUnused && m_hooks.microphoneUnused()) {
-        qCInfo(lcDsp) << "Microphone line from" << deviceId
+        qCInfo(lcDsp) << "Microphone line from" << deviceId.toHex().constData()
                       << "starved during TUNE or two-tone; they use no microphone";
         return false;
     }
@@ -67,14 +70,14 @@ bool StarvationPolicy::onStarved(const QByteArray& deviceId, bool starved)
     // No transmit mode known: the safe answer, as for an unknown mode.
     const StarvationAction action = mode ? actionFor(*mode) : StarvationAction::Unkey;
     if (action == StarvationAction::KeepKeyed) {
-        qCInfo(lcDsp) << "Microphone line from" << deviceId
+        qCInfo(lcDsp) << "Microphone line from" << deviceId.toHex().constData()
                       << "starved; staying keyed (silence puts no carrier on the air in mode"
                       << static_cast<int>(*mode) << ")";
         return false;
     }
     const QString name = m_hooks.deviceName ? m_hooks.deviceName(deviceId) : QString();
     const QString message = stopMessage(name.isEmpty() ? QStringLiteral("a device") : name);
-    qCWarning(lcDsp).noquote() << "Microphone line from" << QString::fromLatin1(deviceId)
+    qCWarning(lcDsp).noquote() << "Microphone line from" << deviceId.toHex().constData()
                                << "starved -" << message;
     if (m_hooks.stopAllTx) {
         m_hooks.stopAllTx(message);

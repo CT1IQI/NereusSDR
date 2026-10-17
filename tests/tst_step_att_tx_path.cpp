@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434 follow-up: a save or a band change (RX1 or
+//                 RX2) while keyed keeps each band's RX S-ATT and preamp.
+//                 NereusSDR-original tests; no new Thetis logic.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16 — Issue #434: a key again before the unkey's hardware flip
 //                 keeps the saved RX S-ATT and HPSDR preamp mode.
 //                 NereusSDR-original tests; no new Thetis logic.
@@ -1023,6 +1027,119 @@ private slots:
         QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/preamp/rx1Band/")
                                       + bandKeyName(Band::Band20m)).toInt(),
                  static_cast<int>(PreampMode::On));
+    }
+
+    // Issue #434 follow-up: a band change while keyed keeps the band left's
+    // RX S-ATT (the key saved it; the TX value stands in its place) and
+    // restores the band entered's at the unkey.  The readout stays on the
+    // TX value while keyed.
+    void bandChangeWhileKeyed_keepsEachBandsRxAttenuation()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:00:04:37");
+        auto& s = AppSettings::instance();
+        s.clearHardwareValues(mac);
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.loadSettings(mac);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setForceAttWhenPsOff(true);
+        ctrl.setPsActive(false);
+        ctrl.setCurrentDspMode(DSPMode::USB);
+        ctrl.setAttenuation(5, 0);
+        ctrl.setBand(Band::Band40m);
+        ctrl.setAttenuation(9, 0);
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.attenuatorDb(), 5);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.attenuatorDb(), 31);
+        ctrl.setBand(Band::Band40m);
+        QCOMPARE(ctrl.attenuatorDb(), 31);   // still the TX value
+
+        ctrl.saveSettings(mac);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Band/")
+                                      + bandKeyName(Band::Band20m)).toInt(), 5);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Band/")
+                                      + bandKeyName(Band::Band40m)).toInt(), 9);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/stepAtt/rx1Value")).toInt(), 9);
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.attenuatorDb(), 9);    // the band entered's RX value
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.attenuatorDb(), 5);
+        ctrl.setBand(Band::Band40m);
+        QCOMPARE(ctrl.attenuatorDb(), 9);
+    }
+
+    // The same on the HPSDR, whose key forces the preamp Off.
+    void bandChangeWhileKeyed_hpsdrKeepsEachBandsRxPreamp()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:00:04:38");
+        auto& s = AppSettings::instance();
+        s.clearHardwareValues(mac);
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBand(Band::Band20m);
+        ctrl.loadSettings(mac);
+        ctrl.setIsHpsdrBoard(true);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setPreampMode(PreampMode::On);
+        ctrl.setBand(Band::Band40m);
+        ctrl.setPreampMode(PreampMode::Minus20);
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.preampMode(), PreampMode::On);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Off);
+        ctrl.setBand(Band::Band40m);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Off);   // still forced Off
+
+        ctrl.saveSettings(mac);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/preamp/rx1Band/")
+                                      + bandKeyName(Band::Band20m)).toInt(),
+                 static_cast<int>(PreampMode::On));
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("options/preamp/rx1Band/")
+                                      + bandKeyName(Band::Band40m)).toInt(),
+                 static_cast<int>(PreampMode::Minus20));
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Minus20);
+        ctrl.setBand(Band::Band20m);
+        QCOMPARE(ctrl.preampMode(), PreampMode::On);
+    }
+
+    // RX2's band memory on a board whose key forces RX2's preamp Off too.
+    // No real radio is both (the HPSDR has no RX2 preamp, as in Thetis);
+    // this holds the controller to the rule if one ever is.
+    void rx2BandChangeWhileKeyed_keepsEachBandsRxPreamp()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:00:04:39");
+        AppSettings::instance().clearHardwareValues(mac);
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setBoardIdentity(HPSDRHW::Saturn, HPSDRModel::ANAN_G2, true);
+        ctrl.setIsHpsdrBoard(true);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.loadSettings(mac);
+        ctrl.setAdcRouting(0, 1, Band::Band20m, false);
+        ctrl.setRx2PreampMode(PreampMode::On);
+        ctrl.setAdcRouting(0, 1, Band::Band40m, false);
+        ctrl.setRx2PreampMode(PreampMode::Minus20);
+        ctrl.setAdcRouting(0, 1, Band::Band20m, false);
+        QCOMPARE(ctrl.rx2PreampMode(), PreampMode::On);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.rx2PreampMode(), PreampMode::Off);
+        ctrl.setAdcRouting(0, 1, Band::Band40m, false);
+        QCOMPARE(ctrl.rx2PreampMode(), PreampMode::Off);
+        QCOMPARE(ctrl.savedRx2PreampModeForTest(), PreampMode::Minus20);
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.rx2PreampMode(), PreampMode::Minus20);
+        ctrl.setAdcRouting(0, 1, Band::Band20m, false);
+        QCOMPARE(ctrl.rx2PreampMode(), PreampMode::On);
     }
 
     // HPSDR boards save the RX preamp mode at the key instead; a second key

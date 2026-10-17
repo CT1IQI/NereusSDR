@@ -1053,21 +1053,23 @@ void TestGuiConnectionController::codeOnlyDialogPairsThroughMailboxAndOpensRemot
         QString why;
         QVERIFY2(waitForHandshake(*client, kServiceConnectBudgetMs, &why), qPrintable(why));
     }
-    core.server->devicesFacade()->setCoreAddresses(QString::fromUtf8("{\"addresses\":[]}"));
-    QTRY_COMPARE(client->remoteDevices()->coreInfo().coreAddresses, QString::fromUtf8("{\"addresses\":[]}"));
-    CoreTargetStore retainedAddresses(AppSettings::instance());
-    QVERIFY(retainedAddresses.load());
-    QCOMPARE(retainedAddresses.target(selected.savedId)->connection.coreAddresses, learned.target(selected.savedId)->connection.coreAddresses);
+    // A malformed list keeps the saved Core addresses; an explicit empty
+    // list clears them.
     core.server->devicesFacade()->setCoreAddresses(QStringLiteral("malformed"));
     QTRY_COMPARE(client->remoteDevices()->coreInfo().coreAddresses, QStringLiteral("malformed"));
     CoreTargetStore malformed(AppSettings::instance());
     QVERIFY(malformed.load());
     QCOMPARE(malformed.target(selected.savedId)->connection.coreAddresses, learned.target(selected.savedId)->connection.coreAddresses);
+    core.server->devicesFacade()->setCoreAddresses(QString::fromUtf8("{\"addresses\":[]}"));
+    QTRY_COMPARE(client->remoteDevices()->coreInfo().coreAddresses, QString::fromUtf8("{\"addresses\":[]}"));
+    CoreTargetStore clearedAddresses(AppSettings::instance());
+    QVERIFY(clearedAddresses.load());
+    QVERIFY(clearedAddresses.target(selected.savedId)->connection.coreAddresses.isEmpty());
     // Keep later service-only reconnect fixture local: no dialing advertised
     // documentation endpoints. Real list/race composition tested separately.
-    SavedCoreTarget reset = *retainedAddresses.target(selected.savedId);
+    SavedCoreTarget reset = *clearedAddresses.target(selected.savedId);
     reset.connection.coreAddresses.clear();
-    QVERIFY(retainedAddresses.upsert(reset));
+    QVERIFY(clearedAddresses.upsert(reset));
     controller.shutdown();
     QTRY_VERIFY_WITH_TIMEOUT(!core.server->hasAuthenticatedSession(), 10000);
 
