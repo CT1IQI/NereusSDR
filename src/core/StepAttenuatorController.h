@@ -933,6 +933,9 @@ private:
     int m_rx2AttDb{0};
     // A routing or band change while keyed, sent on the fall.
     bool m_adcSendsHeldForMox{false};
+    // Issue #434 follow-up: RX1's band restore while keyed (with
+    // setBandRestoreToRadio), sent on the fall.
+    bool m_bandRestoreHeldForMox{false};
     // Thetis rx2_step_attenuator_by_band: the other ADC's band memory.
     std::unordered_map<int, int> m_rx2BandAttDb;
     // What each receive ADC holds: in use, and its attenuation.
@@ -1016,6 +1019,13 @@ private:
     bool rx2PreampPresent() const noexcept;
     // Send RX2's mode drive (the RX2PreampMode setter's sends).
     void applyRx2PreampDrive();
+    // Issue #434 follow-up: while keyed, the RX values the hardware key
+    // saved stand in for the live ones it replaced with TX values, until
+    // the unkey puts them back.  True when the saved RX1 attenuation (a
+    // standard board) or the saved preamp modes (the HPSDR, which the
+    // unkey restores only with ATT on TX on) are the RX ones.
+    bool rxAttHeldForTx() const noexcept;
+    bool rxPreampHeldForTx() const noexcept;
 
     // --- Helpers ---
     void applyClassicAutoAtt(int adc);

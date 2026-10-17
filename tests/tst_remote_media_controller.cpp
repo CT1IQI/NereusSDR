@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF  A display allocation pending across
+//                                    a media move is asked again on the
+//                                    new connection; a lost re-ask still
+//                                    times out and releases. AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF  The rest entry ran past ctest's 300 s
 //                                    on the Linux CI runner (no hang: every
 //                                    wait is bounded). The display rows
@@ -6002,17 +6007,23 @@ private slots:
     void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth_data()
     {
         QTest::addColumn<bool>("removePan");
-        QTest::newRow("slice-rebind") << false;
-        QTest::newRow("pan-removal") << true;
+        QTest::addColumn<bool>("reaskLost");
+        QTest::newRow("slice-rebind") << false << false;
+        QTest::newRow("pan-removal") << true << false;
+        // The re-ask's answer is lost too: the acknowledgement timeout
+        // still releases the closed display.
+        QTest::newRow("re-ask-lost") << false << true;
     }
 
     void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth()
     {
         QFETCH(bool, removePan);
+        QFETCH(bool, reaskLost);
         // A genuine accepted result is held on the old media connection,
         // then delivered after both production controllers promote a peer.
-        // Closing that endpoint must eventually release its reservation;
-        // it cannot leave the surviving pan behind a permanent pending gate.
+        // The window asks again on the new connection (2026-10-16), so
+        // closing that endpoint releases its reservation at once; it cannot
+        // leave the surviving pan behind a permanent pending gate.
         AppSettings& appSettings = AppSettings::instance();
         const QString fpsKey = QStringLiteral("DisplaySpectrumFps");
         const bool hadFps = appSettings.contains(fpsKey);
@@ -6104,14 +6115,34 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(controller.mediaConnectionId() != oldConnection
                                 && !controller.replacingConnection(),
                                 DaemonMediaController::kReplaceOverlapMs + 3000);
-        // No identities or result fields are manufactured: this is the
+        // 2026-10-16: the window asks again at once on the promoted
+        // connection, with a newer revision: the Core's answer to the first
+        // ask comes on the old connection and is fenced out.
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+        const QJsonObject again = lastControl(outbound, QStringLiteral("subscribe"));
+        QCOMPARE(again.value(QStringLiteral("connectionId")).toString(),
+                 controller.mediaConnectionId());
+        QCOMPARE(quint32(again.value(QStringLiteral("endpointId")).toDouble()), retiredEndpoint);
+        QCOMPARE(quint32(again.value(QStringLiteral("revision")).toDouble()), pendingRevision + 1);
+        QTRY_COMPARE(stationLink->held.size(), 2);
+        // No identities or result fields are manufactured: the first is the
         // original Core reply, now fenced out by the promoted connection.
+        if (reaskLost) { stationLink->held.removeLast(); }
         stationLink->releaseHeld();
-        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 2);
-        const QJsonObject oldResult = lastControl(inbound, QStringLiteral("allocation-result"));
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")),
+                     reaskLost ? 2 : 3);
+        const QJsonObject oldResult =
+            controlsFor(inbound, QStringLiteral("allocation-result")).at(1);
         QCOMPARE(oldResult.value(QStringLiteral("connectionId")).toString(), oldConnection);
         QCOMPARE(quint32(oldResult.value(QStringLiteral("revision")).toDouble()), pendingRevision);
-        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        if (!reaskLost) {
+            const QJsonObject againResult =
+                lastControl(inbound, QStringLiteral("allocation-result"));
+            QCOMPARE(againResult.value(QStringLiteral("connectionId")).toString(),
+                     controller.mediaConnectionId());
+            QCOMPARE(quint32(againResult.value(QStringLiteral("revision")).toDouble()),
+                     pendingRevision + 1);
+        }
 
         QPointer<SpectrumWidget> retiredWidget(widget);
         if (removePan) {
@@ -6129,28 +6160,30 @@ private slots:
         }
         QVERIFY(subscriptionTimer);
         QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
-        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
-        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
-        QVERIFY(widget->renderedPixels().isEmpty());
-
-        nowMs = 10'000;
-        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        if (reaskLost) {
+            // Still waiting on the lost re-ask: nothing is released or grown
+            // until its acknowledgement times out.
+            QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+            QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+            QVERIFY(widget->renderedPixels().isEmpty());
+            nowMs = 10'000;
+            QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout",
+                                              Qt::DirectConnection));
+        }
+        // The answered endpoint is released at once; no pending gate is left.
         QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
         const QJsonObject release = lastControl(outbound, QStringLiteral("unsubscribe"));
         QCOMPARE(release.value(QStringLiteral("connectionId")).toString(), controller.mediaConnectionId());
         QCOMPARE(quint32(release.value(QStringLiteral("endpointId")).toDouble()), retiredEndpoint);
-        QCOMPARE(quint32(release.value(QStringLiteral("revision")).toDouble()), pendingRevision + 1);
+        QCOMPARE(quint32(release.value(QStringLiteral("revision")).toDouble()), pendingRevision + 2);
         QTRY_COMPARE(stationLink->held.size(), 1);
         QTRY_COMPARE(daemon.activeEndpointCount(), 0);
-        // Until the authoritative release result arrives, the old larger
-        // reservation is uncertain. No survivor growth may pass that gate.
-        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
-        nowMs = 20'000;
-        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
-        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
-        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        // Until the authoritative release result arrives, the larger
+        // reservation stands. No survivor growth may pass that gate.
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+        QVERIFY(widget->renderedPixels().isEmpty());
         stationLink->releaseHeld();
-        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 4);
         const QJsonObject survivor = lastControl(outbound, QStringLiteral("subscribe"));
         QVERIFY(survivor.value(QStringLiteral("endpointId")) != original.value(QStringLiteral("endpointId")));
         QCOMPARE(survivor.value(QStringLiteral("sliceId")).toInt(), survivorId);
@@ -6163,7 +6196,8 @@ private slots:
         // the new binding, even after its own reservation was confirmed.
         stationLink->passNextAllocationResult();
         QVERIFY(server.sendMediaControl(oldResult, server.mediaSessionEpoch()));
-        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 5);
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")),
+                     reaskLost ? 5 : 6);
         QCOMPARE(controller.activeEndpointCount(), 1);
         QCOMPARE(daemon.activeEndpointCount(), 1);
 
@@ -8094,14 +8128,29 @@ private slots:
 
         // 2. A receive frame waiting for its time when the pan keys.
         framesBefore = int(frames.count());
-        const quint64 rowsAtKey = widget->remoteRowsPushedForTest();
-        media->deliver(encoder.encode(frameAt(1, 17, coreNow(), -90.0f)));
+        const quint64 fillsBeforeDelivery = filledRows();
+        media->deliver(encoder.encode(frameAt(1, 17, coreNow() + 3 * kPeriodNs, -90.0f)));
         QCOMPARE(int(frames.count()), framesBefore);
+        QTRY_VERIFY_WITH_TIMEOUT(widget->remoteRowQueueDepthForTest() > 0, 2000);
+        QCOMPARE(int(frames.count()), framesBefore);
+        qInfo("receive key boundary: pushed=%llu queued=%d fillsBefore=%llu fillsAfter=%llu",
+              static_cast<unsigned long long>(widget->remoteRowsPushedForTest()),
+              widget->remoteRowQueueDepthForTest(),
+              static_cast<unsigned long long>(fillsBeforeDelivery),
+              static_cast<unsigned long long>(filledRows()));
+        QVERIFY(filledRows() > fillsBeforeDelivery);
+        // The presenter has handed out a due blend before the key. Drain
+        // that receive row before measuring the actual key boundary; the
+        // future real frame and further fills must stay suppressed after it.
+        drainRows();
+        const quint64 rowsAtKey = widget->remoteRowsPushedForTest();
+        const quint64 fillsAtKey = filledRows();
         controller.setPanTransmitting(panId, true, false);
         QTest::qWait(400);
         drainRows();
         QCOMPARE(int(frames.count()), framesBefore);
         QCOMPARE(widget->remoteRowsPushedForTest(), rowsAtKey);
+        QCOMPARE(filledRows(), fillsAtKey);
         controller.setPanTransmitting(panId, false, false);
 
         // 4 and 1. A receive frame waits; the Core's transmit context then
@@ -10518,16 +10567,31 @@ private slots:
         QTest::addColumn<int>("minor");
         QTest::addColumn<bool>("shared");
         QTest::addColumn<int>("leave");
+        QTest::addColumn<QString>("sizingMode");
+        QTest::addColumn<double>("cropSpanHz");
+        QTest::addColumn<bool>("normalize");
         const int grant = int(kRemoteSpectrumGrantSessionProtocolMinor);
-        QTest::newRow("minor 9 crop past the source edge") << grant << false << kStays;
-        QTest::newRow("minor 9 shared engine") << grant << true << kStays;
-        QTest::newRow("minor 8 crop past the source edge") << grant - 1 << false << kStays;
-        QTest::newRow("minor 8 shared engine") << grant - 1 << true << kStays;
+        QTest::newRow("minor 9 crop past the source edge") << grant << false << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 9 shared engine") << grant << true << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 8 crop past the source edge") << grant - 1 << false << kStays << QStringLiteral("Auto") << 48000.0 << false;
+        QTest::newRow("minor 8 shared engine") << grant - 1 << true << kStays << QStringLiteral("Auto") << 48000.0 << false;
         // R-R3-01, R-R3-08, R-R3-37: the pan that sized the engine leaves.
         QTest::newRow("minor 9 shared engine, first pan leaves")
-            << grant << true << kLeaves;
+            << grant << true << kLeaves << QStringLiteral("Auto") << 48000.0 << false;
         QTest::newRow("minor 9 shared engine, first pan leaves, Core refuses more")
-            << grant << true << kLeavesCoreRefuses;
+            << grant << true << kLeavesCoreRefuses << QStringLiteral("Auto") << 48000.0 << false;
+        for (int minor : {grant, grant - 1}) {
+            const QByteArray name = QStringLiteral("minor %1 normalized full-span source edge")
+                .arg(minor).toUtf8();
+            QTest::newRow(name.constData()) << minor << false << kStays
+                << QStringLiteral("Auto") << 192000.0 << true;
+        }
+        for (const QString& mode : {QStringLiteral("Fixed"), QStringLiteral("HzPerBin")}) {
+            for (int minor : {grant, grant - 1}) {
+                const QByteArray name = QStringLiteral("minor %1 source edge %2").arg(minor).arg(mode).toUtf8();
+                QTest::newRow(name.constData()) << minor << false << kStays << mode << 48000.0 << false;
+            }
+        }
     }
 
     void budgetModePaintsWhenCoreGrantsFewerPixels()
@@ -10535,16 +10599,33 @@ private slots:
         QFETCH(int, minor);
         QFETCH(bool, shared);
         QFETCH(int, leave);
+        QFETCH(QString, sizingMode);
+        constexpr int kSourceSampleRateHz = 192000;
+        QFETCH(double, cropSpanHz);
+        QFETCH(bool, normalize);
+        constexpr double kCropOverlapHz = 1000.0;
         const bool grantAgreed = minor >= kRemoteSpectrumGrantSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         auto& appSettings = AppSettings::instance();
         const bool hadFft = appSettings.contains(QStringLiteral("DisplayFftSize"));
         const QVariant savedFft = appSettings.value(QStringLiteral("DisplayFftSize"));
+        const QString modeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const QString targetKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        const bool hadMode = appSettings.contains(modeKey);
+        const QVariant savedMode = appSettings.value(modeKey);
+        const bool hadTarget = appSettings.contains(targetKey);
+        const QVariant savedTarget = appSettings.value(targetKey);
         appSettings.setValue(QStringLiteral("DisplayFftSize"), QStringLiteral("4096"));
+        appSettings.setValue(modeKey, sizingMode);
+        appSettings.setValue(targetKey, QStringLiteral("8"));
         const auto restoreFft = qScopeGuard([&] {
             if (hadFft) { appSettings.setValue(QStringLiteral("DisplayFftSize"), savedFft); }
             else { appSettings.remove(QStringLiteral("DisplayFftSize")); }
+            if (hadMode) { appSettings.setValue(modeKey, savedMode); }
+            else { appSettings.remove(modeKey); }
+            if (hadTarget) { appSettings.setValue(targetKey, savedTarget); }
+            else { appSettings.remove(targetKey); }
         });
         RadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
@@ -10614,19 +10695,33 @@ private slots:
         if (shared) {
             first->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 96000);
         } else {
-            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre + 116000, 48000);
+            const double edgeCentreHz = centre + double(kSourceSampleRateHz) * 0.5
+                + cropSpanHz * 0.5 - kCropOverlapHz;
+            first->spectrumWidget()->setDisplayWindowPreservingHistory(edgeCentreHz,
+                                                                        cropSpanHz);
         }
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
         // The pan fills its stack, so it asks for the stack's width.
         QTRY_COMPARE(first->spectrumWidget()->width(), stack.width());
+        first->spectrumWidget()->setDispNormalize(normalize);
+        if (normalize) {
+            first->spectrumWidget()->setSpectrumDetector(SpectrumDetector::Average);
+            first->spectrumWidget()->setDbmRange(-140.0f, 0.0f);
+            first->spectrumWidget()->setWfAgcEnabled(false);
+            first->spectrumWidget()->setWfUseSpectrumMinMax(false);
+            first->spectrumWidget()->setClarityActive(false);
+            first->spectrumWidget()->setWfLowThreshold(-140.0f);
+            first->spectrumWidget()->setWfHighThreshold(-70.0f);
+        }
+        qint64 plannerNow = 1000;
         QPointer<DisplayTransport> sinkMedia;
         RemoteMediaController gui(&client, &remote, &stack, nullptr,
             [&sinkMedia](QObject* owner) -> IMediaTransport* {
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
-            });
+            }, [&plannerNow] { return plannerNow; });
         QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
         QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
         auto* stationLink = new Test::RewritingTransport(QStringLiteral("station"),
@@ -10681,6 +10776,40 @@ private slots:
                  qPrintable(limited->remoteDisplayStatus()));
 
         // The limited pan really was granted fewer pixels than it asked for.
+        if (!shared) {
+            // A clipped answer is not a new zoom. Exercise several planner
+            // turns so their FFT stays sized for the original requested span.
+            for (int turn = 0; turn < 3; ++turn) {
+                plannerNow += 200;
+                gui.planNowForTest();
+                QCoreApplication::processEvents();
+            }
+            const QList<QJsonObject> requests =
+                controlsFor(outbound, QStringLiteral("subscribe"));
+            QVERIFY(!requests.isEmpty());
+            QCOMPARE(first->spectrumWidget()->normalizeActive(), normalize);
+            const double initialMaxDbm = requests.constFirst().value(QStringLiteral("maxDbm")).toDouble();
+            const DisplayFftSizing sizing = readDisplayFftSizing(appSettings);
+            const int expectedSize = sizing.plan(kSourceSampleRateHz, cropSpanHz).size;
+            for (const QJsonObject& request : requests) {
+                qInfo().noquote() << "source-edge planning" << sizingMode
+                    << "answeredSpan" << first->spectrumWidget()->bandwidth()
+                    << "request" << QJsonDocument(request).toJson(QJsonDocument::Compact);
+                QCOMPARE(request.value(QStringLiteral("spanHz")).toDouble(), cropSpanHz);
+                QCOMPARE(request.value(QStringLiteral("fftSize")).toInt(), expectedSize);
+                if (normalize) {
+                    // The clipped answer must not change the source bin width
+                    // used for normalization or narrow away its pan headroom.
+                    QCOMPARE(request.value(QStringLiteral("maxDbm")).toDouble(), initialMaxDbm);
+                }
+            }
+            const QJsonObject& edgeRequest = requests.constLast();
+            const int plannedFftSize = edgeRequest.value(QStringLiteral("fftSize")).toInt();
+            QVERIFY(plannedFftSize > 0);
+            const int edgeBinUpperBound = int(std::ceil(
+                kCropOverlapHz * double(plannedFftSize) / double(kSourceSampleRateHz))) + 1;
+            QVERIFY(edgeRequest.value(QStringLiteral("pixels")).toInt() > edgeBinUpperBound);
+        }
         bool reduced = false;
         quint32 limitedEndpoint = 0;
         QJsonObject limitedRequest;

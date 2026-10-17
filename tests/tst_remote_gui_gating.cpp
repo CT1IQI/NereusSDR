@@ -49,6 +49,10 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 - Off a RADE mode the RADE applet is grayed whole for its
+//                 capability (disabled, never hidden), so its transmit
+//                 gate is read below the applet (isEnabledTo). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Committed container button lifecycle fixtures by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-08-08 -- New test file for remote-daemon R2 Task 20. J.J. Boyd
@@ -4775,11 +4779,11 @@ private slots:
             // vocoder follow the transmit settings gate too.
             auto* const rade = window->findChild<RadeApplet*>();
             QVERIFY(rade != nullptr);
-            for (QWidget* w : std::initializer_list<QWidget*>{
-                     rade->profileComboForTest(), rade->resetVocoderButtonForTest(),
-                     txApplet->profileCombo()}) {
-                QVERIFY(w->isEnabled());
-            }
+            // Off a RADE mode the applet itself is grayed for its
+            // capability; the gate is read below it.
+            QVERIFY(rade->profileComboForTest()->isEnabledTo(rade));
+            QVERIFY(rade->resetVocoderButtonForTest()->isEnabledTo(rade));
+            QVERIFY(txApplet->profileCombo()->isEnabled());
             coreMox->setMox(false);
             QTRY_VERIFY(!window->radioModel()->isCoreOnAir());
             QTRY_VERIFY(regionCombo->isEnabled());
@@ -4795,8 +4799,8 @@ private slots:
             QTRY_VERIFY(proc->isEnabled());
 
             // Off the air they are live again, whatever remote transmit says.
-            QTRY_VERIFY(rade->profileComboForTest()->isEnabled());
-            QVERIFY(rade->resetVocoderButtonForTest()->isEnabled());
+            QTRY_VERIFY(rade->profileComboForTest()->isEnabledTo(rade));
+            QVERIFY(rade->resetVocoderButtonForTest()->isEnabledTo(rade));
             QVERIFY(txApplet->profileCombo()->isEnabled());
             QVERIFY(rade->profileComboForTest()->toolTip() != remoteReason);
 
@@ -4828,7 +4832,7 @@ private slots:
             QCOMPARE(reRoute->toolTip(), localReRouteTip);
             auto* const rade = window->findChild<RadeApplet*>();
             QVERIFY(rade != nullptr);
-            QVERIFY(rade->profileComboForTest()->isEnabled());
+            QVERIFY(rade->profileComboForTest()->isEnabledTo(rade));
             QVERIFY(rade->profileComboForTest()->toolTip() != remoteReason);
             QVERIFY(localToastTip != remoteReason);
             QVERIFY(localReRouteTip != remoteReason);

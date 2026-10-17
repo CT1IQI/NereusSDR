@@ -31,6 +31,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: an audio restart's request, a transmit monitor route, a
+//               headphones request and a receiver stream request lost to a
+//               media move are asked again once the window moves. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: media started on a routed web relay leg (a loopback shim
 //               that is not the media tunnel, the tunnel declared while
 //               the session runs on a data channel) tries no direct-only
@@ -82,6 +86,7 @@
 
 #include <QJsonDocument>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -2228,6 +2233,240 @@ private slots:
         QVERIFY(media.mediaConnectionId().isEmpty());
         QVERIFY(!media.replacingConnection());
         QVERIFY(media.findChildren<MediaPeer*>().isEmpty());
+    }
+
+    // 2026-10-16 (ship build report): the network dropped and came back, the
+    // media moved, and the audio stayed silent until mute and unmute. An
+    // audio restart's request went out on the old connection after the Core
+    // had moved to the new one, so the Core dropped it, and nothing asked
+    // again. The window asks again once it moves too.
+    void aRestartRequestLostToTheMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        // The receiver runs dry and asks for a restart; its backoff step
+        // waits.
+        media.holdAudioRestartForTest(true);
+        media.raiseAudioRestartForTest(RemoteAudioReceiver::Fault::NoPackets);
+        QTRY_VERIFY_WITH_TIMEOUT(media.audioRestartStepHeldForTest(), 10000);
+        QVERIFY(media.audioStatus().state != RemoteAudioStatus::State::Playing);
+        // The Core moves first: its replace is held on the way to the
+        // window, so the window still names the old connection.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The step asks on the old connection, which the Core drops.
+        media.holdAudioRestartForTest(false);
+        QTest::qWait(200);
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The Core's replace reaches the window, which moves and asks again.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(), 10000);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: the same loss for the transmit monitor. A route chosen
+    // after the Core moved goes out on the old connection and is dropped;
+    // the window asks again once it moves too.
+    void aMonitorRouteLostToTheMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(media.txMonitorAudioNegotiated());
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedMonitorContext().has_value(), 5000);
+        QCOMPARE(media.acceptedMonitorContext()->route, TxMonitorRoute::Speakers);
+        // The Core moves first: its replace is held on the way to the
+        // window, so the window still names the old connection.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The new route goes out on the old connection, which the Core drops.
+        media.setTxMonitorRoute(TxMonitorRoute::None);
+        QTest::qWait(200);
+        QCOMPARE(media.acceptedMonitorContext()->route, TxMonitorRoute::Speakers);
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The Core's replace reaches the window, which moves and asks again.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedMonitorContext()
+                                     && media.acceptedMonitorContext()->route
+                                            == TxMonitorRoute::None, 5000);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: the same loss for the headphones mix. A quality choice
+    // made after the Core moved asks for it on the old connection, which
+    // the Core drops; the window asks again once it moves too.
+    void aHeadphonesRequestLostToTheMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        const auto routes = qScopeGuard([&h] { h.resetOutputRoutes(); });
+        h.attachRemoteHeadphones();
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        const auto quality = qScopeGuard([&media] {
+            media.setAudioQualityChoice(RemoteAudioQualityChoice::High);
+        });
+        DaemonMediaController daemon(&h.server, &h.station);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer devices;
+        devices.setInterval(10);
+        connect(&devices, &QTimer::timeout, &devices, [&h] {
+            h.remoteBus->render(480);
+            h.remoteHeadphonesBus->render(480);
+        });
+        source.start();
+        devices.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(media.headphonesMixNegotiated());
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedHeadphonesContext().has_value(), 5000);
+        QCOMPARE(media.acceptedHeadphonesContext()->profile,
+                 std::optional{RemoteAudioProfile::Opus});
+        // The Core moves first: its replace is held on the way to the
+        // window, so the window still names the old connection.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // Lossless is asked for on the old connection, which the Core drops.
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        QTest::qWait(200);
+        QCOMPARE(media.acceptedHeadphonesContext()->profile,
+                 std::optional{RemoteAudioProfile::Opus});
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The Core's replace reaches the window, which moves and asks again.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedHeadphonesContext()
+                                     && media.acceptedHeadphonesContext()->profile
+                                            == std::optional{RemoteAudioProfile::Lossless},
+                                 5000);
+        source.stop();
+        devices.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: the same loss for a receiver stream for an app on this
+    // computer, asked for after the Core moved.
+    void aReceiverStreamLostToTheMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        Test::CollectingReceiverSink app;
+        const auto release = qScopeGuard([&] { media.releaseReceiverAudio(h.sliceA, &app); });
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(media.receiverAudioNegotiated());
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The app's stream is asked for on the old connection, which the
+        // Core drops.
+        media.requestReceiverAudio(h.sliceA, &app);
+        QTest::qWait(200);
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The Core's replace reaches the window, which moves and asks again.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(app.frames(h.sliceA) >= 9600, 10000);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
     // Task 29 fix wave (review Important 1): the session moves to a better
