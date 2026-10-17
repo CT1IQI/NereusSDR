@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.1] - 2026-10-17
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+Upgrading from 2026.10.0? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html).
 
 ### CAT control
 
