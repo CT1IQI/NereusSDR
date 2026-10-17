@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-17 : pullVaxTxMicKeepingBacklog() comment: what the Mac guard
+//                 keeps, and that only the Mac has it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-16 : pullVaxTxMicKeepingBacklog() for a remote window's
 //                 uplink. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -1331,9 +1334,10 @@ public:
     // As pullVaxTxMic(), for a reader that takes the audio in bursts: a
     // remote window's uplink, read on a GUI timer and sent on to the Core.
     // It keeps up to maxBacklogFrames behind the app writing the device and
-    // skips only what is older, where pullVaxTxMic keeps 16 ms
-    // (CoreAudioHalBus), less than a 10 ms timer's late tick plus one of
-    // WSJT-X's writes.
+    // skips only what is older. pullVaxTxMic, on the Mac (CoreAudioHalBus),
+    // skips to the newest 5.3 ms once more than 16 ms is waiting, which a
+    // 10 ms timer's late tick plus one of WSJT-X's writes passes. Other
+    // buses have no such guard and read the same either way.
     int pullVaxTxMicKeepingBacklog(float* dst, int n, int maxBacklogFrames);
 
     /// Returns the operator's PC-mic source selection independently of

@@ -41,6 +41,10 @@
 //                 call (NativeAudioFirstCall), for the persistent capture
 //                 helper's timing. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-17: pullKeepingBacklog() keeps a whole stereo frame; the
+//                 drain comment says the guard's thresholds come from the
+//                 caller. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "CoreAudioHalBus.h"
@@ -488,9 +492,11 @@ qint64 CoreAudioHalBus::pull(char* data, qint64 maxBytes) {
 
 qint64 CoreAudioHalBus::pullKeepingBacklog(char* data, qint64 maxBytes, qint64 maxBacklogBytes) {
     // At least pull()'s guard; at most half the ring, as a lapped reader
-    // keeps.
-    const qint64 samples = std::clamp<qint64>(maxBacklogBytes / qint64(sizeof(float)),
-                                              kMaxBacklogSamples, VaxShmBlock::RING_SIZE / 2);
+    // keeps. Rounded down to a whole stereo frame, so a skip never starts
+    // the read on a right-channel sample.
+    qint64 samples = std::clamp<qint64>(maxBacklogBytes / qint64(sizeof(float)),
+                                        kMaxBacklogSamples, VaxShmBlock::RING_SIZE / 2);
+    samples &= ~qint64(1);
     return drainTx(data, maxBytes, uint32_t(samples), uint32_t(samples));
 }
 
@@ -504,9 +510,12 @@ qint64 CoreAudioHalBus::drainTx(char* data, qint64 maxBytes, uint32_t maxBacklog
     }
 
 #ifdef Q_OS_MAC
-    // Drain TX audio written by the HAL plugin. Ported verbatim from
+    // Drain TX audio written by the HAL plugin. Ported from
     // VirtualAudioBridge::readTxAudio — acquire loads, wrap-skip if the writer
     // has lapped the reader, backlog guards to keep near-real-time latency.
+    // The guard's thresholds are the caller's: pull() passes readTxAudio's
+    // frame counts unchanged, which at 48 kHz is half its time;
+    // pullKeepingBacklog() passes a deeper one.
     uint32_t rp = m_block->readPos.load(std::memory_order_acquire);
     uint32_t wp = m_block->writePos.load(std::memory_order_acquire);
 
