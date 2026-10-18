@@ -1230,6 +1230,8 @@ private:
     bool m_flagDragging{false};
     int  m_pressGlobalX{0};
     void endFlagDrag();
+    // True when pos (flag coordinates) lands on a ScrollableLabel.
+    bool pressOnScrollableLabel(const QPoint& pos) const;
     WheelStepAccumulator m_wheelSteps;
 
     // --- Task 14a: slice access ---

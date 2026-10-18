@@ -21,9 +21,7 @@
 //                 `src/gui/GuardedSlider.h:81-100`.
 //   2026-10-18 - Wheel steps through WheelStepAccumulator, so a trackpad
 //                 swipe moves the value one step per 15 px, not one per
-//                 event; a press on the value is accepted, so it never
-//                 starts a drag of the receiver flag behind it.
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 event. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
@@ -124,13 +122,6 @@ void ScrollableLabel::wheelEvent(QWheelEvent* event) {
     } else if (steps < 0) {
         setValue(m_value - m_step);
     }
-    event->accept();
-}
-
-// A press on the value is the label's own: accepted here, it never reaches
-// the receiver flag behind it and so never starts a flag drag.
-void ScrollableLabel::mousePressEvent(QMouseEvent* event) {
-    QStackedWidget::mousePressEvent(event);
     event->accept();
 }
 

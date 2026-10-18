@@ -309,15 +309,24 @@ private slots:
         QVERIFY(!p.flag->isFlagDragging());
     }
 
-    // A press on an RIT/XIT or offset value is the value's own, so a drag
-    // from it never drags the flag.
-    void press_on_a_scrollable_label_never_drags()
+    // A press on an RIT/XIT or offset value selects the slice, as any press
+    // on the flag does, but a drag from it never drags the flag.
+    void press_on_a_scrollable_label_selects_but_never_drags()
     {
         Pan p;
-        const QList<ScrollableLabel*> labels = p.flag->findChildren<ScrollableLabel*>();
-        QVERIFY(!labels.isEmpty());
+        // The RIT/XIT tab, so its two values are on screen to be pressed.
+        p.flag->showTab(VfoWidget::Tab::XRit);
+        QCoreApplication::processEvents();
+        QList<ScrollableLabel*> labels;
+        for (ScrollableLabel* label : p.flag->findChildren<ScrollableLabel*>()) {
+            if (label->isVisibleTo(p.flag)) {
+                labels.append(label);
+            }
+        }
+        QVERIFY(labels.size() >= 2);
         QSignalSpy started(p.flag, &VfoWidget::flagDragStarted);
         QSignalSpy tuned(p.flag, &VfoWidget::frequencyChanged);
+        QSignalSpy select(p.flag, &VfoWidget::sliceActivationRequested);
         for (ScrollableLabel* label : labels) {
             // Sent to the value's own text, the child a click lands on.
             QWidget* target = label->currentWidget();
@@ -330,10 +339,13 @@ private slots:
                                Qt::NoModifier);
                 QApplication::sendEvent(target, &me);
             };
+            select.clear();
             send(QEvent::MouseButtonPress, 0, Qt::LeftButton, Qt::LeftButton);
+            QCOMPARE(select.count(), 1);
             send(QEvent::MouseMove, 15, Qt::NoButton, Qt::LeftButton);
             send(QEvent::MouseMove, 30, Qt::NoButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, 30, Qt::LeftButton, Qt::NoButton);
+            QCOMPARE(select.count(), 1);
         }
         QCOMPARE(started.count(), 0);
         QCOMPARE(tuned.count(), 0);

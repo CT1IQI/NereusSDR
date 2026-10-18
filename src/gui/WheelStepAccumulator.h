@@ -55,8 +55,8 @@ public:
     // -1, 0 or +1 for this event. Trackpad (isTrackpad): ignores
     // Qt::ScrollMomentum, ignores events whose |x| > |y|, resets the pixel
     // accumulator on Qt::ScrollBegin, one step per kTrackpadPixelsPerStep of
-    // accumulated y (pixelDelta, or angleDelta read as pixels when the
-    // pixelDelta is null), clamped to +/-1 per event, and at most one step
+    // accumulated y (pixelDelta, or angleDelta / kAngleUnitsPerPixel when
+    // the pixelDelta is null; the remainder carries over), clamped to +/-1 per event, and at most one step
     // per kTrackpadMinStepIntervalMs. Mouse wheel (everything else):
     // accumulates angleDelta().y(), one step per kAngleUnitsPerStep, clamped
     // to +/-1 per event, no rate limit; its pixelDelta is not read.
@@ -73,12 +73,17 @@ public:
     static constexpr int kTrackpadMinStepIntervalMs = 50;
     // From AetherSDR src/gui/SpectrumWidget.cpp:11317 [@1e0718ad]
     static constexpr int kAngleUnitsPerStep = 120;
+    // Angle units per pixel when a trackpad event reports angle only:
+    // angleDelta is in eighths of a degree, and eight units are taken as a
+    // pixel, so one 120-unit notch is 15 px, one step. NereusSDR's, not
+    // upstream's.
+    static constexpr int kAngleUnitsPerPixel = 8;
 
 private:
     qint64 nowMs() const;
 
     std::function<qint64()> m_clock;
-    int    m_pixelAccum{0};
+    int    m_pixelAccum{0};   // in angle units (kAngleUnitsPerPixel per px)
     int    m_angleAccum{0};
     qint64 m_lastTrackpadStepMs{0};
     bool   m_haveTrackpadStep{false};

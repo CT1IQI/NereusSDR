@@ -174,7 +174,7 @@ private slots:
     }
 
     // A phased event is a trackpad's even with no pixel delta; its angle
-    // delta is read as pixels, so 30 is two steps' travel, clamped to one,
+    // delta counts eight units to a pixel, so 120 units (15 px) is a step,
     // and the 50 ms limit applies.
     void phased_event_without_pixels_is_a_trackpad()
     {
@@ -184,11 +184,31 @@ private slots:
         QVERIFY(WheelStepAccumulator::isTrackpad(
             QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(), QPoint(0, 30),
                         Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false)));
-        QCOMPARE(phasedAngleOnly(acc, 30), 1);
+        QCOMPARE(phasedAngleOnly(acc, 30), 0);
+        QCOMPARE(phasedAngleOnly(acc, 30), 0);
+        QCOMPARE(phasedAngleOnly(acc, 30), 0);
+        QCOMPARE(phasedAngleOnly(acc, 30), 1);   // 120 units
         clock.now += 1;
-        QCOMPARE(phasedAngleOnly(acc, 30), 0);   // rate limited: a trackpad
+        QCOMPARE(phasedAngleOnly(acc, 120), 0);  // rate limited: a trackpad
         clock.now += 100;
-        QCOMPARE(phasedAngleOnly(acc, 30), 1);
+        QCOMPARE(phasedAngleOnly(acc, 120), 1);
+        clock.now += 100;
+        QCOMPARE(phasedAngleOnly(acc, -120), -1);
+    }
+
+    // Small angle-only deltas add up: fifteen of 8 units are one step.
+    void small_angle_only_deltas_add_up()
+    {
+        WheelStepAccumulator acc;
+        TestClock clock;
+        clock.install(acc);
+        int total = 0;
+        for (int i = 0; i < 15; ++i) {
+            const int step = phasedAngleOnly(acc, 8);
+            QCOMPARE(step, i == 14 ? 1 : 0);
+            total += step;
+        }
+        QCOMPARE(total, 1);
     }
 };
 

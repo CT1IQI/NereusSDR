@@ -23,9 +23,7 @@
 //                 `src/gui/GuardedSlider.h:81-100`.
 //   2026-10-18 - Wheel steps through WheelStepAccumulator, so a trackpad
 //                 swipe moves the value one step per 15 px, not one per
-//                 event; a press on the value is accepted, so it never
-//                 starts a drag of the receiver flag behind it.
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 event. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
@@ -83,7 +81,6 @@ signals:
 protected:
     bool eventFilter(QObject* obj, QEvent* ev) override;
     void wheelEvent(QWheelEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private slots:

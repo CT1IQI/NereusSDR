@@ -14,7 +14,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-18 - Drag the flag to tune (fold and unfold wait for the
-//                release), and the wheel steps through WheelStepAccumulator.
+//                release; a press on an RIT/XIT or offset value selects
+//                but never drags), and the wheel steps through
+//                WheelStepAccumulator.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                (Claude Opus 5.5).
 //   2026-10-15 - The mode combo resets before a RADE v2 mode is added or
@@ -4085,9 +4087,21 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
         }
     }
 
-    if (left) {
+    // A press on an RIT/XIT or offset value selects the slice, as any press
+    // on the flag does, but is the value's own: it never starts a drag.
+    if (left && !pressOnScrollableLabel(event->pos())) {
         armDrag();
     }
+}
+
+bool VfoWidget::pressOnScrollableLabel(const QPoint& pos) const
+{
+    for (QWidget* w = childAt(pos); w && w != this; w = w->parentWidget()) {
+        if (qobject_cast<ScrollableLabel*>(w)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void VfoWidget::mouseMoveEvent(QMouseEvent* event)

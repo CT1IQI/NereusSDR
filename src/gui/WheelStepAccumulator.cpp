@@ -90,18 +90,22 @@ int WheelStepAccumulator::stepsFor(const QWheelEvent& event)
         if (event.phase() == Qt::ScrollMomentum) {
             return 0;
         }
-        // A phased event that carries no pixel delta has its angle delta
-        // read as pixels.
-        const QPoint travel = event.pixelDelta().isNull() ? event.angleDelta()
-                                                          : event.pixelDelta();
+        // Travel is kept in angle units, kAngleUnitsPerPixel to a pixel, so a
+        // phased event that carries no pixel delta (angle only, as a
+        // libinput touchpad may send) counts at the same rate as pixels and
+        // its remainder adds up with the rest.
+        const QPoint travel = event.pixelDelta().isNull()
+                                  ? event.angleDelta()
+                                  : event.pixelDelta() * kAngleUnitsPerPixel;
         // [original inline comment from src/gui/SpectrumWidget.cpp:11292 [@1e0718ad]]
         // Ignore horizontal-dominant swipes
         if (qAbs(travel.x()) > qAbs(travel.y())) {
             return 0;
         }
+        constexpr int kTravelPerStep = kTrackpadPixelsPerStep * kAngleUnitsPerPixel;
         m_pixelAccum += travel.y();
-        steps = m_pixelAccum / kTrackpadPixelsPerStep;
-        m_pixelAccum -= steps * kTrackpadPixelsPerStep;
+        steps = m_pixelAccum / kTravelPerStep;
+        m_pixelAccum -= steps * kTravelPerStep;
         // [original inline comments from src/gui/SpectrumWidget.cpp:11299-11300 [@1e0718ad]]
         // Clamp to ±1: on Linux/libinput regular mice often report pixelDelta
         // (e.g. 120px per notch) which would produce 8 steps and an 8× jump.
