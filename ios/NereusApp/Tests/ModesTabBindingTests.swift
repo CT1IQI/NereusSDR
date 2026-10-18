@@ -996,7 +996,7 @@ struct ModesTabBindingTests {
         await model.disconnect()
     }
 
-    @Test("RF Power writes power and the drive slider source at version 5, never a per-band power table (I3)")
+    @Test("RF Power writes power alone at version 5: never the tune drive source or a per-band power table (I3)")
     func rfPowerLeavesPerBandTablesToTheCore() async throws {
         let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
         let transmit = model.main.transmit
@@ -1008,12 +1008,15 @@ struct ModesTabBindingTests {
         #expect(await settle { transmit.settingsEditable(5) })
         transmit.setRfPower(60)
         #expect(await answer(station, key: "transmit", "power") == .i64(60))
-        #expect(await answer(station, key: "transmit", "tuneDrivePowerSource") == .enumeration(0))
         await idle()
         // The Core alone keeps the per-band tables; it refuses them from the phone.
+        // The tune drive source is the desktop Setup's choice alone.
         #expect(!station.messages.contains { message in
             if case .propertyWrite(let write) = message {
-                return write.properties.contains { $0.name == "powerByBandJson" || $0.name == "tunePowerByBandJson" }
+                return write.properties.contains {
+                    $0.name == "powerByBandJson" || $0.name == "tunePowerByBandJson"
+                        || $0.name == "tuneDrivePowerSource"
+                }
             }
             return false
         })

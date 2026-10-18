@@ -3942,10 +3942,12 @@ Notes on the keys:
   Core transmits on (its transmit slice's band, as TUNE reads it), which
   the TX applet's Tune Power slider shows; it follows the transmit slice
   across bands. `tuneDrivePowerSource` (enum: 0 the drive slider, 1 the
-  tune slider, 2 the fixed tune power) is where TUNE takes its power from.
-  At version 2 both change only through `setTunePowerForTxBand`, and
-  `tuneDrivePowerSource` is outbound; at version 5 it is two-way (Setup >
-  Transmit > Power's Tune group), and `tunePowerForTxBand` stays outbound. None of these
+  tune slider, 2 the fixed tune power) is where TUNE takes its power from;
+  only Setup > Transmit > Power's Tune group changes it, as in Thetis, and
+  neither power slider does. At version 2 `tunePowerForTxBand` changes
+  only through `setTunePowerForTxBand`, and `tuneDrivePowerSource` is
+  outbound; at version 5 `tuneDrivePowerSource` is two-way (the Tune
+  group), and `tunePowerForTxBand` stays outbound. None of these
   keys the radio. The MON output choice (speakers or phones) is not on the
   link: it is each window's own audio routing.
 - **`transmit` at `transmitSettingsVersion` 3.** The radio's microphone
@@ -6683,9 +6685,9 @@ These command groups need a sentence beyond the table:
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core
-  transmits on and sets the tune drive source to the tune slider, so TUNE
-  uses that power. The Core reports both on `transmit`
-  (`tunePowerForTxBand`, `tuneDrivePowerSource`). It keys nothing, so a
+  transmits on, which TUNE uses when Setup's tune drive source is the tune
+  slider. It leaves `tuneDrivePowerSource` alone. The Core reports the
+  power on `transmit` (`tunePowerForTxBand`). It keys nothing, so a
   receive-only Core takes it. Below `transmitSettingsVersion` 13 it is
   refused while the radio is on the air ("The radio is on the air. Try
   again when it stops."); at 13 it is taken on the air from a peer that may

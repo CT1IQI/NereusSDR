@@ -310,9 +310,6 @@ final class TransmitModel: ObservableObject {
     /// RF Power and Tune Pwr on a Core whose catalogue gives no transmit
     /// ranges: 0 to 100, shown as the number.
     static let powerFallback = StationCatalog.TransmitRange(min: 0, max: 100, step: 1)
-    /// `tuneDrivePowerSource`'s drive slider: RF Power sets it, as the
-    /// desktop's slider does, so TUNE follows RF Power until Tune Pwr moves.
-    static let driveSliderSource: Int64 = 0
 
     /// PureSignal's automatic calibration on and off (`ps3.automatic`,
     /// `ps3.off`, at `psAlgorithmVersion` 3 and the agreed minor 5).
@@ -700,9 +697,9 @@ final class TransmitModel: ObservableObject {
         dismissNotice()
     }
 
-    /// The RF Power slider: `power`, then, on a Core at version 5, the tune
-    /// power source back to the drive slider, as the desktop's slider
-    /// writes it. The per-band power tables belong to the Core alone: the
+    /// The RF Power slider: `power` alone. It leaves `tuneDrivePowerSource`
+    /// as the desktop's Setup > Transmit > Power chose it, as the desktop's
+    /// slider does. The per-band power tables belong to the Core alone: the
     /// Core keeps the TX band's slot from `power`, and the phone never
     /// writes `powerByBandJson` or `tunePowerByBandJson`.
     func setRfPower(_ value: Double) {
@@ -711,10 +708,6 @@ final class TransmitModel: ObservableObject {
         }
         let watts = Int64(RxPanelModel.snapped(value, to: powerControl.range).rounded())
         write(Self.transmitKey, "power", .int(watts))
-        guard settingsEditable(5) else {
-            return
-        }
-        write(Self.transmitKey, "tuneDrivePowerSource", .enumeration(Self.driveSliderSource))
     }
 
     /// The Tune Pwr slider: the tune power for the band the Core transmits on.
