@@ -20,6 +20,10 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: profileSaved, bankLoaded and defaultProfileName,
 //                 for the Core's paProfiles mirror and verbs. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-18 - load() moves an untouched stored "Default - ANAN_G2E"
+//                 from the old shared ANAN7000D gain row to the G2E's own
+//                 53.0 dB row (PaGainProfile.cpp). NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -82,6 +86,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -168,6 +173,38 @@ HPSDRModel modelFromFactoryName(const QString& name) noexcept
 // From Thetis setup.cs:23314 [v2.10.3.13] — `_sPA_PROFILE_BYPASS = "Bypass"`.
 constexpr const char* kBypassProfileName = "Bypass";
 
+// NereusSDR-original (2026-10-18). The 160 m to 6 m gains every stored
+// "Default - ANAN_G2E" was seeded with before the G2E got its own row:
+// the Thetis ANAN7000D row, from Thetis clsHardwareSpecific.cs:698-713
+// [v2.10.3.15]. Kept here, not read from PaGainProfile, so the check
+// still means "the old G2E seed" if that row ever changes.
+constexpr float kOldG2eHfGains[] = {
+    47.9f, 50.5f, 50.8f, 50.8f, 50.9f, 50.9f,
+    50.5f, 47.0f, 47.9f, 46.5f, 44.6f
+};
+constexpr int kOldG2eHfBandCount =
+    static_cast<int>(sizeof(kOldG2eHfGains) / sizeof(kOldG2eHfGains[0]));
+
+// True when `p` still holds the old G2E seed on 160 m to 6 m, with no
+// drive-step adjusts there. Anything the user edited on those bands
+// makes it false, and the profile is left alone.
+bool holdsOldG2eSeed(const PaProfile& p) noexcept
+{
+    constexpr float kTolerance = 0.005f;
+    for (int n = 0; n < kOldG2eHfBandCount; ++n) {
+        const Band band = static_cast<Band>(n);
+        if (std::fabs(p.getGainForBand(band) - kOldG2eHfGains[n]) > kTolerance) {
+            return false;
+        }
+        for (int step = 0; step < PaProfile::kDriveSteps; ++step) {
+            if (p.getAdjust(band, step) != 0.0f) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -234,6 +271,28 @@ void PaProfileManager::load(HPSDRModel connectedModel)
             if (readProfileBlob(name, p)) {
                 m_profiles.insert(name, p);
             }
+        }
+
+        // NereusSDR-original (2026-10-18): the G2E's factory row moved off
+        // the shared ANAN7000D row, which overdrives the G2E, to its own
+        // 53.0 dB row. Stored profiles win over factory values, so an
+        // existing "Default - ANAN_G2E" would keep the old gains. Move it
+        // only if 160 m to 6 m still hold exactly the old seed with no
+        // adjusts; max-power settings and every other band stay as stored.
+        const QString g2eDefault =
+            defaultProfileNameForModel(HPSDRModel::ANAN_G2E);
+        auto g2eIt = m_profiles.find(g2eDefault);
+        if (g2eIt != m_profiles.end() && g2eIt->isFactoryDefault()
+            && g2eIt->model() == HPSDRModel::ANAN_G2E
+            && holdsOldG2eSeed(*g2eIt)) {
+            for (int n = 0; n < kOldG2eHfBandCount; ++n) {
+                const Band band = static_cast<Band>(n);
+                g2eIt->setGainForBand(
+                    band, defaultPaGainsForBand(HPSDRModel::ANAN_G2E, band));
+            }
+            writeProfileBlob(g2eDefault, *g2eIt);
+            qCInfo(lcDsp) << "PA profile" << g2eDefault
+                          << "moved from the old shared gain row to the G2E row";
         }
 
         // 2026-05-22 bench-finding (ANAN-G2E port): existing per-MAC
