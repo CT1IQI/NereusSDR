@@ -26,6 +26,7 @@
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "gui/SpectrumWidget.h"
+#include "gui/widgets/ScrollableLabel.h"
 #include "gui/widgets/VfoWidget.h"
 
 using namespace NereusSDR;
@@ -230,6 +231,110 @@ private slots:
         QSignalSpy tuned(p.flag, &VfoWidget::frequencyChanged);
         QSignalSpy started(p.flag, &VfoWidget::flagDragStarted);
         drag(p.flag, at, {15, 30});
+        QCOMPARE(started.count(), 0);
+        QCOMPARE(tuned.count(), 0);
+    }
+
+    // A press on the flag still selects its slice; a drag selects it once,
+    // on the press, not again on each move or on the release.
+    void press_selects_the_slice_once()
+    {
+        {
+            Pan p;
+            QSignalSpy select(p.flag, &VfoWidget::sliceActivationRequested);
+            drag(p.flag, p.frequencyPoint(), {});
+            QCOMPARE(select.count(), 1);
+            QCOMPARE(select.first().first().toInt(), 1);
+        }
+        {
+            Pan p;
+            QSignalSpy select(p.flag, &VfoWidget::sliceActivationRequested);
+            sendAt(p.flag, QEvent::MouseButtonPress, p.frequencyPoint(), 0, Qt::LeftButton,
+                   Qt::LeftButton);
+            QCOMPARE(select.count(), 1);
+            sendAt(p.flag, QEvent::MouseMove, p.frequencyPoint(), 15, Qt::NoButton,
+                   Qt::LeftButton);
+            sendAt(p.flag, QEvent::MouseMove, p.frequencyPoint(), 30, Qt::NoButton,
+                   Qt::LeftButton);
+            sendAt(p.flag, QEvent::MouseButtonRelease, p.frequencyPoint(), 30, Qt::LeftButton,
+                   Qt::NoButton);
+            QCOMPARE(select.count(), 1);
+        }
+    }
+
+    // The drag cursor is the flag's while it drags (the pointer is over the
+    // flag for the whole grab) and is unset when the drag ends; the
+    // spectrum's own cursor is left alone.
+    void drag_cursor_is_on_the_flag()
+    {
+        Pan p;
+        const Qt::CursorShape panCursor = p.sw.cursor().shape();
+        QVERIFY(!p.flag->testAttribute(Qt::WA_SetCursor));
+        sendAt(p.flag, QEvent::MouseButtonPress, p.frequencyPoint(), 0, Qt::LeftButton,
+               Qt::LeftButton);
+        sendAt(p.flag, QEvent::MouseMove, p.frequencyPoint(), 30, Qt::NoButton,
+               Qt::LeftButton);
+        QVERIFY(p.flag->isFlagDragging());
+        QVERIFY(p.flag->testAttribute(Qt::WA_SetCursor));
+        QCOMPARE(p.flag->cursor().shape(), Qt::SizeHorCursor);
+        sendAt(p.flag, QEvent::MouseButtonRelease, p.frequencyPoint(), 30, Qt::LeftButton,
+               Qt::NoButton);
+        QVERIFY(!p.flag->testAttribute(Qt::WA_SetCursor));
+        QCOMPARE(p.sw.cursor().shape(), panCursor);
+    }
+
+    // A flag hidden mid-drag (CTUN on, dragged past the span edge) never
+    // sees its release; the drag ends when it hides, and a later move with
+    // the button still down does not tune.
+    void hiding_mid_drag_ends_the_drag()
+    {
+        Pan p;
+        QSignalSpy finished(p.flag, &VfoWidget::flagDragFinished);
+        QSignalSpy tuned(p.flag, &VfoWidget::frequencyChanged);
+        sendAt(p.flag, QEvent::MouseButtonPress, p.frequencyPoint(), 0, Qt::LeftButton,
+               Qt::LeftButton);
+        sendAt(p.flag, QEvent::MouseMove, p.frequencyPoint(), 30, Qt::NoButton,
+               Qt::LeftButton);
+        QVERIFY(p.flag->isFlagDragging());
+        QCOMPARE(tuned.count(), 1);
+        p.flag->hide();
+        QVERIFY(!p.flag->isFlagDragging());
+        QCOMPARE(finished.count(), 1);
+        QVERIFY(!p.flag->testAttribute(Qt::WA_SetCursor));
+        // A stray move with the button still down tunes nothing.
+        QMouseEvent stray(QEvent::MouseMove, QPointF(5, 5), QPointF(p.flag->mapToGlobal(QPoint(60, 5))),
+                          Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(p.flag, &stray);
+        QCOMPARE(tuned.count(), 1);
+        QVERIFY(!p.flag->isFlagDragging());
+    }
+
+    // A press on an RIT/XIT or offset value is the value's own, so a drag
+    // from it never drags the flag.
+    void press_on_a_scrollable_label_never_drags()
+    {
+        Pan p;
+        const QList<ScrollableLabel*> labels = p.flag->findChildren<ScrollableLabel*>();
+        QVERIFY(!labels.isEmpty());
+        QSignalSpy started(p.flag, &VfoWidget::flagDragStarted);
+        QSignalSpy tuned(p.flag, &VfoWidget::frequencyChanged);
+        for (ScrollableLabel* label : labels) {
+            // Sent to the value's own text, the child a click lands on.
+            QWidget* target = label->currentWidget();
+            QVERIFY(target);
+            const QPoint at = target->rect().center();
+            const auto send = [target, at](QEvent::Type type, int dx, Qt::MouseButton b,
+                                           Qt::MouseButtons bs) {
+                QMouseEvent me(type, QPointF(at + QPoint(dx, 0)),
+                               QPointF(target->mapToGlobal(at + QPoint(dx, 0))), b, bs,
+                               Qt::NoModifier);
+                QApplication::sendEvent(target, &me);
+            };
+            send(QEvent::MouseButtonPress, 0, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseMove, 15, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseMove, 30, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, 30, Qt::LeftButton, Qt::NoButton);
+        }
         QCOMPARE(started.count(), 0);
         QCOMPARE(tuned.count(), 0);
     }

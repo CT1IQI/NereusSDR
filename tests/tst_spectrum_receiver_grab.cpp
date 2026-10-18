@@ -60,6 +60,11 @@ void moveTo(QWidget* w, int x, int y = kSpecY)
     sendMouse(w, QEvent::MouseMove, QPoint(x, y), Qt::NoButton, Qt::LeftButton);
 }
 
+void hover(QWidget* w, int x, int y = kSpecY)
+{
+    sendMouse(w, QEvent::MouseMove, QPoint(x, y), Qt::NoButton, Qt::NoButton);
+}
+
 void release(QWidget* w, int x, int y = kSpecY)
 {
     sendMouse(w, QEvent::MouseButtonRelease, QPoint(x, y), Qt::LeftButton, Qt::NoButton);
@@ -173,6 +178,35 @@ private slots:
         moveTo(&p.sw, x, kSpecY + 3);   // vertical wobble only
         release(&p.sw, x, kSpecY + 3);
         QCOMPARE(tuned.count(), 0);
+    }
+
+    // Once the drag has left the press column, a return to it tunes back:
+    // the receiver ends at its start, not at the last sample.
+    void return_to_the_press_column_tunes_back()
+    {
+        Pan p;
+        p.receiver(0, kCenterHz, 0, 3000, true);
+        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        const int x = xForHz(kCenterHz + 1500.0);
+        press(&p.sw, x);
+        moveTo(&p.sw, x + 10);
+        moveTo(&p.sw, x);
+        release(&p.sw, x);
+        QCOMPARE(tuned.count(), 2);
+        QCOMPARE(tuned.at(0).first().toDouble(), kCenterHz + 10 * kHzPerPx);
+        QCOMPARE(tuned.at(1).first().toDouble(), kCenterHz);
+    }
+
+    // The hover cursor uses the press's hit test: the drag cursor over a
+    // receiver, the cross off it.
+    void hover_cursor_follows_the_grab()
+    {
+        Pan p;
+        p.receiver(0, kCenterHz, 0, 3000, true);
+        hover(&p.sw, xForHz(kCenterHz + 1500.0));
+        QCOMPARE(p.sw.cursor().shape(), Qt::SizeHorCursor);
+        hover(&p.sw, xForHz(kCenterHz - 10000.0));
+        QCOMPARE(p.sw.cursor().shape(), Qt::CrossCursor);
     }
 
     void press_on_another_receiver_selects_and_tunes_it()

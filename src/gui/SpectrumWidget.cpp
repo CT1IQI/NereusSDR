@@ -12562,6 +12562,7 @@ void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double cent
     m_receiverDrag.viaFlag = viaFlag;
     m_receiverDrag.offsetHz = xToHz(pressX, specRect) - centerHz;
     m_receiverDrag.pressX = pressX;
+    m_receiverDrag.moved = false;
     int step = m_stepHz;
     if (viaFlag) {
         if (const VfoWidget* flag = m_vfoWidgets.value(sliceIndex, nullptr)) {
@@ -12574,9 +12575,14 @@ void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double cent
 void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
 {
     // A press with no horizontal travel does not retune: snapping alone
-    // would otherwise move a receiver that sits off the step grid.
-    if (mx == m_receiverDrag.pressX) {
-        return;
+    // would otherwise move a receiver that sits off the step grid. Once the
+    // cursor has left the press column, every move tunes, a return to that
+    // column included.
+    if (!m_receiverDrag.moved) {
+        if (mx == m_receiverDrag.pressX) {
+            return;
+        }
+        m_receiverDrag.moved = true;
     }
     // Withheld while this pan shows transmit, as requestTune is.
     if (m_moxOverlay) {
@@ -16286,7 +16292,6 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
         beginReceiverDrag(flagRef->sliceIndex(), true, flagRef->frequency(), pressX,
                           specRect);
         m_flagDragActive = true;
-        setCursor(Qt::SizeHorCursor);
     });
     connect(w, &VfoWidget::flagDragMoved, this, [this, flagRef](int globalX) {
         if (!flagRef || !m_flagDragActive
@@ -16295,9 +16300,10 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
         }
         moveReceiverDrag(mapFromGlobal(QPoint(globalX, 0)).x(), spectrumLayout().spectrum);
     });
+    // The flag shows the drag cursor itself while it holds the grab; the
+    // spectrum's cursor is left for its next hover to set.
     connect(w, &VfoWidget::flagDragFinished, this, [this]() {
         m_flagDragActive = false;
-        setCursor(Qt::CrossCursor);
     });
     w->show();
     w->raise();

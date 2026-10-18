@@ -3737,6 +3737,11 @@ void VfoWidget::updatePosition(int vfoX, int specTop, FlagDir dir)
 // explicitly. Showing the flag restores its eligible sibling controls.
 void VfoWidget::hideEvent(QHideEvent* event)
 {
+    // A flag hidden mid-drag (CTUN on, dragged past the span edge) loses its
+    // implicit grab and never sees the release, so its drag ends here.
+    endFlagDrag();
+    m_dragArmed = false;
+    m_releaseAction = ReleaseAction::None;
     for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn}) {
         if (button) {
             button->hide();
@@ -4098,6 +4103,9 @@ void VfoWidget::mouseMoveEvent(QMouseEvent* event)
             return;
         }
         m_flagDragging = true;
+        // The pointer is over this flag for the whole drag (the implicit
+        // grab), so the drag cursor is shown here, not on the spectrum.
+        setCursor(Qt::SizeHorCursor);
         emit flagDragStarted(m_pressGlobalX);
     }
     emit flagDragMoved(globalX);
@@ -4128,6 +4136,7 @@ void VfoWidget::endFlagDrag()
 {
     if (m_flagDragging) {
         m_flagDragging = false;
+        unsetCursor();
         emit flagDragFinished();
     }
 }

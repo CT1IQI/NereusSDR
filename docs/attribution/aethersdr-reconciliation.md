@@ -98,7 +98,7 @@ claim), or when 25a couldn't positively disprove the claim.
 
 | NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
 |---|---|---|---|
-| `src/gui/WheelStepAccumulator.h` | `src/gui/SpectrumWidget.cpp:11286-11328` [@1e0718ad] | The wheel step accumulator from `SpectrumWidget::wheelEvent`: 15 px of trackpad travel per step, momentum and sideways swipes ignored, one trackpad step per 50 ms, 120 angle units per mouse step, clamped to one step per event; inline comments kept verbatim. Upstream file has no copyright/GPL header; the project-level attribution block is in the file. | "Wheel and trackpad step accumulator ported from AetherSDR SpectrumWidget::wheelEvent." NereusSDR clears the pixel accumulator on `Qt::ScrollBegin` and gives the mouse wheel no rate limit. |
+| `src/gui/WheelStepAccumulator.h` | `src/gui/SpectrumWidget.cpp:11286-11328` [@1e0718ad] | The wheel step accumulator from `SpectrumWidget::wheelEvent`: 15 px of trackpad travel per step, momentum and sideways swipes ignored, one trackpad step per 50 ms, 120 angle units per mouse step, clamped to one step per event; inline comments kept verbatim. Upstream file has no copyright/GPL header; the project-level attribution block is in the file. | "Wheel and trackpad step accumulator ported from AetherSDR SpectrumWidget::wheelEvent." NereusSDR clears the pixel accumulator on `Qt::ScrollBegin`, gives the mouse wheel no rate limit, and tells a trackpad by its scroll phase or touchpad device rather than by a non-null `pixelDelta`. |
 | `src/gui/WheelStepAccumulator.cpp` | Same | Same. | Same. |
 
 ### 2026-10-10 Display pill Task 3 addition (outside the historical 176-file scan)

@@ -32,6 +32,23 @@ int mouse(WheelStepAccumulator& acc, int angleY)
     return acc.stepsFor(ev);
 }
 
+// A phase-less event carrying both deltas, as Qt's macOS plugin sends for a
+// mouse wheel.
+int phaseless(WheelStepAccumulator& acc, int pixelY, int angleY)
+{
+    const QWheelEvent ev(QPointF(5, 5), QPointF(5, 5), QPoint(0, pixelY), QPoint(0, angleY),
+                         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    return acc.stepsFor(ev);
+}
+
+// A phased event with no pixel delta.
+int phasedAngleOnly(WheelStepAccumulator& acc, int angleY)
+{
+    const QWheelEvent ev(QPointF(5, 5), QPointF(5, 5), QPoint(), QPoint(0, angleY),
+                         Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    return acc.stepsFor(ev);
+}
+
 // A clock the test moves by hand, starting well past zero.
 struct TestClock {
     qint64 now{1000};
@@ -125,6 +142,53 @@ private slots:
         quickClock.now += 1;
         QCOMPARE(mouse(quick, 120), 1);
         QCOMPARE(mouse(quick, -120), -1);
+    }
+
+    // Qt's macOS plugin fills pixelDelta for a mouse wheel too, with no
+    // scroll phase: such an event steps by its angle, with no rate limit.
+    void phaseless_event_with_pixels_is_a_mouse_wheel()
+    {
+        WheelStepAccumulator acc;
+        TestClock clock;
+        clock.install(acc);
+        QVERIFY(!WheelStepAccumulator::isTrackpad(
+            QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 20), QPoint(0, 120),
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false)));
+        QCOMPARE(phaseless(acc, 20, 120), 1);
+
+        WheelStepAccumulator quick;
+        TestClock quickClock;
+        quickClock.install(quick);
+        QCOMPARE(phaseless(quick, 20, 120), 1);
+        quickClock.now += 1;
+        QCOMPARE(phaseless(quick, 20, 120), 1);
+
+        // A slow notch: 8 px would never reach 15 px per step in time,
+        // its 40 angle units are a third of a notch.
+        WheelStepAccumulator slow;
+        TestClock slowClock;
+        slowClock.install(slow);
+        QCOMPARE(phaseless(slow, 8, 40), 0);
+        QCOMPARE(phaseless(slow, 8, 40), 0);
+        QCOMPARE(phaseless(slow, 8, 40), 1);
+    }
+
+    // A phased event is a trackpad's even with no pixel delta; its angle
+    // delta is read as pixels, so 30 is two steps' travel, clamped to one,
+    // and the 50 ms limit applies.
+    void phased_event_without_pixels_is_a_trackpad()
+    {
+        WheelStepAccumulator acc;
+        TestClock clock;
+        clock.install(acc);
+        QVERIFY(WheelStepAccumulator::isTrackpad(
+            QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(), QPoint(0, 30),
+                        Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false)));
+        QCOMPARE(phasedAngleOnly(acc, 30), 1);
+        clock.now += 1;
+        QCOMPARE(phasedAngleOnly(acc, 30), 0);   // rate limited: a trackpad
+        clock.now += 100;
+        QCOMPARE(phasedAngleOnly(acc, 30), 1);
     }
 };
 

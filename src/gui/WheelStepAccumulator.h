@@ -20,7 +20,10 @@
 //                 SpectrumWidget::wheelEvent (src/gui/SpectrumWidget.cpp:
 //                 11286-11328 [@1e0718ad]) for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
-//                 Claude Code (Claude Opus 5.5).
+//                 Claude Code (Claude Opus 5.5). A trackpad is told by its
+//                 scroll phase or touchpad device, NereusSDR's own test,
+//                 not upstream's pixelDelta test (a Mac mouse wheel fills
+//                 pixelDelta too).
 // =================================================================
 
 #include <QtGlobal>
@@ -40,16 +43,27 @@ namespace NereusSDR {
 // receiver off across the band. A mouse wheel reports angle deltas, one
 // notch being 120; some desktops send 960 per notch, which must still be
 // one step.
+//
+// Which is which is NereusSDR's call, not AetherSDR's: upstream treats any
+// event with a pixelDelta as a trackpad's, but Qt's macOS plugin fills
+// pixelDelta for a plain mouse wheel too (with Qt::NoScrollPhase), which
+// would give a Mac mouse the trackpad's 15 px and 50 ms rules. An event is a
+// trackpad's when it carries a scroll phase (only gesture devices send one)
+// or Qt names its device a touchpad; every other event is a mouse wheel's.
 class NEREUS_GUI_EXPORT WheelStepAccumulator {
 public:
-    // -1, 0 or +1 for this event. Trackpad (pixelDelta not null): ignores
+    // -1, 0 or +1 for this event. Trackpad (isTrackpad): ignores
     // Qt::ScrollMomentum, ignores events whose |x| > |y|, resets the pixel
     // accumulator on Qt::ScrollBegin, one step per kTrackpadPixelsPerStep of
-    // accumulated y, clamped to +/-1 per event, and at most one step per
-    // kTrackpadMinStepIntervalMs. Mouse wheel (pixelDelta null): accumulates
-    // angleDelta().y(), one step per kAngleUnitsPerStep, clamped to +/-1 per
-    // event, no rate limit.
+    // accumulated y (pixelDelta, or angleDelta read as pixels when the
+    // pixelDelta is null), clamped to +/-1 per event, and at most one step
+    // per kTrackpadMinStepIntervalMs. Mouse wheel (everything else):
+    // accumulates angleDelta().y(), one step per kAngleUnitsPerStep, clamped
+    // to +/-1 per event, no rate limit; its pixelDelta is not read.
     int stepsFor(const QWheelEvent& event);
+    // True when event has a scroll phase (not Qt::NoScrollPhase) or comes
+    // from a QInputDevice::DeviceType::TouchPad. NereusSDR's test.
+    static bool isTrackpad(const QWheelEvent& event);
     // Test seam: elapsed-time source in ms; defaults to a QElapsedTimer.
     void setClockForTest(std::function<qint64()> nowMs);
 

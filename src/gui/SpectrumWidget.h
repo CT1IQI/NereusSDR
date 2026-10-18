@@ -4622,6 +4622,7 @@ private:
         double offsetHz{0.0};
         int    pressX{0};
         int    stepHz{1};
+        bool   moved{false};     // a move has left the press column
     };
     ReceiverDrag m_receiverDrag;
     bool m_flagDragActive{false};
