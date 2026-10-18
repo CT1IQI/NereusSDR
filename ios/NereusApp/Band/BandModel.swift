@@ -733,8 +733,18 @@ final class BandModel: ObservableObject {
                                                 dbmRange: drawn.scaleRange))
     }
 
-    /// Asks for a new centre and span: a zoom, a double tap or a pan.
-    func requestView(_ view: TuneGestures.View) {
+    /// Asks for a new centre and span: a zoom, a double tap or a pan. One
+    /// made by hand while the band shows the receiver keeps its span for the
+    /// next launch (``BandDisplaySettings/rxViewSpanHz``). The band's own
+    /// asks (the first view, a span held to the sample rate) keep nothing, so
+    /// a limit that holds only while the app starts never replaces the zoom.
+    func requestView(_ view: TuneGestures.View, byHand: Bool = false) {
+        if byHand, !keyedView, view.spanHz > 0, view.spanHz != settings.rxViewSpanHz {
+            var kept = settings
+            kept.rxViewSpanHz = view.spanHz
+            settings = kept
+            keepSettings(kept)
+        }
         guard view != requestedView else {
             return
         }
