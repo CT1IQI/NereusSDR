@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): every receiver this pan shows can be
+//                 grabbed (AetherSDR's 8 px edge zones with a 6 px body,
+//                 an 8 px strip either side of the center line); a press
+//                 on another receiver selects it and the drag tunes it;
+//                 drags keep the grab offset; flag drags tune through the
+//                 pan; the wheel steps through WheelStepAccumulator.
 //   2026-10-16  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 frequency-scale label counter counts only labels drawn,
 //                 after the narrow-layout skip.
@@ -12456,6 +12463,142 @@ static float clampDbmRangeForBottom(float bottomDbm, float rangeDb)
                       std::max(kMinDisplayRangeDb, maxRangeForBottom));
 }
 
+namespace {
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:519-526 [@1e0718ad]
+int receiverInteriorGrabPx(int loX, int hiX, int grabPx, int minBodyPx)
+{
+    const int widthPx = std::abs(hiX - loX);
+    if (widthPx <= minBodyPx) {
+        return 0;
+    }
+    return std::min(grabPx, (widthPx - minBodyPx - 1) / 2);
+}
+
+// -1 low edge, +1 high edge, 0 neither.
+// From AetherSDR src/gui/SpectrumWidget.cpp:528-556 [@1e0718ad]
+int receiverEdgeHitAtPixel(int mx, int loX, int hiX, int grabPx, int minBodyPx)
+{
+    const int left = std::min(loX, hiX);
+    const int right = std::max(loX, hiX);
+    const bool insidePassband = mx >= left && mx <= right;
+    if (insidePassband && right - left <= minBodyPx) {
+        return 0;
+    }
+
+    const int insideGrabPx = receiverInteriorGrabPx(loX, hiX, grabPx, minBodyPx);
+    const bool lowIsLeft = loX <= hiX;
+    const bool lowHit = lowIsLeft
+        ? (mx >= loX - grabPx && mx <= loX + insideGrabPx)
+        : (mx >= loX - insideGrabPx && mx <= loX + grabPx);
+    const bool highHit = lowIsLeft
+        ? (mx >= hiX - insideGrabPx && mx <= hiX + grabPx)
+        : (mx >= hiX - grabPx && mx <= hiX + insideGrabPx);
+
+    if (lowHit && highHit) {
+        return (std::abs(mx - loX) <= std::abs(mx - hiX)) ? -1 : 1;
+    }
+    if (lowHit) {
+        return -1;
+    }
+    if (highHit) {
+        return 1;
+    }
+    return 0;
+}
+
+} // namespace
+
+// Receiver grab (2026-10-18). The press and the hover cursor both ask this.
+//
+// Each receiver this pan shows offers its filter edges (AetherSDR's
+// filterEdgeHitAtPixel: 8 px outside the band, shrinking inside it so 6 px
+// of body remain), its band body, and a strip 8 px either side of its center
+// line over the spectrum (which covers the triangle under its flag). The
+// selected receiver is tested first and wins any overlap; then the others,
+// topmost first. sliceMarkerGeometry() lists them in paint order with the
+// selected one last, so walking it backwards is exactly that order.
+//
+// Only the selected receiver's edges resize; on any other receiver the edges
+// tune like the body does (AetherSDR activates the receiver and starts a
+// resize, src/gui/SpectrumWidget.cpp:9935-9944 [@1e0718ad]; NereusSDR's
+// edges on a receiver that is not selected are grey, so a press there is a
+// grab of the receiver, not of its filter).
+SpectrumWidget::ReceiverGrab
+SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
+{
+    const QVector<SliceMarkerGeometry> markers = sliceMarkerGeometry();
+    for (int i = markers.size() - 1; i >= 0; --i) {
+        const SliceMarkerGeometry& g = markers[i];
+        const int centerX = hzToX(g.centreHz, specRect);
+        const int loX = hzToX(g.centreHz + g.filterLowHz, specRect);
+        const int hiX = hzToX(g.centreHz + g.filterHighHz, specRect);
+        const int edge = receiverEdgeHitAtPixel(mx, loX, hiX, kReceiverEdgeGrabPx,
+                                                kReceiverMinBodyPx);
+        if (edge != 0) {
+            if (!g.active) {
+                return ReceiverGrab{ReceiverGrabPart::Tune, g};
+            }
+            return ReceiverGrab{edge < 0 ? ReceiverGrabPart::LowEdge
+                                         : ReceiverGrabPart::HighEdge, g};
+        }
+        if (mx >= std::min(loX, hiX) && mx <= std::max(loX, hiX)) {
+            return ReceiverGrab{ReceiverGrabPart::Tune, g};
+        }
+        if (my >= specRect.top() && my <= specRect.bottom()
+            && std::abs(mx - centerX) <= kReceiverCenterGrabPx) {
+            return ReceiverGrab{ReceiverGrabPart::Tune, g};
+        }
+    }
+    return ReceiverGrab{};
+}
+
+void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz,
+                                       int pressX, const QRect& specRect)
+{
+    // From AetherSDR src/gui/SpectrumWidget.cpp:9966-9967, 10004 [@1e0718ad]:
+    // m_vfoDragOffsetHz = xToMhz(mx) - the slice's frequency.
+    m_receiverDrag.sliceIndex = sliceIndex;
+    m_receiverDrag.viaFlag = viaFlag;
+    m_receiverDrag.offsetHz = xToHz(pressX, specRect) - centerHz;
+    m_receiverDrag.pressX = pressX;
+    int step = m_stepHz;
+    if (viaFlag) {
+        if (const VfoWidget* flag = m_vfoWidgets.value(sliceIndex, nullptr)) {
+            step = flag->stepHz();
+        }
+    }
+    m_receiverDrag.stepHz = std::max(1, step);
+}
+
+void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
+{
+    // A press with no horizontal travel does not retune: snapping alone
+    // would otherwise move a receiver that sits off the step grid.
+    if (mx == m_receiverDrag.pressX) {
+        return;
+    }
+    // Withheld while this pan shows transmit, as requestTune is.
+    if (m_moxOverlay) {
+        return;
+    }
+    VfoWidget* flag = m_vfoWidgets.value(m_receiverDrag.sliceIndex, nullptr);
+    // A locked receiver, or one this window only listens to, does not move,
+    // as its flag's wheel refuses.
+    if (flag && (flag->isLocked() || flag->isListening())) {
+        return;
+    }
+    const double step = m_receiverDrag.stepHz;
+    const double hz = std::round((xToHz(mx, specRect) - m_receiverDrag.offsetHz) / step) * step;
+    if (m_receiverDrag.viaFlag) {
+        if (flag) {
+            flag->tuneFromDrag(hz);
+        }
+        return;
+    }
+    requestTune(hz);
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -12886,44 +13029,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         }
     }
 
-    // Compute filter edge pixel positions for hit-testing
-    double loHz = m_vfoHz + m_filterLowHz;
-    double hiHz = m_vfoHz + m_filterHighHz;
-    int xLo = hzToX(loHz, specRect);
-    int xHi = hzToX(hiHz, specRect);
-    if (xLo > xHi) { std::swap(xLo, xHi); }
-
-    // 3. Filter edge grab — ±5px from edge
-    // From AetherSDR SpectrumWidget.cpp:1080-1109
-    bool loHit = std::abs(mx - xLo) <= kFilterGrab;
-    bool hiHit = std::abs(mx - xHi) <= kFilterGrab;
-    if (loHit || hiHit) {
-        if (loHit && hiHit) {
-            // Both edges within grab range — pick closer one
-            m_draggingFilter = (std::abs(mx - xLo) <= std::abs(mx - xHi))
-                ? FilterEdge::Low : FilterEdge::High;
-        } else {
-            m_draggingFilter = loHit ? FilterEdge::Low : FilterEdge::High;
-        }
-        m_filterDragStartX = mx;
-        m_filterDragStartHz = (m_draggingFilter == FilterEdge::Low)
-            ? m_filterLowHz : m_filterHighHz;
-        setCursor(Qt::SizeHorCursor);
-        return;
-    }
-
-    // 4. Inside passband — slide-to-tune (VFO drag)
-    // From AetherSDR SpectrumWidget.cpp:1112-1119
-    int left = std::min(xLo, xHi);
-    int right = std::max(xLo, xHi);
-    if (mx > left + kFilterGrab && mx < right - kFilterGrab) {
-        m_draggingVfo = true;
-        setCursor(Qt::SizeHorCursor);
-        return;
-    }
-
     // Sub-epic E: time-scale strip + LIVE button
     // From AetherSDR SpectrumWidget.cpp:1655-1693 [@0cd4559]
+    // (2026-10-18: ahead of the receiver grab, so a band under the strip
+    // cannot take the strip's press.)
     const int wfY = layout.waterfall.top();
     const QRect wfRect = layout.waterfallChrome;
 
@@ -12947,6 +13056,43 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             event->accept();
             return;
         }
+    }
+
+    // 3. Filter edge grab and 4. slide-to-tune, for every receiver this pan
+    // shows (receiverGrabAt).
+    // From AetherSDR SpectrumWidget.cpp:1080-1109
+    // From AetherSDR SpectrumWidget.cpp:1112-1119
+    // From AetherSDR src/gui/SpectrumWidget.cpp:9920-10010 [@1e0718ad]
+    const ReceiverGrab grab = receiverGrabAt(mx, my, specRect);
+    if (grab.part == ReceiverGrabPart::LowEdge || grab.part == ReceiverGrabPart::HighEdge) {
+        m_draggingFilter = (grab.part == ReceiverGrabPart::LowEdge)
+            ? FilterEdge::Low : FilterEdge::High;
+        m_filterDragStartX = mx;
+        m_filterDragStartHz = (m_draggingFilter == FilterEdge::Low)
+            ? grab.marker.filterLowHz : grab.marker.filterHighHz;
+        // The edge that stays put is the grabbed receiver's own.
+        m_filterLowHz = grab.marker.filterLowHz;
+        m_filterHighHz = grab.marker.filterHighHz;
+        setCursor(Qt::SizeHorCursor);
+        return;
+    }
+    if (grab.part == ReceiverGrabPart::Tune) {
+        // A receiver that is not selected becomes the selected one, through
+        // its flag's own activation, and this same press drags it. It is
+        // tuned through its flag: selecting it may not make it this pan's
+        // tuning target before the drag's first move (a hosting window's
+        // select goes through the Core).
+        const bool viaFlag = !grab.marker.active && grab.marker.flag;
+        if (viaFlag) {
+            if (VfoWidget* flag = m_vfoWidgets.value(grab.marker.sliceIndex, nullptr)) {
+                flag->requestActivation();
+            }
+        }
+        beginReceiverDrag(grab.marker.flag ? grab.marker.sliceIndex : -1, viaFlag,
+                          grab.marker.centreHz, mx, specRect);
+        m_draggingVfo = true;
+        setCursor(Qt::SizeHorCursor);
+        return;
     }
 
     // 5. Pan drag — click in spectrum/waterfall area and drag to pan the view
@@ -13213,9 +13359,9 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     if (m_draggingVfo) {
         // Slide-to-tune: real-time frequency update
         // From AetherSDR SpectrumWidget.cpp:1222-1228
-        double hz = xToHz(mx, specRect);
-        hz = std::round(hz / m_stepHz) * m_stepHz;
-        requestTune(hz);
+        // (2026-10-18: by the cursor's travel from the press, keeping the
+        // grab offset; see moveReceiverDrag.)
+        moveReceiverDrag(mx, specRect);
         return;
     }
 
@@ -13459,19 +13605,8 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     } else if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
         setCursor(Qt::SizeHorCursor);
     } else {
-        // Check filter edges and passband
-        double loHz = m_vfoHz + m_filterLowHz;
-        double hiHz = m_vfoHz + m_filterHighHz;
-        int xLo = hzToX(loHz, specRect);
-        int xHi = hzToX(hiHz, specRect);
-        if (xLo > xHi) { std::swap(xLo, xHi); }
-
-        bool onEdge = std::abs(mx - xLo) <= kFilterGrab ||
-                      std::abs(mx - xHi) <= kFilterGrab;
-        bool inPassband = mx > std::min(xLo, xHi) + kFilterGrab &&
-                          mx < std::max(xLo, xHi) - kFilterGrab;
-
-        if (onEdge || inPassband) {
+        // Check filter edges and passband: the press's own hit test.
+        if (receiverGrabAt(mx, my, specRect).part != ReceiverGrabPart::None) {
             setCursor(Qt::SizeHorCursor);
         } else {
             setCursor(Qt::CrossCursor);
@@ -13826,6 +13961,16 @@ void SpectrumWidget::leaveEvent(QEvent* event)
 
 void SpectrumWidget::wheelEvent(QWheelEvent* event)
 {
+    // One answer per event for every branch below: -1, 0 or +1, one step
+    // per mouse notch or per 15 px of trackpad travel (WheelStepAccumulator).
+    // A trackpad sends many small events a second, and each used to be a
+    // whole step.
+    const int steps = m_wheelSteps.stepsFor(*event);
+    if (steps == 0) {
+        event->accept();
+        return;
+    }
+
     // MW0LGE before all, handle the notch size change
     //   [original inline comment from console.cs:31140]
     // From Thetis console.cs:31133-31145 [v2.10.3.15] — the wheel resizes
@@ -13834,8 +13979,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     // panadapter tunes the VFO, so an ungated resize would steal every
     // scroll (design section 7.4).  num_steps is 1 per click upstream, not
     // a raw delta, which is what makes the step constants below Hz.
-    const int notchDelta = event->angleDelta().y();
-    const int notchSteps = (notchDelta == 0) ? 0 : (notchDelta > 0 ? 1 : -1);
+    const int notchSteps = steps;
     if (m_selectedNotchId >= 0 && notchSteps != 0) {
         const NotchMarker* n = notchMarkerById(m_selectedNotchId);
         if (n) {
@@ -13870,7 +14014,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     // itself stays at kDbmStripW = 36px wide).
     const int stripX = width() - kDbmStripW;
     if (mx >= stripX && effectiveStripW() > 0 && my < specH) {
-        const int notches = event->angleDelta().y() / 120;
+        const int notches = steps;
         if (notches != 0) {
             const float bottom = m_refLevel - m_dynamicRange;
             m_dynamicRange = qBound(10.0f, m_dynamicRange - notches * 5.0f, 200.0f);
@@ -13888,11 +14032,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     // Plain scroll: tune VFO by step size (matches Thetis panadapter behavior)
     // Ctrl+scroll: adjust ref level
     // Ctrl+Shift+scroll: zoom bandwidth
-    int delta = event->angleDelta().y();
-    if (delta == 0) {
-        QWidget::wheelEvent(event);
-        return;
-    }
+    const int delta = steps;
 
     if (event->modifiers() & Qt::MetaModifier || event->modifiers() & Qt::ControlModifier) {
         // Cmd+scroll (macOS) or Ctrl+scroll: zoom bandwidth in/out
@@ -13935,7 +14075,6 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
                                           // eight tracked fields
     } else {
         // Plain scroll: tune VFO by step size
-        int steps = (delta > 0) ? 1 : -1;
         double newHz = m_vfoHz + steps * m_stepHz;
         newHz = std::max(newHz, 100000.0);
         requestTune(newHz);
@@ -16132,6 +16271,33 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::collapsedChanged, this, [this](bool) {
         updateVfoPositions();
         markOverlayDirty();
+    });
+    // Drag to tune (2026-10-18): a drag on the flag reports the cursor's
+    // global x; this pan converts it with its own Hz per pixel and tunes the
+    // flag's slice through the flag, keeping the grab offset, under the same
+    // transmit, lock and listen gates as a drag on the spectrum.
+    QPointer<VfoWidget> flagRef(w);
+    connect(w, &VfoWidget::flagDragStarted, this, [this, flagRef](int pressGlobalX) {
+        if (!flagRef) {
+            return;
+        }
+        const QRect specRect = spectrumLayout().spectrum;
+        const int pressX = mapFromGlobal(QPoint(pressGlobalX, 0)).x();
+        beginReceiverDrag(flagRef->sliceIndex(), true, flagRef->frequency(), pressX,
+                          specRect);
+        m_flagDragActive = true;
+        setCursor(Qt::SizeHorCursor);
+    });
+    connect(w, &VfoWidget::flagDragMoved, this, [this, flagRef](int globalX) {
+        if (!flagRef || !m_flagDragActive
+            || m_receiverDrag.sliceIndex != flagRef->sliceIndex()) {
+            return;
+        }
+        moveReceiverDrag(mapFromGlobal(QPoint(globalX, 0)).x(), spectrumLayout().spectrum);
+    });
+    connect(w, &VfoWidget::flagDragFinished, this, [this]() {
+        m_flagDragActive = false;
+        setCursor(Qt::CrossCursor);
     });
     w->show();
     w->raise();

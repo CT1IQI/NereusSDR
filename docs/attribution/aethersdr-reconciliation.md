@@ -94,6 +94,13 @@ claim), or when 25a couldn't positively disprove the claim.
 | `src/models/BandPlanManager.h` | `src/models/BandPlanManager.h` | File header line 5: "Ported from AetherSDR src/models/BandPlanManager.h [@0cd4559]." Phase 3G RX Epic sub-epic D Task 3. BandPlanManager loader class verbatim port. | "Loader class ported verbatim from AetherSDR `src/models/BandPlanManager.{h,cpp}` [@0cd4559]. NereusSDR namespace; AppSettings key 'BandPlanName' kept for upstream parity; value types in BandPlan.h." |
 | `src/models/BandPlanManager.cpp` | `src/models/BandPlanManager.cpp` | File cites "See BandPlanManager.h for license, attribution, and modification history." Inline cites at loadPlans (line 30), setActivePlan (line 57), loadPlanFromJson (line 82). Phase 3G RX Epic sub-epic D Task 3. | Same as BandPlanManager.h above. |
 
+### 2026-10-18 receiver grab and trackpad steps addition (outside the historical 176-file scan)
+
+| NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
+|---|---|---|---|
+| `src/gui/WheelStepAccumulator.h` | `src/gui/SpectrumWidget.cpp:11286-11328` [@1e0718ad] | The wheel step accumulator from `SpectrumWidget::wheelEvent`: 15 px of trackpad travel per step, momentum and sideways swipes ignored, one trackpad step per 50 ms, 120 angle units per mouse step, clamped to one step per event; inline comments kept verbatim. Upstream file has no copyright/GPL header; the project-level attribution block is in the file. | "Wheel and trackpad step accumulator ported from AetherSDR SpectrumWidget::wheelEvent." NereusSDR clears the pixel accumulator on `Qt::ScrollBegin` and gives the mouse wheel no rate limit. |
+| `src/gui/WheelStepAccumulator.cpp` | Same | Same. | Same. |
+
 ### 2026-10-10 Display pill Task 3 addition (outside the historical 176-file scan)
 
 | NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |

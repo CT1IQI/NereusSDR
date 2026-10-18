@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): receiver grab hit test, drag offset
+//                 state and the wheel step accumulator.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Test-only friend for visible-plane IMD integration evidence.
@@ -424,6 +427,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/RemoteSpectrumCapture.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/WheelStepAccumulator.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -4589,6 +4593,45 @@ private:
     // Passband center drag (slide-to-tune) — AetherSDR:434
     bool m_draggingVfo{false};
 
+    // Receiver grab (2026-10-18). Which part of which receiver a point is
+    // over, for the press and the hover cursor alike: the selected
+    // receiver first, then the others topmost first. An edge of a receiver
+    // that is not selected tunes it like its body does.
+    enum class ReceiverGrabPart { None, LowEdge, HighEdge, Tune };
+    struct ReceiverGrab {
+        ReceiverGrabPart     part{ReceiverGrabPart::None};
+        SliceMarkerGeometry  marker;
+    };
+    ReceiverGrab receiverGrabAt(int mx, int my, const QRect& specRect) const;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:360 [@1e0718ad]
+    static constexpr int kReceiverEdgeGrabPx = 8;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:361 [@1e0718ad]
+    static constexpr int kReceiverMinBodyPx = 6;
+    // Half width of the slide-to-tune strip around a receiver's center line.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:9952 [@1e0718ad]
+    static constexpr int kReceiverCenterGrabPx = 8;
+
+    // One drag-to-tune, from the spectrum or from a flag. The offset
+    // between the press point and the receiver's center is kept, so the
+    // receiver moves by the cursor's travel and never jumps to the cursor.
+    // A receiver other than the selected one is tuned through its own flag
+    // (VfoWidget::tuneFromDrag), the path the flag's wheel uses.
+    struct ReceiverDrag {
+        int    sliceIndex{-1};   // -1: the pan's own VFO, no flag
+        bool   viaFlag{false};
+        double offsetHz{0.0};
+        int    pressX{0};
+        int    stepHz{1};
+    };
+    ReceiverDrag m_receiverDrag;
+    bool m_flagDragActive{false};
+    void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz,
+                           int pressX, const QRect& specRect);
+    void moveReceiverDrag(int mx, const QRect& specRect);
+
+    // Wheel and trackpad steps for every wheel branch (2026-10-18).
+    WheelStepAccumulator m_wheelSteps;
+
     // Divider drag (spectrum/waterfall split) — AetherSDR:419
     bool m_draggingDivider{false};
 
@@ -4603,8 +4646,8 @@ private:
     int    m_bwDragStartX{0};
     double m_bwDragStartBw{0.0};
 
-    // Filter edge grab zone — from AetherSDR line 1087: GRAB = 5
-    static constexpr int kFilterGrab = 5;
+    // (kFilterGrab, the 5 px edge zone from AetherSDR line 1087, gave way
+    // to kReceiverEdgeGrabPx and kReceiverMinBodyPx above on 2026-10-18.)
 
     // ---- HIGH SWR / PA safety overlay state ----
     // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]
