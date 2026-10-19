@@ -357,6 +357,7 @@
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "TxChainSection.h"
+#include "TxProcessingSection.h"
 #include "TxFilterSection.h"
 #include "TxKeyingSection.h"
 #include "TxMonitorSection.h"
@@ -576,101 +577,15 @@ void TxApplet::buildUI()
     m_filterSection = new TxFilterSection(body, vbox->spacing());
     vbox->addWidget(m_filterSection);
 
-    // ── Button row 3: 2-Tone + PS-A + DUP ───────────────────────────────────
-    // Phase 3M-1a H.3: 2-Tone and PS-A are hidden until their owning phases land.
-    //   2-Tone: TODO [3M-3]: visible when 2-tone test feature lands.
-    //   PS-A:   TODO [3M-4]: visible when PureSignal lands.
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(2);
-
-        // ── Phase 3M-1c J.2 ─ 2-TONE button ────────────────────────────────────
-        // Mirrors Thetis chk2TONE_CheckedChanged (console.cs:44728-44760
-        // [v2.10.3.13]).  Wired to TwoToneController via
-        // setTwoToneController().  The TUN-stop pre-step + 300 ms settle
-        // delay live inside TwoToneController::setActive (Phase I.3) so the
-        // button itself just dispatches setActive(checked).
-        m_twoToneBtn = new QPushButton(QStringLiteral("2-Tone"), this);
-        m_twoToneBtn->setCheckable(true);
-        m_twoToneBtn->setFixedHeight(22);
-        m_twoToneBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_twoToneBtn->setStyleSheet(Style::buttonBaseStyle() + Style::redCheckedStyle());
-        m_twoToneBtn->setAccessibleName(QStringLiteral("2-tone test"));
-        m_twoToneBtn->setToolTip(QStringLiteral(
-            "Continuous or pulsed two-tone IMD test "
-            "(configure in Settings > Test > Two-Tone IMD)."));
-        row->addWidget(m_twoToneBtn, 1);
-
-        // PS-A: green when checked — #006030/#008040 are a darker green than kGreenBg=#006040.
-        // Phase 3M-4 Task 13: un-hidden under capability gating.  Visibility
-        // is set by setBoardCapabilities() / MainWindow board-change handler;
-        // hidden by default until that fires (matches the Phase 3M-1a comment
-        // pattern of hidden-until-capability-known).
-        m_psaBtn = new QPushButton(QStringLiteral("PS-A"), this);
-        m_psaBtn->setObjectName(QStringLiteral("TxAppletPsaBtn"));
-        m_psaBtn->setCheckable(true);
-        m_psaBtn->setFixedHeight(22);
-        m_psaBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_psaBtn->setStyleSheet(Style::buttonBaseStyle()
-            + QStringLiteral("QPushButton:checked {"
-                             " background: #006030; border: 1px solid #008040; color: #fff; }"));
-        m_psaBtn->setAccessibleName(QStringLiteral("PS-A PureSignal"));
-        m_psaBtn->setToolTip(QStringLiteral(
-            "Toggle PureSignal auto-calibration. Right-click to open PureSignal..."));
-        // Phase 3M-4 bench-fix: default visible so the button shows on every
-        // PS-capable board even if MainWindow's capability gate fires after
-        // applet construction (timing race observed at bench).  setBoardCapabilities
-        // (TxApplet.cpp:1985) hides for caps.hasPureSignal=false (Atlas/HL2).
-        row->addWidget(m_psaBtn, 1);
-
-        m_dupBtn = new QPushButton(QStringLiteral("DUP"), this);
-        m_dupBtn->setObjectName(QStringLiteral("TxAppletDupBtn"));
-        m_dupBtn->setCheckable(true);
-        m_dupBtn->setFixedHeight(22);
-        m_dupBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_dupBtn->setStyleSheet(Style::buttonBaseStyle() + Style::greenCheckedStyle());
-        m_dupBtn->setAccessibleName(QStringLiteral("Display duplex"));
-        connect(m_dupBtn, &QPushButton::clicked, this, &TxApplet::displayDuplexRequested);
-        row->addWidget(m_dupBtn, 1);
-
-        vbox->addLayout(row);
-    }
-
-    // ── SWR protection LED inset ─────────────────────────────────────────────
-    // xPA button removed (external-PA hardware-specific phase, no plan yet).
-    // SWR Prot LED now occupies its own full-width inset row.
-    // Inset: fixedHeight 22, bg #0a0a18, border #1e2e3e (AetherSDR TxApplet.cpp:224–253)
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        // Inset container for SWR protection LED (styled like AetherSDR atuInset)
-        auto* inset = new QWidget(this);
-        inset->setFixedHeight(22);
-        inset->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        inset->setObjectName(QStringLiteral("xpaInset"));
-        inset->setStyleSheet(QStringLiteral(
-            "#xpaInset { background: %1; border: 1px solid %2; border-radius: 3px; }"
-            "#xpaInset QLabel { border: none; background: transparent; }"
-        ).arg(Style::kInsetBg, Style::kInsetBorder));
-
-        auto* insetLayout = new QHBoxLayout(inset);
-        insetLayout->setContentsMargins(4, 0, 4, 0);
-        insetLayout->setSpacing(2);
-
-        // 15. SWR protection LED — inactive: #405060, 9px bold
-        // Matches AetherSDR makeIndicator() pattern (TxApplet.cpp:22–27)
-        m_swrProtLed = new QLabel(QStringLiteral("SWR Prot"), inset);
-        m_swrProtLed->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
-        ).arg(Style::kTextInactive));
-        m_swrProtLed->setAlignment(Qt::AlignCenter);
-        m_swrProtLed->setAccessibleName(QStringLiteral("SWR protection indicator"));
-        insetLayout->addWidget(m_swrProtLed);
-
-        row->addWidget(inset, 1); // full width (xPA removed)
-        vbox->addLayout(row);
-    }
+    // ── 4g. The 2-Tone, PS-A and DUP buttons and the SWR protection LED —
+    // all moved to TxProcessingSection. The section is given this column's
+    // own row spacing so the rows inside it keep the same gap they had here.
+    m_processingSection = new TxProcessingSection(body, vbox->spacing());
+    vbox->addWidget(m_processingSection);
+    // The DUP press raises this applet's own signal, so it is wired here
+    // rather than inside the section.
+    connect(m_processingSection->dupButton(), &QPushButton::clicked, this,
+            &TxApplet::displayDuplexRequested);
 
     vbox->addStretch();
 }
@@ -782,10 +697,10 @@ void TxApplet::wireControls()
     // high-SWR protection is active; dim it when cleared.
     {
         auto updateSwrProtLed = [this](bool isHigh) {
-            if (!m_swrProtLed) { return; }
+            if (!m_processingSection->swrProtectionLed()) { return; }
             const QString color = isHigh ? QStringLiteral("#ffaa00")
                                          : Style::kTextInactive;
-            m_swrProtLed->setStyleSheet(QStringLiteral(
+            m_processingSection->swrProtectionLed()->setStyleSheet(QStringLiteral(
                 "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
             ).arg(color));
         };
@@ -1475,7 +1390,7 @@ void TxApplet::wireControls()
 
     // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
     // toggled → TwoToneController::setActive.  Echo-guarded.
-    connect(m_twoToneBtn, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_processingSection->twoToneButton(), &QPushButton::toggled, this, [this](bool on) {
         if (m_updatingFromModel) { return; }
         // Desktop remote transmit: a remote window asks the Core.
         if (m_model && m_model->remoteTransmitRouted()) {
@@ -1487,9 +1402,9 @@ void TxApplet::wireControls()
         if (m_desktopTwoToneRequest) {
             const QPointer<TxApplet> self(this);
             m_desktopTwoToneRequest(on);
-            if (self && m_twoToneBtn) {
-                const QSignalBlocker blocker(m_twoToneBtn);
-                m_twoToneBtn->setChecked(m_twoToneCtrl && m_twoToneCtrl->isActive());
+            if (self && m_processingSection->twoToneButton()) {
+                const QSignalBlocker blocker(m_processingSection->twoToneButton());
+                m_processingSection->twoToneButton()->setChecked(m_twoToneCtrl && m_twoToneCtrl->isActive());
             }
             return;
         }
@@ -1523,19 +1438,19 @@ void TxApplet::wireControls()
     //
     // Production always uses RadioModel's one session facade. The local
     // coordinator remains late-bound behind that facade.
-    if (m_psaBtn) {
+    if (m_processingSection->psaButton()) {
         // Right-click → emit openPureSignalDialogRequested.  Wired
         // unconditionally so the seam exists even when no PureSignal
         // coordinator is bound (test harness verifies the signal emit).
-        m_psaBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(m_psaBtn, &QWidget::customContextMenuRequested, this,
+        m_processingSection->psaButton()->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_processingSection->psaButton(), &QWidget::customContextMenuRequested, this,
                 [this](const QPoint&) {
             emit openPureSignalDialogRequested();
         });
 
         // The checked state expresses automatic-calibration intent. Turning
         // it off uses the acknowledged Off/reset action.
-        connect(m_psaBtn, &QPushButton::toggled, this, [this](bool on) {
+        connect(m_processingSection->psaButton(), &QPushButton::toggled, this, [this](bool on) {
             if (m_updatingFromModel || !m_psFacade) {
                 return;
             }
@@ -1668,10 +1583,10 @@ void TxApplet::syncRemoteIndicators()
         m_keyingSection->tuneButton()->setChecked(tuning);
         m_keyingSection->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
     }
-    if (m_twoToneBtn) {
+    if (m_processingSection->twoToneButton()) {
         const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
-        QSignalBlocker b(m_twoToneBtn);
-        m_twoToneBtn->setChecked(ps && ps->twoToneOn());
+        QSignalBlocker b(m_processingSection->twoToneButton());
+        m_processingSection->twoToneButton()->setChecked(ps && ps->twoToneOn());
     }
     m_updatingFromModel = wasUpdating;
 }
@@ -2174,7 +2089,7 @@ void TxApplet::removeReceiveOnlyLock()
 {
     for (QWidget* control : {static_cast<QWidget*>(m_keyingSection->moxButton()),
                              static_cast<QWidget*>(m_keyingSection->tuneButton()),
-                             static_cast<QWidget*>(m_twoToneBtn),
+                             static_cast<QWidget*>(m_processingSection->twoToneButton()),
                              static_cast<QWidget*>(voxButton())}) {
         if (!control || !control->property(kRxOnlySavedTooltip).isValid()) {
             continue;
@@ -2212,12 +2127,18 @@ void TxApplet::applyReceiveOnlyLock()
         lock(m_keyingSection->moxButton());
     }
     lock(m_keyingSection->tuneButton());
-    lock(m_twoToneBtn);   // MW0LGE_21a
+    lock(m_processingSection->twoToneButton());   // MW0LGE_21a
     // TX safety (2026-09-30): a lost radio link leaves VOX alone, as
     // Thetis's power-off does (console.cs:27488-27493 [v2.10.3.15]).
     if (m_model->transmitLockCoversVox()) {
         lock(voxButton());
     }
+}
+
+// The processing rows' widgets, now owned by TxProcessingSection.
+QPushButton* TxApplet::twoToneButton() const
+{
+    return m_processingSection ? m_processingSection->twoToneButton() : nullptr;
 }
 
 // The TX chain rows' widgets, now owned by TxChainSection.
@@ -2390,10 +2311,10 @@ void TxApplet::setMicProfileManager(MicProfileManager* mgr)
 // ---------------------------------------------------------------------------
 void TxApplet::setDisplayDuplexState(bool checked, bool available, const QString& tooltip)
 {
-    const QSignalBlocker block(m_dupBtn);
-    m_dupBtn->setChecked(checked);
-    m_dupBtn->setEnabled(available);
-    m_dupBtn->setToolTip(tooltip);
+    const QSignalBlocker block(m_processingSection->dupButton());
+    m_processingSection->dupButton()->setChecked(checked);
+    m_processingSection->dupButton()->setEnabled(available);
+    m_processingSection->dupButton()->setToolTip(tooltip);
 }
 
 void TxApplet::setTwoToneController(TwoToneController* controller)
@@ -2413,10 +2334,10 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
                 syncRemoteIndicators();
                 return;
             }
-            if (!m_twoToneBtn) { return; }
-            QSignalBlocker blk(m_twoToneBtn);
+            if (!m_processingSection->twoToneButton()) { return; }
+            QSignalBlocker blk(m_processingSection->twoToneButton());
             m_updatingFromModel = true;
-            m_twoToneBtn->setChecked(active);
+            m_processingSection->twoToneButton()->setChecked(active);
             m_updatingFromModel = false;
         });
 
@@ -2427,9 +2348,9 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
         }
 
         // Sync initial state.
-        QSignalBlocker blk(m_twoToneBtn);
+        QSignalBlocker blk(m_processingSection->twoToneButton());
         m_updatingFromModel = true;
-        m_twoToneBtn->setChecked(m_twoToneCtrl->isActive());
+        m_processingSection->twoToneButton()->setChecked(m_twoToneCtrl->isActive());
         m_updatingFromModel = false;
     }
 }
@@ -2587,7 +2508,7 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
     gateTransmitControl(voxButton(), permitted && m_voxPermitted,
                         permitted ? m_voxReason : reason);
-    apply(m_twoToneBtn);
+    apply(m_processingSection->twoToneButton());
     // Task 16: the receive-only lock back on top (checkpoint join).
     applyReceiveOnlyLock();
 }
@@ -2611,7 +2532,7 @@ void TxApplet::setPureSignalArmingPermitted(bool permitted, const QString& unava
     // Fix wave GUI-I7: the facade's reason off first, so this gate keeps
     // the button's own tooltip to put back.
     removePsaFacadeReason();
-    gateTransmitControl(m_psaBtn, permitted, reason);
+    gateTransmitControl(m_processingSection->psaButton(), permitted, reason);
     syncPsaFromFacade();
     applyReceiveOnlyLock();
 }
@@ -2764,18 +2685,18 @@ void TxApplet::requestRemoteTunePower(int watts)
 //
 // Hide / show the [PS-A] button based on caps.hasPureSignal.  Called by
 // MainWindow on RadioModel::currentRadioChanged (and once on startup).
-// Mirrors the RxApplet::setBoardCapabilities pattern.  No-op when m_psaBtn
+// Mirrors the RxApplet::setBoardCapabilities pattern.  No-op when m_processingSection->psaButton()
 // is null (e.g. during early construction or after teardown).
 // ---------------------------------------------------------------------------
 void TxApplet::setBoardCapabilities(const NereusSDR::BoardCapabilities& caps)
 {
-    if (!m_psaBtn) { return; }
+    if (!m_processingSection->psaButton()) { return; }
     // Fix round 1 (minor 5): with no radio the caps fall back to Unknown.
     // PS-A shows, disabled with its reason, until the board is known; only
     // a known board without PureSignal hides it.
     const bool boardUnknown = caps.board == HPSDRHW::Unknown;
     m_psBoardUnknown = boardUnknown && !caps.hasPureSignal;
-    m_psaBtn->setVisible(caps.hasPureSignal || boardUnknown);
+    m_processingSection->psaButton()->setVisible(caps.hasPureSignal || boardUnknown);
     syncPsaFromFacade();
 }
 
@@ -2795,14 +2716,14 @@ void TxApplet::setPureSignal(NereusSDR::PureSignal* coordinator)
 
 void TxApplet::syncPsaFromFacade()
 {
-    if (!m_psaBtn) {
+    if (!m_processingSection->psaButton()) {
         return;
     }
     const bool automaticIntent = m_psFacade && m_psFacade->settings()
         ? m_psFacade->settings()->autoCalEnabled() : false;
-    const QSignalBlocker blocker(m_psaBtn);
+    const QSignalBlocker blocker(m_processingSection->psaButton());
     m_updatingFromModel = true;
-    m_psaBtn->setChecked(automaticIntent);
+    m_processingSection->psaButton()->setChecked(automaticIntent);
     // R-R3-49 (parity Task 7): arming keys nothing, so canArm.
     const bool canArm = !m_psBoardUnknown && m_psFacade && m_psFacade->available()
         && m_psFacade->canArm();
@@ -2815,25 +2736,25 @@ void TxApplet::syncPsaFromFacade()
                                                                : m_psFacade->armingRefusal();
         const QString reason = refusal.isEmpty()
             ? PureSignalSessionFacade::needsRadioReason() : refusal;
-        m_psaBtn->setProperty(kPsaFacadeSavedTooltip, m_psaBtn->toolTip());
-        m_psaBtn->setProperty(kPsaFacadeSavedDescription, m_psaBtn->accessibleDescription());
-        m_psaBtn->setToolTip(reason);
-        m_psaBtn->setAccessibleDescription(reason);
+        m_processingSection->psaButton()->setProperty(kPsaFacadeSavedTooltip, m_processingSection->psaButton()->toolTip());
+        m_processingSection->psaButton()->setProperty(kPsaFacadeSavedDescription, m_processingSection->psaButton()->accessibleDescription());
+        m_processingSection->psaButton()->setToolTip(reason);
+        m_processingSection->psaButton()->setAccessibleDescription(reason);
     }
-    m_psaBtn->setEnabled(m_psArmingPermitted && canArm);
+    m_processingSection->psaButton()->setEnabled(m_psArmingPermitted && canArm);
     m_updatingFromModel = false;
 }
 
 void TxApplet::removePsaFacadeReason()
 {
-    if (!m_psaBtn || !m_psaBtn->property(kPsaFacadeSavedTooltip).isValid()) {
+    if (!m_processingSection->psaButton() || !m_processingSection->psaButton()->property(kPsaFacadeSavedTooltip).isValid()) {
         return;
     }
-    m_psaBtn->setToolTip(m_psaBtn->property(kPsaFacadeSavedTooltip).toString());
-    m_psaBtn->setAccessibleDescription(
-        m_psaBtn->property(kPsaFacadeSavedDescription).toString());
-    m_psaBtn->setProperty(kPsaFacadeSavedTooltip, QVariant());
-    m_psaBtn->setProperty(kPsaFacadeSavedDescription, QVariant());
+    m_processingSection->psaButton()->setToolTip(m_processingSection->psaButton()->property(kPsaFacadeSavedTooltip).toString());
+    m_processingSection->psaButton()->setAccessibleDescription(
+        m_processingSection->psaButton()->property(kPsaFacadeSavedDescription).toString());
+    m_processingSection->psaButton()->setProperty(kPsaFacadeSavedTooltip, QVariant());
+    m_processingSection->psaButton()->setProperty(kPsaFacadeSavedDescription, QVariant());
 }
 
 // ---------------------------------------------------------------------------

@@ -253,6 +253,7 @@ class SliceModel;
 class TxChainSection;
 class TxFilterSection;
 class TxKeyingSection;
+class TxProcessingSection;
 class TxMonitorSection;
 class TxPowerSection;
 class TxVoxSection;
@@ -443,7 +444,7 @@ public:
     // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
     // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
     QComboBox*   profileCombo()      const;
-    QPushButton* twoToneButton()     const { return m_twoToneBtn; }
+    QPushButton* twoToneButton()     const;
     // Task 16: the keying buttons receive only disables.
     QPushButton* moxButton()         const;
     QPushButton* tuneButton()        const;
@@ -667,6 +668,10 @@ private:
     //      TxChainSection. The applet keeps the model wiring and the dialogs
     //      the right-click opens; the section owns the widgets.
     TxChainSection* m_chainSection = nullptr;
+    // 4g. The 2-Tone, PS-A and DUP buttons and the SWR protection LED —
+    //      now in TxProcessingSection. The applet keeps the model wiring and
+    //      the signals the buttons raise; the section owns the widgets.
+    TxProcessingSection* m_processingSection = nullptr;
     // 4f. The TX bandpass filter cutoffs and the filter status label — now in
     //      TxFilterSection. The applet keeps the model wiring; the section owns
     //      the widgets.
@@ -703,10 +708,7 @@ private:
     // 6. TUNE
     // 7. TX Profile combo
     // 8. 2-Tone test
-    QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (Phase 3M-4 Task 13)
-    QPushButton* m_psaBtn     = nullptr;
-    QPushButton* m_dupBtn     = nullptr;
     // Shared session facade owned by RadioModel. setPureSignal() changes its
     // local coordinator only for the established standalone test seam.
     QPointer<NereusSDR::PureSignalSessionFacade> m_psFacade;
@@ -719,7 +721,6 @@ private:
     // constant (Cluster E will add it to StyleConstants.h).
 
     // 10. SWR protection LED (wired to SwrProtectionController::highSwrChanged)
-    QLabel*      m_swrProtLed = nullptr;
     // Removed NYI members (re-add when their phases ship):
     //   m_atuBtn      — ATU phase (no plan yet)
     //   m_memBtn      — channel-memory phase
