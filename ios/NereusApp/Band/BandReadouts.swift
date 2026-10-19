@@ -55,13 +55,19 @@ struct BandReadouts: View {
                         in: spectrum.insetBy(dx: 0, dy: 26), id: "cursorReadout",
                         background: BandColours.cursorBackground)
             }
-            if settings.timestampPosition != .none, let time = band.topLineTime {
-                let waterfall = layout.waterfall
-                readout(Self.timeText(time, utc: settings.timestampUtc), colour: BandColours.timestamp,
-                        size: BandColours.timestampPoints, weight: .regular,
-                        corner: settings.timestampPosition == .left ? .topLeft : .topRight,
-                        in: CGRect(x: 0, y: waterfall.minY, width: waterfall.width, height: waterfall.height),
-                        id: "timestampReadout")
+            if settings.timestampPosition != .none {
+                // The band's frames redraw only the band itself, so the
+                // top line's time is read again on a clock of its own.
+                TimelineView(.periodic(from: .now, by: Self.timestampRefreshSeconds)) { _ in
+                    if let time = band.topLineTime {
+                        let waterfall = layout.waterfall
+                        readout(Self.timeText(time, utc: settings.timestampUtc), colour: BandColours.timestamp,
+                                size: BandColours.timestampPoints, weight: .regular,
+                                corner: settings.timestampPosition == .left ? .topLeft : .topRight,
+                                in: CGRect(x: 0, y: waterfall.minY, width: waterfall.width, height: waterfall.height),
+                                id: "timestampReadout")
+                    }
+                }
             }
             if band.lookBackLines > 0 {
                 live(layout: layout)
@@ -162,11 +168,23 @@ struct BandReadouts: View {
     }
 
     /// A line's time as `HH:mm:ss`, UTC or the phone's own time zone.
+    /// How often the waterfall's timestamp is read again, in seconds: a
+    /// quarter of the second it shows.
+    static let timestampRefreshSeconds = 0.25
+
     static func timeText(_ time: Double, utc: Bool) -> String {
+        (utc ? utcFormatter : localFormatter).string(from: Date(timeIntervalSince1970: time)) + (utc ? " UTC" : "")
+    }
+
+    /// Made once: a formatter is slow to make, and the timestamp is read four times a second.
+    private static let localFormatter = timeFormatter(.autoupdatingCurrent)
+    private static let utcFormatter = timeFormatter(TimeZone(identifier: "UTC") ?? .gmt)
+
+    private static func timeFormatter(_ zone: TimeZone) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = utc ? TimeZone(identifier: "UTC") : .current
-        return formatter.string(from: Date(timeIntervalSince1970: time)) + (utc ? " UTC" : "")
+        formatter.timeZone = zone
+        return formatter
     }
 }
