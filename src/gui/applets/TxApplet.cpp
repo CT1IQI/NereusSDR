@@ -357,6 +357,7 @@
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "TxMonitorSection.h"
+#include "TxPowerSection.h"
 #include "TxVoxSection.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
@@ -497,100 +498,14 @@ void TxApplet::buildUI()
         vbox->addWidget(m_micSourceBadge);
     }
 
-    // ── 1. Forward Power gauge — per-SKU scale ──────────────────────────────
-    // Default ticks at construction match the Hermes-class 100 W radio
-    // (0 / 40 / 80 / 100 / 120 — AetherSDR TxApplet.cpp:71); rescaleFwdGaugeForModel()
-    // reapplies a per-SKU range when RadioModel::currentRadioChanged fires
-    // (wired in wireControls()).  Bench-reported #167 follow-up: HL2 reading
-    // 1-5 W on a 0-120 W scale was a barely-visible sliver; per-SKU scaling
-    // gives each radio a properly-sized meter.
-    m_fwdPowerGauge = AccessoryReadouts::makeSlimBar(
-        AccessoryReadouts::forwardPower(120.0, 100.0), QStringLiteral("Power"), this);
-    m_fwdPowerGauge->setAccessibleName(QStringLiteral("Forward power gauge"));
-    rescaleFwdGaugeForModel(HPSDRModel::FIRST);
-    vbox->addWidget(m_fwdPowerGauge);
-
-    // The approved SWR row uses the same text and limit as the accessory panels.
-    m_swrGauge = AccessoryReadouts::makeSlimBar(
-        AccessoryReadouts::swr(), AccessoryReadouts::swrName(), this);
-    m_swrGauge->setAccessibleName(QStringLiteral("SWR gauge"));
-    vbox->addWidget(m_swrGauge);
-
-    // ── 3. RF Power slider row ───────────────────────────────────────────────
-    // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:87–104)
-    {
-        auto* rfSlider = new QSlider(Qt::Horizontal, this);
-        rfSlider->setRange(0, 100);
-        rfSlider->setValue(100);
-        rfSlider->setAccessibleName(QStringLiteral("RF power"));
-        rfSlider->setObjectName(QStringLiteral("TxRfPowerSlider"));
-
-        auto* rfValue = new QLabel(QStringLiteral("100"), this);
-        rfValue->setFixedWidth(22);
-        rfValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        rfValue->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextPrimary));
-
-        m_rfPowerSlider = rfSlider;
-        m_rfPowerValue  = rfValue;
-
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        auto* lbl = new QLabel(QStringLiteral("RF Power:"), this);
-        lbl->setFixedWidth(62);
-        lbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTitleText));
-        row->addWidget(lbl);
-
-        rfSlider->setFixedHeight(18);
-        rfSlider->setEnabled(true);   // Phase 3M-1a H.3: wired
-        // Tooltip set by rescalePowerSlidersForModel() (Issue #175 Task 7) -
-        // Thetis-faithful "Transmit Drive - relative value" wording, applied
-        // every time the active SKU changes.  No initial setToolTip here.
-        row->addWidget(rfSlider, 1);
-        row->addWidget(rfValue);
-
-        vbox->addLayout(row);
-    }
-
-    // ── 4. Tune Power slider row ─────────────────────────────────────────────
-    // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:107–128)
-    {
-        auto* tunSlider = new QSlider(Qt::Horizontal, this);
-        tunSlider->setRange(0, 100);
-        tunSlider->setValue(10);
-        tunSlider->setAccessibleName(QStringLiteral("Tune power"));
-
-        auto* tunValue = new QLabel(QStringLiteral("10"), this);
-        tunValue->setFixedWidth(22);
-        tunValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        tunValue->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextPrimary));
-
-        m_tunePwrSlider = tunSlider;
-        m_tunePwrValue  = tunValue;
-
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        auto* lbl = new QLabel(QStringLiteral("Tune Pwr:"), this);
-        lbl->setFixedWidth(62);
-        lbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTitleText));
-        row->addWidget(lbl);
-
-        tunSlider->setFixedHeight(18);
-        tunSlider->setEnabled(true);  // Phase 3M-1a H.3: wired
-        // Tooltip set by rescalePowerSlidersForModel() (Issue #175 Task 7) -
-        // Thetis-faithful "Tune and/or 2Tone Drive - relative value" wording,
-        // applied every time the active SKU changes.  No initial setToolTip
-        // here.
-        row->addWidget(tunSlider, 1);
-        row->addWidget(tunValue);
-
-        vbox->addLayout(row);
-    }
+    // ── 1-4. The forward-power and SWR gauges and the RF Power and Tune Power
+    // slider rows — all moved to TxPowerSection. The section is given this
+    // column's own row spacing so the rows inside it keep the same gap they
+    // had here, and the model's power meter so the gauge is scaled the way it
+    // was scaled when the rows were built.
+    m_powerSection = new TxPowerSection(
+        body, vbox->spacing(), m_model ? m_model->mainPowerMeter() : nullptr);
+    vbox->addWidget(m_powerSection);
 
     // ── Button row: TUNE + MOX (50% each) ──────────────────────────────────
     // Positioned above VOX+MON for action-button prominence
@@ -997,7 +912,7 @@ void TxApplet::wireControls()
             this, [this](double fwdW, double /*revW*/, double /*swr*/) {
         if (!m_model->mainPowerMeter()->onAmplifier()) {
             constexpr double kAlpha = 0.30;
-            m_fwdPowerSmoothedW = kAlpha * fwdW + (1.0 - kAlpha) * m_fwdPowerSmoothedW;
+            m_powerSection->setSmoothedForwardPowerW(kAlpha * fwdW + (1.0 - kAlpha) * m_powerSection->smoothedForwardPowerW());
         }
     });
     auto* fwdGaugeRefreshTimer = new QTimer(this);
@@ -1009,7 +924,7 @@ void TxApplet::wireControls()
     MainPowerMeter* meter = m_model->mainPowerMeter();
     connect(meter, &MainPowerMeter::sourceChanged, this, [this, meter] {
         if (!meter->onAmplifier()) {
-            m_fwdPowerSmoothedW = meter->forwardW();
+            m_powerSection->setSmoothedForwardPowerW(meter->forwardW());
         }
         refreshPowerReadouts();
     });
@@ -1026,14 +941,14 @@ void TxApplet::wireControls()
     // Keep the explicit reset; the new rows then show their no-reading dashes.
     if (mox) {
         connect(mox, &MoxController::moxStateChanged, this, [this](bool active) {
-            if (!active) { m_fwdPowerSmoothedW = 0.0; }
+            if (!active) { m_powerSection->setSmoothedForwardPowerW(0.0); }
             refreshPowerReadouts();
         });
     }
     // R-R3-49 parity Task 33: the remote controller never keys; the Core's
     // mirrored transmit state clears the rows and drive note instead.
     connect(m_model, &RadioModel::transmittingChanged, this, [this](bool active) {
-        if (!active) { m_fwdPowerSmoothedW = 0.0; }
+        if (!active) { m_powerSection->setSmoothedForwardPowerW(0.0); }
         refreshPowerReadouts();
     });
 
@@ -1088,7 +1003,7 @@ void TxApplet::wireControls()
     // which formats the value in -X.X dB on HL2 and bare integer on every
     // other SKU.  The old direct setText(QString::number(val)) would have
     // bypassed the dB conversion on HL2.
-    connect(m_rfPowerSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
+    connect(m_powerSection->rfPowerSlider(), &QSlider::valueChanged, this, [this, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
         tx.setPower(val);
@@ -1118,9 +1033,9 @@ void TxApplet::wireControls()
 
     // Reverse: TransmitModel::powerChanged → slider
     connect(&tx, &TransmitModel::powerChanged, this, [this](int power) {
-        QSignalBlocker b(m_rfPowerSlider);
+        QSignalBlocker b(m_powerSection->rfPowerSlider());
         m_updatingFromModel = true;
-        m_rfPowerSlider->setValue(power);
+        m_powerSection->rfPowerSlider()->setValue(power);
         updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
@@ -1137,14 +1052,14 @@ void TxApplet::wireControls()
     //
     // Issue #175 Task 7: label text routed through updatePowerSliderLabels()
     // for the HL2 (slider/3.0 - 33.0)/2.0 dB conversion.
-    connect(m_tunePwrSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
+    connect(m_powerSection->tunePowerSlider(), &QSlider::valueChanged, this, [this, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
         // R-R3-49 (parity Task 2): a remote window asks the Core, which
         // does what the lines below do for its own transmit band. A drag
         // asks once, on release.
         if (remoteTunePower()) {
-            if (!m_tunePwrSlider->isSliderDown()) {
+            if (!m_powerSection->tunePowerSlider()->isSliderDown()) {
                 requestRemoteTunePower(val);
             }
             return;
@@ -1164,9 +1079,9 @@ void TxApplet::wireControls()
         tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     });
 
-    connect(m_tunePwrSlider, &QSlider::sliderReleased, this, [this]() {
+    connect(m_powerSection->tunePowerSlider(), &QSlider::sliderReleased, this, [this]() {
         if (m_updatingFromModel || !remoteTunePower()) { return; }
-        requestRemoteTunePower(m_tunePwrSlider->value());
+        requestRemoteTunePower(m_powerSection->tunePowerSlider()->value());
     });
 
     // Fix round 1 (minor 2): the change answered, the slider shows the
@@ -1174,10 +1089,10 @@ void TxApplet::wireControls()
     // (or a value it clamped). Not while the operator holds the slider.
     connect(&tx, &TransmitModel::tunePowerForTxBandWriteInFlightChanged,
             this, [this, &tx](bool inFlight) {
-        if (inFlight || !remoteTunePower() || m_tunePwrSlider->isSliderDown()) { return; }
-        QSignalBlocker b(m_tunePwrSlider);
+        if (inFlight || !remoteTunePower() || m_powerSection->tunePowerSlider()->isSliderDown()) { return; }
+        QSignalBlocker b(m_powerSection->tunePowerSlider());
         m_updatingFromModel = true;
-        m_tunePwrSlider->setValue(tx.tunePowerForTxBand());
+        m_powerSection->tunePowerSlider()->setValue(tx.tunePowerForTxBand());
         updatePowerSliderLabels();
         m_updatingFromModel = false;
     });
@@ -1193,12 +1108,12 @@ void TxApplet::wireControls()
         // the operator's change is on its way (the Core's next value, after
         // its answer, shows; a refusal shows the Core's value again).
         if (remoteTunePower()
-            && (m_tunePwrSlider->isSliderDown() || tx.tunePowerForTxBandWriteInFlight())) {
+            && (m_powerSection->tunePowerSlider()->isSliderDown() || tx.tunePowerForTxBandWriteInFlight())) {
             return;
         }
-        QSignalBlocker b(m_tunePwrSlider);
+        QSignalBlocker b(m_powerSection->tunePowerSlider());
         m_updatingFromModel = true;
-        m_tunePwrSlider->setValue(watts);
+        m_powerSection->tunePowerSlider()->setValue(watts);
         updatePowerSliderLabels();
         m_updatingFromModel = false;
     });
@@ -1209,9 +1124,9 @@ void TxApplet::wireControls()
     connect(&tx, &TransmitModel::tunePowerByBandChanged,
             this, [this, &tx](Band band, int watts) {
         if (band != m_currentBand || remoteTunePower() || tx.tuneTxBandKnown()) { return; }
-        QSignalBlocker b(m_tunePwrSlider);
+        QSignalBlocker b(m_powerSection->tunePowerSlider());
         m_updatingFromModel = true;
-        m_tunePwrSlider->setValue(watts);
+        m_powerSection->tunePowerSlider()->setValue(watts);
         updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
@@ -1971,15 +1886,15 @@ void TxApplet::syncFromModel()
 
     // RF Power
     {
-        QSignalBlocker b(m_rfPowerSlider);
-        m_rfPowerSlider->setValue(tx.power());
+        QSignalBlocker b(m_powerSection->rfPowerSlider());
+        m_powerSection->rfPowerSlider()->setValue(tx.power());
     }
 
     // Tune Power for current band
     {
-        QSignalBlocker b(m_tunePwrSlider);
+        QSignalBlocker b(m_powerSection->tunePowerSlider());
         const int tunePwr = shownTunePower(m_currentBand);
-        m_tunePwrSlider->setValue(tunePwr);
+        m_powerSection->tunePowerSlider()->setValue(tunePwr);
     }
 
     // Issue #175 Task 7: refresh both labels through the central
@@ -2189,140 +2104,29 @@ void TxApplet::syncDesktopKeyState()
 
 void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
 {
-    if (!m_fwdPowerGauge) { return; }
-    const MainPowerMeter* meter = m_model ? m_model->mainPowerMeter() : nullptr;
-    const int limit = meter ? meter->visualLimitW() : paMaxWattsFor(model);
-    const double top = meter ? meter->scaleTopW()
-        : limit * ControlRanges::kRfPowerGaugeHeadroom;
-    ReadingDescriptor reading = AccessoryReadouts::forwardPower(top, limit);
-    // Per-SKU PA rating and 20 percent headroom remain the radio rule.
-    // Keep sub-watt resolution for a QRP radio, whole watts for an amplifier.
-    reading.decimals = limit <= 10 ? 1 : 0;
-    const auto fmt = [limit](double watts) {
-        return QString::number(watts, 'f', limit <= 10 ? 1 : 0);
-    };
-    reading.ticks = {{0.0, fmt(0.0)}, {limit / 3.0, fmt(limit / 3.0)},
-                     {2.0 * limit / 3.0, fmt(2.0 * limit / 3.0)},
-                     {static_cast<double>(limit), fmt(limit)}, {top, fmt(top)}};
-    m_fwdPowerGauge->setReading(reading, QStringLiteral("Power"));
+    if (!m_powerSection) { return; }
+    m_powerSection->rescaleFwdGaugeForModel(
+        model, m_model ? m_model->mainPowerMeter() : nullptr);
 }
 
 void TxApplet::refreshPowerReadouts()
 {
-    if (!m_model || !m_fwdPowerGauge || !m_swrGauge) { return; }
-    if (!m_model->isTransmitting()) {
-        m_fwdPowerSmoothedW = 0.0;
-        m_fwdPowerGauge->clearValue();
-        m_swrGauge->clearValue();
-        m_fwdPowerGauge->setCompactNote({}, {});
-        return;
-    }
-    const MainPowerMeter* meter = m_model->mainPowerMeter();
-    m_fwdPowerGauge->setValue(meter->onAmplifier() ? meter->forwardW() : m_fwdPowerSmoothedW);
-    m_swrGauge->setValue(meter->swr());
-    if (meter->onAmplifier()) {
-        const int decimals = paMaxWattsFor(m_model->hardwareProfile().model) <= 10 ? 1 : 0;
-        m_fwdPowerGauge->setCompactNote(QStringLiteral("DRIVE"),
-            QString::number(meter->driveW(), 'f', decimals) + QStringLiteral(" W"));
-    } else {
-        m_fwdPowerGauge->setCompactNote({}, {});
-    }
+    if (!m_model || !m_powerSection) { return; }
+    m_powerSection->refreshPowerReadouts(
+        m_model->mainPowerMeter(), m_model->isTransmitting(),
+        m_model->hardwareProfile().model);
 }
 
-// ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────────
-//
-// From mi0bot-Thetis console.cs:2098-2108 [v2.10.3.13-beta2]
-//   if (HPSDRHW.HermesLite == Audio.LastRadioHardware ||
-//       HPSDRModel.HERMESLITE == HardwareSpecific.Model)     // MI0BOT: Need an early indication of hardware type due to HL2 rx attenuator can be negative
-//   {
-//       ptbPWR.Maximum = 90;        // MI0BOT: Changes for HL2 only having a 16 step output attenuator
-//       ptbPWR.Value = 0;
-//       ptbPWR.LargeChange = 6;
-//       ptbPWR.SmallChange = 6;
-//       ptbTune.Maximum = 99;
-//       ptbTune.Value = 0;
-//       ptbTune.LargeChange = 3;
-//       ptbTune.SmallChange = 3;
-//       ...
-//   }
-//
-// HL2: RF Power slider 0..90 step 6 (16-step output attenuator,
-//      0.5 dB/step); Tune slider 0..99 step 3 (33 sub-steps).
-// Other SKUs: canonical Thetis 0..100 step 1.
-//
-// MI0BOT: Changes for HL2 only having a 16 step output attenuator
-// [original inline comment from mi0bot console.cs:2098]
 void TxApplet::rescalePowerSlidersForModel(HPSDRModel model)
 {
-    if (!m_rfPowerSlider || !m_tunePwrSlider) { return; }
-
-    // Cache for updatePowerSliderLabels() so the formatter sees the same
-    // SKU the slider was rescaled for, even when called outside the live
-    // currentRadioChanged path (unit tests, headless harness).
-    m_powerSliderModel = model;
-
-    const QSignalBlocker rfBlock(m_rfPowerSlider);
-    const QSignalBlocker tunBlock(m_tunePwrSlider);
-
-    m_rfPowerSlider->setRange(0, rfPowerSliderMaxFor(model));
-    m_rfPowerSlider->setSingleStep(rfPowerSliderStepFor(model));
-    m_rfPowerSlider->setPageStep(rfPowerSliderStepFor(model));
-
-    m_tunePwrSlider->setRange(0, tuneSliderMaxFor(model));
-    m_tunePwrSlider->setSingleStep(tuneSliderStepFor(model));
-    m_tunePwrSlider->setPageStep(tuneSliderStepFor(model));
-
-    // Tooltip - Thetis-faithful on every SKU.  Replaces the previous
-    // "RF output power (0-100 W)" / "Tune carrier power for current band
-    // (0-100 W)" wording, which contradicted Thetis semantics on every
-    // SKU (the slider is a relative drive level, not watts).
-    //
-    // From Thetis console.resx + mi0bot-Thetis console.resx [v2.10.3.13-beta2]
-    //   <data ...><value>Transmit Drive - This is a relative value and is
-    //   not meant to imply watts, unless the PA profile is configured
-    //   with MAX watts @ 100%</value></data>
-    m_rfPowerSlider->setToolTip(QStringLiteral(
-        "Transmit Drive - relative value, not watts unless the PA profile "
-        "is configured with MAX watts @ 100%"));
-    m_tunePwrSlider->setToolTip(QStringLiteral(
-        "Tune and/or 2Tone Drive - relative value, not watts unless the "
-        "PA profile is configured with MAX watts @ 100%"));
-
-    updatePowerSliderLabels();
+    if (!m_powerSection) { return; }
+    m_powerSection->rescalePowerSlidersForModel(model);
 }
 
-// From mi0bot-Thetis console.cs:29245-29274 [v2.10.3.13-beta2]
-//   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 has only 15 output power levels
-//   {
-//       ...
-//       lblPWR.Text = "Drive:  " + ((Math.Round(drv / 6.0) / 2) - 7.5).ToString() + "dB";
-//   }
-//
-// HL2 RF Power label formula:
-//   dB = (round(drv/6.0)/2) - 7.5     // 0.5 dB steps in [-7.5, 0]
-// HL2 Tune slider label formula (slider 0..99 -> dB -16.5..0):
-//   dB = (slider/3 - 33) / 2          // inverse of the persistence formula
-//
-// MI0BOT: HL2 has only 15 output power levels
-// [original inline comment from mi0bot console.cs:29245]
 void TxApplet::updatePowerSliderLabels()
 {
-    if (!m_rfPowerSlider || !m_tunePwrSlider
-        || !m_rfPowerValue || !m_tunePwrValue) { return; }
-
-    // Use the cached SKU set by rescalePowerSlidersForModel() so the
-    // label format always matches the slider's effective range (HL2
-    // 0..90 step 6 / 0..99 step 3, all others 0..100 step 1).
-    const HPSDRModel model = m_powerSliderModel;
-    const int        rfVal  = m_rfPowerSlider->value();
-    const int        tunVal = m_tunePwrSlider->value();
-
-    // The shown values come from HpsdrModel.h (rfPowerShownFor,
-    // tuneSliderShownFor: mi0bot's UpdateDriveLabel and UpdateTuneLabel),
-    // which the Core's catalogue reads too.
-    const int decimals = powerSliderShownDecimalsFor(model);
-    m_rfPowerValue->setText(QString::number(rfPowerShownFor(model, rfVal), 'f', decimals));
-    m_tunePwrValue->setText(QString::number(tuneSliderShownFor(model, tunVal), 'f', decimals));
+    if (!m_powerSection) { return; }
+    m_powerSection->updatePowerSliderLabels();
 }
 
 // Canonical TX band — derived from the active slice's frequency (which
@@ -2377,11 +2181,11 @@ void TxApplet::setCurrentBand(Band band)
     // Update the Tune Power slider to reflect the per-band stored value.
     {
         const int tunePwr = shownTunePower(band);
-        QSignalBlocker b(m_tunePwrSlider);
+        QSignalBlocker b(m_powerSection->tunePowerSlider());
         m_updatingFromModel = true;
-        m_tunePwrSlider->setValue(tunePwr);
+        m_powerSection->tunePowerSlider()->setValue(tunePwr);
         // Issue #175 Task 7: HL2 dB / non-HL2 integer — replaces the
-        // bare m_tunePwrValue->setText(QString::number(tunePwr)) so HL2
+        // bare m_powerSection->tunePowerLabel()->setText(QString::number(tunePwr)) so HL2
         // operators see the dB-attenuator label rather than a raw 0..99
         // slider integer.
         updatePowerSliderLabels();
@@ -2630,6 +2434,37 @@ void TxApplet::applyReceiveOnlyLock()
     if (m_model->transmitLockCoversVox()) {
         lock(voxButton());
     }
+}
+
+// The power rows' widgets, now owned by TxPowerSection.
+BarInstrument* TxApplet::fwdPowerGauge() const
+{
+    return m_powerSection ? m_powerSection->fwdPowerGauge() : nullptr;
+}
+
+BarInstrument* TxApplet::swrGauge() const
+{
+    return m_powerSection ? m_powerSection->swrGauge() : nullptr;
+}
+
+QSlider* TxApplet::rfPowerSlider() const noexcept
+{
+    return m_powerSection ? m_powerSection->rfPowerSlider() : nullptr;
+}
+
+QSlider* TxApplet::tunePowerSlider() const noexcept
+{
+    return m_powerSection ? m_powerSection->tunePowerSlider() : nullptr;
+}
+
+QLabel* TxApplet::rfPowerLabel() const noexcept
+{
+    return m_powerSection ? m_powerSection->rfPowerLabel() : nullptr;
+}
+
+QLabel* TxApplet::tunePowerLabel() const noexcept
+{
+    return m_powerSection ? m_powerSection->tunePowerLabel() : nullptr;
 }
 
 // The VOX row's widgets, now owned by TxVoxSection. The applet keeps the
@@ -2979,7 +2814,7 @@ void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unava
     const QString reason = unavailableReason.isEmpty()
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
-    for (QWidget* control : {static_cast<QWidget*>(m_rfPowerSlider),
+    for (QWidget* control : {static_cast<QWidget*>(m_powerSection->rfPowerSlider()),
                              static_cast<QWidget*>(m_txFilterLowSpin),
                              static_cast<QWidget*>(m_txFilterHighSpin)}) {
         gateTransmitControl(control, permitted, reason);
@@ -2997,7 +2832,7 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
     m_transmitChainSettingsReason = reason;
-    for (QWidget* control : {static_cast<QWidget*>(m_tunePwrSlider),
+    for (QWidget* control : {static_cast<QWidget*>(m_powerSection->tunePowerSlider()),
                              static_cast<QWidget*>(voxThresholdSlider()),
                              static_cast<QWidget*>(voxHoldSlider()),
                              static_cast<QWidget*>(m_monitorSection

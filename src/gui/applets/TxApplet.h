@@ -251,6 +251,7 @@ class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
 class TxMonitorSection;
+class TxPowerSection;
 class TxVoxSection;
 
 // TxApplet — transmit controls panel.
@@ -424,8 +425,8 @@ public slots:
     void applyStationCfcCompression(const QList<double>& binsDb);
     void setStationCfcBarChartUnavailable(const QString& reason);
     // Parity Task 33: the RF Pwr and SWR bars, for a test.
-    BarInstrument* fwdPowerGauge() const { return m_fwdPowerGauge; }
-    BarInstrument* swrGauge() const { return m_swrGauge; }
+    BarInstrument* fwdPowerGauge() const;
+    BarInstrument* swrGauge() const;
     // R-R3-49 (parity Task 7): PS-A arms PureSignal and keys nothing. It
     // follows this gate (not setTransmitPermitted): a remote window whose
     // Core offers arming (transmitSettingsVersion 7) uses it while the
@@ -484,7 +485,7 @@ public:
     QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
     QPushButton* voxButton()         const;
     // Issue #175 Task 7: HL2 slider rescale + dB label test access.
-    QSlider*     rfPowerSlider()    const noexcept { return m_rfPowerSlider; }
+    QSlider*     rfPowerSlider()    const noexcept;
     /// Fix wave I4: a remote window's line under MOX and TUNE saying who
     /// holds transmit on the Core ("Grant's iPhone holds transmit.",
     /// "... holds transmit and is away.", "Transmit is changing hands.").
@@ -497,9 +498,9 @@ public:
     bool takeTransmitOffered() const;
     QPushButton* takeTransmitButton() const { return m_takeTransmitBtn; }
     QString transmitHolderText() const;
-    QSlider*     tunePowerSlider()  const noexcept { return m_tunePwrSlider; }
-    QLabel*      rfPowerLabel()     const noexcept { return m_rfPowerValue; }
-    QLabel*      tunePowerLabel()   const noexcept { return m_tunePwrValue; }
+    QSlider*     tunePowerSlider()  const noexcept;
+    QLabel*      rfPowerLabel()     const noexcept;
+    QLabel*      tunePowerLabel()   const noexcept;
 
     // ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────
     // mi0bot-Thetis HL2 parity helpers.
@@ -631,20 +632,13 @@ private:
     QLabel*  m_holderLabel = nullptr;   // fix wave I4
     QPushButton* m_takeTransmitBtn = nullptr;  // Task 78
     // 1. Forward Power gauge
-    BarInstrument*  m_fwdPowerGauge  = nullptr;
     // 2. SWR gauge
-    BarInstrument*  m_swrGauge       = nullptr;
     // EMA smoothing state for fwd-power gauge (Thetis-style envelope detector
     // not yet ported; this is a simple alpha=0.25 exponential-moving-average
     // to keep the displayed value calm — RadioStatus::powerChanged fires
     // ~twice per hardware sample, which makes raw values visibly jittery).
-    double   m_fwdPowerSmoothedW{0.0};
     // 3. RF Power
-    QSlider* m_rfPowerSlider  = nullptr;
-    QLabel*  m_rfPowerValue   = nullptr;
     // 4. Tune Power
-    QSlider* m_tunePwrSlider  = nullptr;
-    QLabel*  m_tunePwrValue   = nullptr;
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────
     // Relocated from PhoneCwApplet (Phone tab Control #10).  Layout:
     //   [VOX btn 48px] [Threshold slider + DexpPeakMeter stack][-N dB inset]
@@ -660,6 +654,11 @@ private:
     //     readouts — now in TxVoxSection (3M-3a-iii bench polish 2026-05-04).
     //     The applet keeps the model wiring, the 100 ms peak poller and the
     //     transmit-permission gates; the section owns the widgets.
+    // 1-4. The forward-power and SWR gauges and the RF Power and Tune Power
+    //      slider rows — now in TxPowerSection. The applet keeps the model
+    //      wiring and the smoothed forward-power reading it feeds the gauge;
+    //      the section owns the widgets and the per-SKU scaling.
+    TxPowerSection* m_powerSection = nullptr;
     TxVoxSection* m_voxSection = nullptr;
     // 100 ms QTimer driving the VOX peak meter.  Cadence matches Thetis
     // UpdateNoiseGate Task.Delay(100) at console.cs:25347 [v2.10.3.13].
@@ -734,7 +733,6 @@ private:
     // the test calls rescalePowerSlidersForModel directly without rebuilding
     // the radio profile).  Default HPSDRModel::FIRST is the same sentinel
     // used by rescaleFwdGaugeForModel(HPSDRModel::FIRST) at construction.
-    HPSDRModel m_powerSliderModel{HPSDRModel::FIRST};
 
     // Flag preventing echo loops between the model and the UI.
     bool m_updatingFromModel{false};
