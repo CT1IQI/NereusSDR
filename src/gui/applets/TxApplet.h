@@ -251,6 +251,7 @@ class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
 class TxMonitorSection;
+class TxVoxSection;
 
 // TxApplet — transmit controls panel.
 //
@@ -481,7 +482,7 @@ public:
     /// Rebuilds the letter row (a slice came or went, control changed).
     void refreshTransmitSliceChoices();
     QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
-    QPushButton* voxButton()         const { return m_voxBtn; }
+    QPushButton* voxButton()         const;
     // Issue #175 Task 7: HL2 slider rescale + dB label test access.
     QSlider*     rfPowerSlider()    const noexcept { return m_rfPowerSlider; }
     /// Fix wave I4: a remote window's line under MOX and TUNE saying who
@@ -654,13 +655,13 @@ private:
     // (setup.designer.cs:45005-45013 [v2.10.3.13]).
     // Bidirectional with TransmitModel::voxEnabled / voxThresholdDb /
     // voxHangTimeMs.  Right-click on the VOX button → openSetupRequested.
-    QPushButton*    m_voxBtn{nullptr};
-    QSlider*        m_voxSlider{nullptr};         // VOX threshold (-80..0 dB)
-    QLabel*         m_voxLvlLabel{nullptr};
-    QSlider*        m_voxDlySlider{nullptr};      // Hold time (1..2000 ms)
-    QLabel*         m_voxDlyLabel{nullptr};
-    DexpPeakMeter*  m_voxPeakMeter{nullptr};
-    // 100 ms QTimer driving m_voxPeakMeter.  Cadence matches Thetis
+    // 4b. VOX row — the VOX toggle, the threshold slider with the live
+    //     DexpPeakMeter strip, the hold-time slider and their inset
+    //     readouts — now in TxVoxSection (3M-3a-iii bench polish 2026-05-04).
+    //     The applet keeps the model wiring, the 100 ms peak poller and the
+    //     transmit-permission gates; the section owns the widgets.
+    TxVoxSection* m_voxSection = nullptr;
+    // 100 ms QTimer driving the VOX peak meter.  Cadence matches Thetis
     // UpdateNoiseGate Task.Delay(100) at console.cs:25347 [v2.10.3.13].
     QTimer*         m_voxMeterTimer{nullptr};
     // 4c/4d. MON toggle, the SPEAKERS / PHONES output pair, the notice that
@@ -760,6 +761,13 @@ private:
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
     QString m_monitorOutputReason;
     void applyMonitorOutputGate();
+    // The VOX row's widgets, now owned by TxVoxSection. The applet keeps the
+    // model wiring, the 100 ms peak poller and the permission gates; these
+    // reach the section's widgets for it.
+    QSlider* voxThresholdSlider() const;
+    QLabel*  voxThresholdLabel()  const;
+    QSlider* voxHoldSlider()       const;
+    QLabel*  voxHoldLabel()        const;
     bool m_txProfilePermitted{true};
     bool m_txProcessingPermitted{true};   // R-R3-49 (parity Task 4)
     bool m_powerByBandPermitted{true};    // R-R3-49 (group A fix wave, M3)

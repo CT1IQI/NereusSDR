@@ -357,6 +357,7 @@
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "TxMonitorSection.h"
+#include "TxVoxSection.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
@@ -680,76 +681,12 @@ void TxApplet::buildUI()
     // Slider-stack: a small QVBoxLayout wraps the threshold slider (top)
     // and DexpPeakMeter (below) so the live mic peak strip sits directly
     // under the threshold knob — matches Thetis picVOX placement.
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        m_voxBtn = new QPushButton(QStringLiteral("VOX"), this);
-        m_voxBtn->setCheckable(true);
-        m_voxBtn->setFixedWidth(48);
-        m_voxBtn->setFixedHeight(22);
-        m_voxBtn->setStyleSheet(Style::buttonBaseStyle()
-                                + Style::greenCheckedStyle());
-        m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
-        m_voxBtn->setObjectName(QStringLiteral("TxVoxButton"));
-        m_voxBtn->setToolTip(QStringLiteral(
-            "VOX: voice-operated transmit.  Left-click to toggle.\n"
-            "Right-click to open the DEXP/VOX setup page."));
-        // CustomContextMenu so right-click hits the openSetupRequested slot
-        // instead of the default platform menu.
-        m_voxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-        row->addWidget(m_voxBtn);
-
-        // Threshold slider-stack: slider on top, DexpPeakMeter strip below.
-        auto* voxStackGroup = new QWidget(this);
-        auto* voxStackVbox = new QVBoxLayout(voxStackGroup);
-        voxStackVbox->setContentsMargins(0, 0, 0, 0);
-        voxStackVbox->setSpacing(1);
-
-        m_voxSlider = new QSlider(Qt::Horizontal, voxStackGroup);
-        // From Thetis console.Designer.cs:6018-6019 [v2.10.3.13]:
-        //   ptbVOX.Maximum = 0; ptbVOX.Minimum = -80;
-        m_voxSlider->setRange(-80, 0);
-        m_voxSlider->setValue(-20);
-        m_voxSlider->setFixedHeight(14);
-        m_voxSlider->setStyleSheet(Style::sliderHStyle());
-        m_voxSlider->setAccessibleName(QStringLiteral("VOX threshold (dB)"));
-        m_voxSlider->setObjectName(QStringLiteral("TxVoxThresholdSlider"));
-        voxStackVbox->addWidget(m_voxSlider);
-
-        m_voxPeakMeter = new DexpPeakMeter(voxStackGroup);
-        m_voxPeakMeter->setObjectName(QStringLiteral("TxVoxPeakMeter"));
-        m_voxPeakMeter->setAccessibleName(QStringLiteral("VOX live mic peak"));
-        voxStackVbox->addWidget(m_voxPeakMeter);
-
-        row->addWidget(voxStackGroup, 1);
-
-        m_voxLvlLabel = new QLabel(QStringLiteral("-20 dB"), this);
-        m_voxLvlLabel->setStyleSheet(Style::insetValueStyle());
-        m_voxLvlLabel->setFixedWidth(38);
-        m_voxLvlLabel->setAlignment(Qt::AlignCenter);
-        row->addWidget(m_voxLvlLabel);
-        new InsetValueLabelFit(m_voxLvlLabel, m_voxSlider, QStringLiteral(" dB"), 38);
-
-        m_voxDlySlider = new QSlider(Qt::Horizontal, this);
-        // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
-        //   udDEXPHold.Maximum = 2000; udDEXPHold.Minimum = 1; (units: ms)
-        m_voxDlySlider->setRange(1, 2000);
-        m_voxDlySlider->setValue(500);
-        m_voxDlySlider->setStyleSheet(Style::sliderHStyle());
-        m_voxDlySlider->setAccessibleName(QStringLiteral("VOX hold time (ms)"));
-        m_voxDlySlider->setObjectName(QStringLiteral("TxVoxHoldSlider"));
-        row->addWidget(m_voxDlySlider, 1);
-
-        m_voxDlyLabel = new QLabel(QStringLiteral("500 ms"), this);
-        m_voxDlyLabel->setStyleSheet(Style::insetValueStyle());
-        m_voxDlyLabel->setFixedWidth(42);
-        m_voxDlyLabel->setAlignment(Qt::AlignCenter);
-        row->addWidget(m_voxDlyLabel);
-        new InsetValueLabelFit(m_voxDlyLabel, m_voxDlySlider, QStringLiteral(" ms"), 42);
-
-        vbox->addLayout(row);
-    }
+    // ── 4b. VOX row: the VOX toggle, the threshold slider with the live
+    // DexpPeakMeter strip, the hold-time slider and their inset readouts —
+    // all moved to TxVoxSection. The section is given this column's own
+    // row spacing so the rows inside it keep the same gap they had here.
+    m_voxSection = new TxVoxSection(body, vbox->spacing());
+    vbox->addWidget(m_voxSection);
 
     // ── 4c. MON toggle button + 4d. Monitor volume slider ─────────────────────
     // ── 4c/4d. MON row: the MON toggle, the SPEAKERS / PHONES output pair,
@@ -1478,18 +1415,18 @@ void TxApplet::wireControls()
     //
     // Bidirectional binds for [VOX] toggle + threshold/hold sliders, plus
     // right-click → openSetupRequested("Transmit", "DEXP/VOX") and a 100 ms
-    // QTimer driving m_voxPeakMeter (TxApplet::pollVoxMeter).
+    // QTimer driving the VOX peak meter (TxApplet::pollVoxMeter).
     // Mirrors the wiring pattern from PhoneCwApplet (Phase 3M-3a-iii Task
     // 15) — relocated here as part of the 2026-05-04 bench polish.
 
     // ── VOX [ON] toggle ↔ TransmitModel::voxEnabled ──────────────────────────
-    if (m_voxBtn) {
+    if (voxButton()) {
         {
-            QSignalBlocker b(m_voxBtn);
-            m_voxBtn->setChecked(tx.voxEnabled());
+            QSignalBlocker b(voxButton());
+            voxButton()->setChecked(tx.voxEnabled());
         }
         // UI → Model
-        connect(m_voxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+        connect(voxButton(), &QPushButton::toggled, this, [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setVoxEnabled(on);
         });
@@ -1497,8 +1434,8 @@ void TxApplet::wireControls()
         connect(&tx, &TransmitModel::voxEnabledChanged, this, [this](bool on) {
             m_updatingFromModel = true;
             {
-                QSignalBlocker b(m_voxBtn);
-                m_voxBtn->setChecked(on);
+                QSignalBlocker b(voxButton());
+                voxButton()->setChecked(on);
             }
             m_updatingFromModel = false;
         });
@@ -1508,18 +1445,18 @@ void TxApplet::wireControls()
     // Range -80..0 dB from console.Designer.cs:6018-6019 [v2.10.3.13]
     // (already set in buildUI).  Default value -20 dB matches Thetis
     // ptbVOX.Value=-20 (console.Designer.cs:6024 [v2.10.3.13]).
-    if (m_voxSlider) {
+    if (voxThresholdSlider()) {
         {
-            QSignalBlocker b(m_voxSlider);
-            m_voxSlider->setValue(tx.voxThresholdDb());
+            QSignalBlocker b(voxThresholdSlider());
+            voxThresholdSlider()->setValue(tx.voxThresholdDb());
         }
-        if (m_voxLvlLabel) {
-            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        if (voxThresholdLabel()) {
+            voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
         }
         // UI → Model + label refresh
-        connect(m_voxSlider, &QSlider::valueChanged, this, [this, &tx](int dB) {
-            if (m_voxLvlLabel) {
-                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
+        connect(voxThresholdSlider(), &QSlider::valueChanged, this, [this, &tx](int dB) {
+            if (voxThresholdLabel()) {
+                voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
             }
             if (m_updatingFromModel) { return; }
             tx.setVoxThresholdDb(dB);
@@ -1528,11 +1465,11 @@ void TxApplet::wireControls()
         connect(&tx, &TransmitModel::voxThresholdDbChanged, this, [this](int dB) {
             m_updatingFromModel = true;
             {
-                QSignalBlocker b(m_voxSlider);
-                m_voxSlider->setValue(dB);
+                QSignalBlocker b(voxThresholdSlider());
+                voxThresholdSlider()->setValue(dB);
             }
-            if (m_voxLvlLabel) {
-                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
+            if (voxThresholdLabel()) {
+                voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
             }
             m_updatingFromModel = false;
         });
@@ -1542,18 +1479,18 @@ void TxApplet::wireControls()
     // Range 1..2000 ms from setup.designer.cs:45005-45013 [v2.10.3.13]
     // (already set in buildUI).  Default 500 ms matches udDEXPHold.Value
     // (setup.designer.cs:45020 [v2.10.3.13]).
-    if (m_voxDlySlider) {
+    if (voxHoldSlider()) {
         {
-            QSignalBlocker b(m_voxDlySlider);
-            m_voxDlySlider->setValue(tx.voxHangTimeMs());
+            QSignalBlocker b(voxHoldSlider());
+            voxHoldSlider()->setValue(tx.voxHangTimeMs());
         }
-        if (m_voxDlyLabel) {
-            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        if (voxHoldLabel()) {
+            voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
         }
         // UI → Model + label refresh
-        connect(m_voxDlySlider, &QSlider::valueChanged, this, [this, &tx](int ms) {
-            if (m_voxDlyLabel) {
-                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
+        connect(voxHoldSlider(), &QSlider::valueChanged, this, [this, &tx](int ms) {
+            if (voxHoldLabel()) {
+                voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(ms));
             }
             if (m_updatingFromModel) { return; }
             tx.setVoxHangTimeMs(ms);
@@ -1562,11 +1499,11 @@ void TxApplet::wireControls()
         connect(&tx, &TransmitModel::voxHangTimeMsChanged, this, [this](int ms) {
             m_updatingFromModel = true;
             {
-                QSignalBlocker b(m_voxDlySlider);
-                m_voxDlySlider->setValue(ms);
+                QSignalBlocker b(voxHoldSlider());
+                voxHoldSlider()->setValue(ms);
             }
-            if (m_voxDlyLabel) {
-                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
+            if (voxHoldLabel()) {
+                voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(ms));
             }
             m_updatingFromModel = false;
         });
@@ -1575,15 +1512,15 @@ void TxApplet::wireControls()
     // ── Right-click on VOX → emit openSetupRequested ─────────────────────────
     // Mirrors PhoneCwApplet's DEXP-button right-click pattern.  MainWindow
     // listens and jumps the SetupDialog to the "DEXP/VOX" leaf page.
-    if (m_voxBtn) {
-        connect(m_voxBtn, &QPushButton::customContextMenuRequested, this,
+    if (voxButton()) {
+        connect(voxButton(), &QPushButton::customContextMenuRequested, this,
                 [this](const QPoint&) {
             emit openSetupRequested(QStringLiteral("Transmit"),
                                     QStringLiteral("DEXP/VOX"));
         });
     }
 
-    // ── 100 ms timer driving m_voxPeakMeter ──────────────────────────────────
+    // ── 100 ms timer driving the VOX peak meter ──────────────────────────────────
     // Cadence matches Thetis UpdateNoiseGate Task.Delay(100) at
     // console.cs:25347 [v2.10.3.13].  Stops automatically when the applet
     // is destroyed (parented to `this`).  Continuous (NOT MOX-gated) since
@@ -2057,26 +1994,26 @@ void TxApplet::syncFromModel()
     // always starts OFF), but we still pull whatever the current model
     // state is so any other UI surface (e.g. Setup → DEXP/VOX page) stays
     // in agreement.
-    if (m_voxBtn) {
-        QSignalBlocker bv(m_voxBtn);
-        m_voxBtn->setChecked(tx.voxEnabled());
+    if (voxButton()) {
+        QSignalBlocker bv(voxButton());
+        voxButton()->setChecked(tx.voxEnabled());
     }
-    if (m_voxSlider) {
+    if (voxThresholdSlider()) {
         {
-            QSignalBlocker b(m_voxSlider);
-            m_voxSlider->setValue(tx.voxThresholdDb());
+            QSignalBlocker b(voxThresholdSlider());
+            voxThresholdSlider()->setValue(tx.voxThresholdDb());
         }
-        if (m_voxLvlLabel) {
-            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        if (voxThresholdLabel()) {
+            voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
         }
     }
-    if (m_voxDlySlider) {
+    if (voxHoldSlider()) {
         {
-            QSignalBlocker b(m_voxDlySlider);
-            m_voxDlySlider->setValue(tx.voxHangTimeMs());
+            QSignalBlocker b(voxHoldSlider());
+            voxHoldSlider()->setValue(tx.voxHangTimeMs());
         }
-        if (m_voxDlyLabel) {
-            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        if (voxHoldLabel()) {
+            voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
         }
     }
 
@@ -2650,7 +2587,7 @@ void TxApplet::removeReceiveOnlyLock()
     for (QWidget* control : {static_cast<QWidget*>(m_moxBtn),
                              static_cast<QWidget*>(m_tuneBtn),
                              static_cast<QWidget*>(m_twoToneBtn),
-                             static_cast<QWidget*>(m_voxBtn)}) {
+                             static_cast<QWidget*>(voxButton())}) {
         if (!control || !control->property(kRxOnlySavedTooltip).isValid()) {
             continue;
         }
@@ -2691,12 +2628,40 @@ void TxApplet::applyReceiveOnlyLock()
     // TX safety (2026-09-30): a lost radio link leaves VOX alone, as
     // Thetis's power-off does (console.cs:27488-27493 [v2.10.3.15]).
     if (m_model->transmitLockCoversVox()) {
-        lock(m_voxBtn);
+        lock(voxButton());
     }
 }
 
+// The VOX row's widgets, now owned by TxVoxSection. The applet keeps the
+// model wiring, the 100 ms peak poller and the permission gates; these
+// reach the section's widgets for it.
+QPushButton* TxApplet::voxButton() const
+{
+    return m_voxSection ? m_voxSection->button() : nullptr;
+}
+
+QSlider* TxApplet::voxThresholdSlider() const
+{
+    return m_voxSection ? m_voxSection->thresholdSlider() : nullptr;
+}
+
+QLabel* TxApplet::voxThresholdLabel() const
+{
+    return m_voxSection ? m_voxSection->thresholdLabel() : nullptr;
+}
+
+QSlider* TxApplet::voxHoldSlider() const
+{
+    return m_voxSection ? m_voxSection->holdSlider() : nullptr;
+}
+
+QLabel* TxApplet::voxHoldLabel() const
+{
+    return m_voxSection ? m_voxSection->holdLabel() : nullptr;
+}
+
 // ── pollVoxMeter — Phase 3M-3a-iii bench polish 2026-05-04 ─────────────────
-// 100 ms tick that drives m_voxPeakMeter on the TX right pane.
+// 100 ms tick that drives the VOX peak meter on the TX right pane.
 //
 //   VOX peak (linear amplitude from TxChannel::getDexpPeakSignal()):
 //     • 20 * log10(linear) → dB.
@@ -2714,7 +2679,7 @@ void TxApplet::pollVoxMeter()
 {
     if (!m_model) { return; }
     TxChannel* ch = m_model->txChannel();
-    if (!ch || !m_voxPeakMeter) { return; }
+    if (!ch || !m_voxSection) { return; }
 
     // VOX peak: linear amplitude → dB → 0..1 over -80..0 range.
     const double linearPeak = ch->getDexpPeakSignal();
@@ -2722,11 +2687,11 @@ void TxApplet::pollVoxMeter()
         ? 20.0 * std::log10(linearPeak)
         : -80.0;
     const double voxPeak01  = std::clamp((voxPeakDb + 80.0) / 80.0, 0.0, 1.0);
-    m_voxPeakMeter->setSignalLevel(voxPeak01);
+    m_voxSection->setPeakLevel(voxPeak01);
 
     // VOX threshold marker: voxThresholdDb is in -80..0 dB range.
     const int thDb = m_model->transmitModel().voxThresholdDb();
-    m_voxPeakMeter->setThresholdMarker(
+    m_voxSection->setThresholdMarker(
         std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
 }
 
@@ -2974,7 +2939,7 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
     apply(m_tuneBtn);
     apply(m_moxBtn);
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
-    gateTransmitControl(m_voxBtn, permitted && m_voxPermitted,
+    gateTransmitControl(voxButton(), permitted && m_voxPermitted,
                         permitted ? m_voxReason : reason);
     apply(m_twoToneBtn);
     // Task 16: the receive-only lock back on top (checkpoint join).
@@ -2986,7 +2951,7 @@ void TxApplet::setVoxPermitted(bool permitted, const QString& reason)
     removeReceiveOnlyLock();
     m_voxPermitted = permitted;
     m_voxReason = reason;
-    gateTransmitControl(m_voxBtn, m_transmitPermitted && permitted,
+    gateTransmitControl(voxButton(), m_transmitPermitted && permitted,
                         m_transmitPermitted ? reason : m_transmitPermissionReason);
     applyReceiveOnlyLock();
 }
@@ -3033,8 +2998,8 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
         : unavailableReason;
     m_transmitChainSettingsReason = reason;
     for (QWidget* control : {static_cast<QWidget*>(m_tunePwrSlider),
-                             static_cast<QWidget*>(m_voxSlider),
-                             static_cast<QWidget*>(m_voxDlySlider),
+                             static_cast<QWidget*>(voxThresholdSlider()),
+                             static_cast<QWidget*>(voxHoldSlider()),
                              static_cast<QWidget*>(m_monitorSection
                                  ? m_monitorSection->monButton() : nullptr),
                              static_cast<QWidget*>(m_monitorSection
