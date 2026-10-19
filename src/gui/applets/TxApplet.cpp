@@ -357,6 +357,7 @@
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "TxChainSection.h"
+#include "TxFilterSection.h"
 #include "TxKeyingSection.h"
 #include "TxMonitorSection.h"
 #include "TxPowerSection.h"
@@ -568,72 +569,12 @@ void TxApplet::buildUI()
     m_chainSection = new TxChainSection(body, vbox->spacing());
     vbox->addWidget(m_chainSection);
 
-    // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ──────
-    // Low/High cutoff spinboxes for the TX bandpass filter.  Bidirectional with
-    // TransmitModel::filterLow / filterHigh (wired in wireControls).  Defaults
-    // 100 / 2900 Hz from the model (m_filterLow{100} / m_filterHigh{2900}).
-    {
-        auto* bwRow = new QHBoxLayout;
-        bwRow->setSpacing(4);
-
-        // "TX BW" section label — 56 px wide, bold, kTitleText colour, 10 px.
-        auto* bwLbl = new QLabel(QStringLiteral("TX BW"), this);
-        bwLbl->setFixedWidth(56);
-        bwLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; font-weight: bold; }"
-        ).arg(Style::kTitleText));
-        bwRow->addWidget(bwLbl);
-
-        // "Lo" sub-label
-        auto* loLbl = new QLabel(QStringLiteral("Lo"), this);
-        loLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 9.5px; }"
-        ).arg(Style::kTextSecondary));
-        bwRow->addWidget(loLbl);
-
-        // Low-cutoff spinbox — range [0, 5000] Hz
-        m_txFilterLowSpin = new QSpinBox(this);
-        m_txFilterLowSpin->setRange(0, 5000);
-        m_txFilterLowSpin->setSuffix(QStringLiteral(" Hz"));
-        m_txFilterLowSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
-        m_txFilterLowSpin->setMinimumWidth(72);
-        m_txFilterLowSpin->setAccessibleName(QStringLiteral("TX filter low cutoff"));
-        m_txFilterLowSpin->setToolTip(QStringLiteral(
-            "TX bandpass filter lower cutoff (Hz).  0 Hz for voice SSB modes."));
-        bwRow->addWidget(m_txFilterLowSpin);
-
-        // "Hi" sub-label
-        auto* hiLbl = new QLabel(QStringLiteral("Hi"), this);
-        hiLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 9.5px; }"
-        ).arg(Style::kTextSecondary));
-        bwRow->addWidget(hiLbl);
-
-        // High-cutoff spinbox — range [200, 10000] Hz
-        m_txFilterHighSpin = new QSpinBox(this);
-        m_txFilterHighSpin->setRange(200, 10000);
-        m_txFilterHighSpin->setSuffix(QStringLiteral(" Hz"));
-        m_txFilterHighSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
-        m_txFilterHighSpin->setMinimumWidth(72);
-        m_txFilterHighSpin->setAccessibleName(QStringLiteral("TX filter high cutoff"));
-        m_txFilterHighSpin->setToolTip(QStringLiteral(
-            "TX bandpass filter upper cutoff (Hz).  2900 Hz for typical SSB voice."));
-        bwRow->addWidget(m_txFilterHighSpin);
-
-        vbox->addLayout(bwRow);
-
-        // D9 status label — orange tint, right-aligned, 9 px bold.
-        // Displays e.g. "100-2900 Hz · 2.8k BW" (asymmetric) or "±2900 Hz · 5.8k BW"
-        // (symmetric modes).  Refreshed by filterChanged + dspModeChanged.
-        m_txFilterStatusLabel = new QLabel(this);
-        m_txFilterStatusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_txFilterStatusLabel->setStyleSheet(QStringLiteral(
-            // Plan 4 D9 (Cluster E): colour centralised in Style::kTxFilterOverlayLabel.
-            "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
-        ).arg(QLatin1String(Style::kTxFilterOverlayLabel)));
-        m_txFilterStatusLabel->setAccessibleName(QStringLiteral("TX filter status"));
-        vbox->addWidget(m_txFilterStatusLabel);
-    }
+    // ── 4f. The TX bandpass filter cutoff spinboxes and the filter status
+    // label — all moved to TxFilterSection. The section is given this
+    // column's own row spacing so the rows inside it keep the same gap they
+    // had here.
+    m_filterSection = new TxFilterSection(body, vbox->spacing());
+    vbox->addWidget(m_filterSection);
 
     // ── Button row 3: 2-Tone + PS-A + DUP ───────────────────────────────────
     // Phase 3M-1a H.3: 2-Tone and PS-A are hidden until their owning phases land.
@@ -1497,15 +1438,15 @@ void TxApplet::wireControls()
     // Status label refresh helper (shared by filterChanged and dspModeChanged).
     auto refreshFilterStatus = [this]() { refreshTxFilterStatus(); };
 
-    if (m_txFilterLowSpin) {
-        connect(m_txFilterLowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+    if (m_filterSection->filterLowSpin()) {
+        connect(m_filterSection->filterLowSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
                 this, [this](int v) {
             if (m_updatingFromModel) { return; }
             m_model->transmitModel().setFilterLow(v);
         });
     }
-    if (m_txFilterHighSpin) {
-        connect(m_txFilterHighSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+    if (m_filterSection->filterHighSpin()) {
+        connect(m_filterSection->filterHighSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
                 this, [this](int v) {
             if (m_updatingFromModel) { return; }
             m_model->transmitModel().setFilterHigh(v);
@@ -1516,13 +1457,13 @@ void TxApplet::wireControls()
     connect(&tx, &TransmitModel::filterChanged,
             this, [this, refreshFilterStatus](int low, int high) {
         m_updatingFromModel = true;
-        if (m_txFilterLowSpin) {
-            QSignalBlocker bLo(m_txFilterLowSpin);
-            m_txFilterLowSpin->setValue(low);
+        if (m_filterSection->filterLowSpin()) {
+            QSignalBlocker bLo(m_filterSection->filterLowSpin());
+            m_filterSection->filterLowSpin()->setValue(low);
         }
-        if (m_txFilterHighSpin) {
-            QSignalBlocker bHi(m_txFilterHighSpin);
-            m_txFilterHighSpin->setValue(high);
+        if (m_filterSection->filterHighSpin()) {
+            QSignalBlocker bHi(m_filterSection->filterHighSpin());
+            m_filterSection->filterHighSpin()->setValue(high);
         }
         m_updatingFromModel = false;
         refreshFilterStatus();
@@ -1827,13 +1768,13 @@ void TxApplet::syncFromModel()
     }
 
     // TX BW spinboxes + status label (Plan 4 Cluster C Task 4 / D2+D3+D9)
-    if (m_txFilterLowSpin) {
-        QSignalBlocker bLo(m_txFilterLowSpin);
-        m_txFilterLowSpin->setValue(tx.filterLow());
+    if (m_filterSection->filterLowSpin()) {
+        QSignalBlocker bLo(m_filterSection->filterLowSpin());
+        m_filterSection->filterLowSpin()->setValue(tx.filterLow());
     }
-    if (m_txFilterHighSpin) {
-        QSignalBlocker bHi(m_txFilterHighSpin);
-        m_txFilterHighSpin->setValue(tx.filterHigh());
+    if (m_filterSection->filterHighSpin()) {
+        QSignalBlocker bHi(m_filterSection->filterHighSpin());
+        m_filterSection->filterHighSpin()->setValue(tx.filterHigh());
     }
     refreshTxFilterStatus();
 
@@ -2181,10 +2122,10 @@ void TxApplet::onSliceTransmitFlagChanged(bool)
 
 void TxApplet::refreshTxFilterStatus()
 {
-    if (!m_txFilterStatusLabel || !m_model) { return; }
+    if (!m_filterSection->filterStatusLabel() || !m_model) { return; }
     SliceModel* slice = transmitSlice();
     const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
-    m_txFilterStatusLabel->setText(m_model->transmitModel().filterDisplayText(mode));
+    m_filterSection->filterStatusLabel()->setText(m_model->transmitModel().filterDisplayText(mode));
 }
 
 void TxApplet::onMoxModeChanged(DSPMode mode)
@@ -2685,8 +2626,8 @@ void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unava
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
     for (QWidget* control : {static_cast<QWidget*>(m_powerSection->rfPowerSlider()),
-                             static_cast<QWidget*>(m_txFilterLowSpin),
-                             static_cast<QWidget*>(m_txFilterHighSpin)}) {
+                             static_cast<QWidget*>(m_filterSection->filterLowSpin()),
+                             static_cast<QWidget*>(m_filterSection->filterHighSpin())}) {
         gateTransmitControl(control, permitted, reason);
     }
 }

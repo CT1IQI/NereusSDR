@@ -251,6 +251,7 @@ class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
 class TxChainSection;
+class TxFilterSection;
 class TxKeyingSection;
 class TxMonitorSection;
 class TxPowerSection;
@@ -666,6 +667,10 @@ private:
     //      TxChainSection. The applet keeps the model wiring and the dialogs
     //      the right-click opens; the section owns the widgets.
     TxChainSection* m_chainSection = nullptr;
+    // 4f. The TX bandpass filter cutoffs and the filter status label — now in
+    //      TxFilterSection. The applet keeps the model wiring; the section owns
+    //      the widgets.
+    TxFilterSection* m_filterSection = nullptr;
     TxKeyingSection* m_keyingSection = nullptr;
     TxPowerSection* m_powerSection = nullptr;
     TxVoxSection* m_voxSection = nullptr;
@@ -708,13 +713,10 @@ private:
     // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ─────────
     // Low/High cutoff spinboxes (Hz) — bidirectional with TransmitModel::filterLow
     // and filterHigh via the filterChanged(int,int) signal.
-    QSpinBox*    m_txFilterLowSpin{nullptr};
-    QSpinBox*    m_txFilterHighSpin{nullptr};
     // Status label below the spinbox row — shows "100-2900 Hz · 2.8k BW" or
     // "±2900 Hz · 5.8k BW" depending on whether the active slice mode is
     // symmetric.  Orange tint (#ffaa70) matches the future Style::kTxFilterOverlayLabel
     // constant (Cluster E will add it to StyleConstants.h).
-    QLabel*      m_txFilterStatusLabel{nullptr};
 
     // 10. SWR protection LED (wired to SwrProtectionController::highSwrChanged)
     QLabel*      m_swrProtLed = nullptr;
