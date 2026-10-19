@@ -250,6 +250,7 @@ class TwoToneController;
 class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
+class TxMonitorSection;
 
 // TxApplet — transmit controls panel.
 //
@@ -573,10 +574,6 @@ private:
     void syncRemoteIndicators();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
     void removePsaFacadeReason();
-    // R-R3-45: show the MON output choice (true = headphones) without
-    // writing it back, then refresh the notice.
-    void showMonitorOutput(bool headphones);
-    void updateMonitorOutputNotice();
     // K.2: slot called when SliceModel::dspModeChanged fires (via RadioModel).
     // Updates m_moxBtn->setToolTip(tooltipForMode(mode)).
     void onMoxModeChanged(DSPMode mode);
@@ -666,20 +663,12 @@ private:
     // 100 ms QTimer driving m_voxPeakMeter.  Cadence matches Thetis
     // UpdateNoiseGate Task.Delay(100) at console.cs:25347 [v2.10.3.13].
     QTimer*         m_voxMeterTimer{nullptr};
-    // 4c. MON toggle (J.3 Phase 3M-1b) — bidirectional with TransmitModel::monEnabled
-    QPushButton* m_monBtn     = nullptr;
-    // 4d. Monitor volume slider (J.3 Phase 3M-1b) — 0..100 → monitorVolume 0.0..1.0
-    //     Default 50 (matches model default 0.5f from Thetis audio.cs:417).
-    QSlider*     m_monitorVolumeSlider = nullptr;
-    QLabel*      m_monitorVolumeValue  = nullptr;
-    // R-R3-45: where MON plays, beside the MON button. Exclusive pair
-    // bound to AudioEngine::txMonitorOutput (local window only), plus the
-    // plain notice shown when the headphones are chosen and not open.
-    QPushButton* m_monSpeakersBtn   = nullptr;
-    QPushButton* m_monHeadphonesBtn = nullptr;
-    QLabel*      m_monOutputNotice  = nullptr;
-    bool         m_headphonesAvailable = false;
-    bool         m_headphonesEnabled   = false;
+    // 4c/4d. MON toggle, the SPEAKERS / PHONES output pair, the notice that
+    //      says why MON is silent, and the monitor volume slider — all of it
+    //      now in TxMonitorSection (J.3 Phase 3M-1b, R-R3-45). The applet
+    //      keeps the wiring to the model, the audio engine and the gates;
+    //      the section owns the widgets and their presentation.
+    TxMonitorSection* m_monitorSection = nullptr;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup
     //     drops the duplicate PROC button; PROC lives on PhoneCwApplet which
     //     already had a wired button + slider sitting un-wired since 3I-3):
