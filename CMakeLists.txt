@@ -2189,6 +2189,7 @@ set(GUI_SOURCES
     src/gui/applets/AppletVisibilityController.cpp
     src/gui/applets/RxApplet.cpp
     src/gui/applets/TxApplet.cpp
+    src/gui/applets/TxKeyingSection.cpp
     src/gui/applets/TxMonitorSection.cpp
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp

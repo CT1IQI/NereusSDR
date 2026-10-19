@@ -250,6 +250,7 @@ class TwoToneController;
 class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
+class TxKeyingSection;
 class TxMonitorSection;
 class TxPowerSection;
 class TxVoxSection;
@@ -442,8 +443,8 @@ public:
     QComboBox*   profileCombo()      const { return m_profileCombo; }
     QPushButton* twoToneButton()     const { return m_twoToneBtn; }
     // Task 16: the keying buttons receive only disables.
-    QPushButton* moxButton()         const { return m_moxBtn; }
-    QPushButton* tuneButton()        const { return m_tuneBtn; }
+    QPushButton* moxButton()         const;
+    QPushButton* tuneButton()        const;
     // Borrowed desktop host routes key requests through its holder gate.
     // Empty handlers restore direct-local behavior.
     void setDesktopKeyHandlers(std::function<void(bool)> mox,
@@ -482,7 +483,7 @@ public:
                                  std::function<TransmitSliceChoice(int)> availability = {});
     /// Rebuilds the letter row (a slice came or went, control changed).
     void refreshTransmitSliceChoices();
-    QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
+    QList<QPushButton*> transmitSliceButtons() const;
     QPushButton* voxButton()         const;
     // Issue #175 Task 7: HL2 slider rescale + dB label test access.
     QSlider*     rfPowerSlider()    const noexcept;
@@ -496,7 +497,7 @@ public:
     /// window can take it. Outlined red while the holder is on the air.
     void setTakeTransmitOffered(bool offered, bool holderOnAir);
     bool takeTransmitOffered() const;
-    QPushButton* takeTransmitButton() const { return m_takeTransmitBtn; }
+    QPushButton* takeTransmitButton() const;
     QString transmitHolderText() const;
     QSlider*     tunePowerSlider()  const noexcept;
     QLabel*      rfPowerLabel()     const noexcept;
@@ -629,8 +630,6 @@ private:
     // 0. Mic-source badge (J.3 Phase 3M-1b) — read-only label above the gauges.
     QLabel*  m_micSourceBadge = nullptr;
     bool     m_micSourceBadgeAmber = false;   // native audio plan Task 20
-    QLabel*  m_holderLabel = nullptr;   // fix wave I4
-    QPushButton* m_takeTransmitBtn = nullptr;  // Task 78
     // 1. Forward Power gauge
     // 2. SWR gauge
     // EMA smoothing state for fwd-power gauge (Thetis-style envelope detector
@@ -658,6 +657,11 @@ private:
     //      slider rows — now in TxPowerSection. The applet keeps the model
     //      wiring and the smoothed forward-power reading it feeds the gauge;
     //      the section owns the widgets and the per-SKU scaling.
+    // 4a/4b. The TUNE and MOX buttons, the transmit-slice letter row, the
+    //      label that says who holds transmit, and the Take transmit button —
+    //      now in TxKeyingSection. The applet keeps which slice transmits and
+    //      the model's answers; the section owns the widgets and the row.
+    TxKeyingSection* m_keyingSection = nullptr;
     TxPowerSection* m_powerSection = nullptr;
     TxVoxSection* m_voxSection = nullptr;
     // 100 ms QTimer driving the VOX peak meter.  Cadence matches Thetis
@@ -689,9 +693,7 @@ private:
     std::function<void(bool)> m_stationCfcBarChart;
     QString m_stationCfcBarChartReason;
     // 5. MOX
-    QPushButton* m_moxBtn     = nullptr;
     // 6. TUNE
-    QPushButton* m_tuneBtn    = nullptr;
     // 7. TX Profile combo
     QComboBox*   m_profileCombo = nullptr;
     // 8. 2-Tone test
@@ -743,8 +745,6 @@ private:
     std::function<void(bool)> m_desktopTwoToneRequest;
     std::function<SliceModel*()> m_transmitSliceResolver;
     // Slice control plan Task 11 (U8): the transmit-slice letter row.
-    QHBoxLayout* m_txSliceRow = nullptr;
-    QList<QPushButton*> m_txSliceButtons;
     std::function<bool(int)> m_txSliceControlled;
     std::function<void(int)> m_txSliceChoose;
     std::function<QString()> m_txSliceUnavailable;

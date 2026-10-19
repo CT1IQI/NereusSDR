@@ -356,6 +356,7 @@
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
+#include "TxKeyingSection.h"
 #include "TxMonitorSection.h"
 #include "TxPowerSection.h"
 #include "TxVoxSection.h"
@@ -513,68 +514,16 @@ void TxApplet::buildUI()
     // ATU + MEM removed (ATU phase, no plan yet; MEM = channel-memory phase).
     // MOX: red active (#cc2222 bg, #ff4444 border, white text)
     // TUNE: red active when tuning, text becomes "TUNING..."
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(2);
-
-        const QString btnStyle = Style::buttonBaseStyle()
-            + QStringLiteral("QPushButton { padding: 2px; }");
-        const QString redChecked = Style::redCheckedStyle();
-
-        m_tuneBtn = new QPushButton(QStringLiteral("TUNE"), this);
-        m_tuneBtn->setCheckable(true);
-        m_tuneBtn->setFixedHeight(22);
-        m_tuneBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_tuneBtn->setStyleSheet(btnStyle + redChecked);
-        m_tuneBtn->setEnabled(true);  // Phase 3M-1a H.3: wired
-        m_tuneBtn->setAccessibleName(QStringLiteral("Tune carrier"));
-        m_tuneBtn->setToolTip(QStringLiteral("Enable TUNE carrier (single-tone CW)"));
-        row->addWidget(m_tuneBtn, 1);
-
-        m_moxBtn = new QPushButton(QStringLiteral("MOX"), this);
-        m_moxBtn->setCheckable(true);
-        m_moxBtn->setFixedHeight(22);
-        m_moxBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_moxBtn->setStyleSheet(btnStyle + redChecked);
-        m_moxBtn->setEnabled(true);  // Phase 3M-1a H.3: wired
-        m_moxBtn->setAccessibleName(QStringLiteral("MOX transmit"));
-        m_moxBtn->setToolTip(QStringLiteral("Manual transmit (MOX)"));
-        row->addWidget(m_moxBtn, 1);
-
-        vbox->addLayout(row);
-
-        // Slice control plan Task 11 (U8): which slice transmits, one letter
-        // per slice this window controls; the checked one is the transmit
-        // slice (refreshTransmitSliceChoices fills it).
-        m_txSliceRow = new QHBoxLayout;
-        m_txSliceRow->setSpacing(2);
-        vbox->addLayout(m_txSliceRow);
-
-        // Fix wave I4: who holds transmit on the Core, in a remote window
-        // (setTransmitHolderText). Empty, and so not shown, otherwise.
-        m_holderLabel = new QLabel(this);
-        m_holderLabel->setObjectName(QStringLiteral("TxHolderLabel"));
-        m_holderLabel->setAccessibleName(QStringLiteral("Who holds transmit"));
-        m_holderLabel->setWordWrap(true);
-        m_holderLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextPrimary));
-        m_holderLabel->setVisible(false);
-        vbox->addWidget(m_holderLabel);
-
-        // iPhone app plan Task 78 (R-IOS-02, R-IOS-30): beside the line
-        // that says another device (or the radio) holds transmit, the way
-        // to take it back; the pan's TX pill offers the same.
-        m_takeTransmitBtn = new QPushButton(QStringLiteral("Take transmit"), this);
-        m_takeTransmitBtn->setObjectName(QStringLiteral("TxTakeTransmitButton"));
-        m_takeTransmitBtn->setAccessibleName(QStringLiteral("Take transmit"));
-        m_takeTransmitBtn->setToolTip(
-            QStringLiteral("Take transmit for this window, from the device that has it or "
-                           "when no device does, so MOX, TUNE and programs transmit from here."));
-        m_takeTransmitBtn->setVisible(false);
-        connect(m_takeTransmitBtn, &QPushButton::clicked, this,
-                &TxApplet::takeTransmitRequested);
-        vbox->addWidget(m_takeTransmitBtn);
-    }
+    // ── 4a/4b. The TUNE and MOX buttons, the transmit-slice letter row, the
+    // label that says who holds transmit, and the Take transmit button — all
+    // moved to TxKeyingSection. The section is given this column's own row
+    // spacing so the rows inside it keep the same gap they had here.
+    m_keyingSection = new TxKeyingSection(body, vbox->spacing());
+    vbox->addWidget(m_keyingSection);
+    // The Take-transmit press is this applet's own signal, so it is wired
+    // here rather than inside the section.
+    connect(m_keyingSection->takeTransmitButton(), &QPushButton::clicked, this,
+            &TxApplet::takeTransmitRequested);
 
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────────
     // Relocated from PhoneCwApplet (Phone tab Control #10).  Operators
@@ -1136,7 +1085,7 @@ void TxApplet::wireControls()
     // From Thetis console.cs:29978-30157 [v2.10.3.13] chkTUN_CheckedChanged.
     // G8NJJ tell ARIES that tune is active  [original inline comment from console.cs:30153]
     // MW0LGE_22b setupTuneDriveSlider  [original inline comment from console.cs:30155]
-    connect(m_tuneBtn, &QPushButton::toggled, this, [this](bool on) {
+    connect(m_keyingSection->tuneButton(), &QPushButton::toggled, this, [this](bool on) {
         if (m_updatingFromModel) { return; }
         if (!m_model) { return; }
         // R-R3-21: the button's text and checked state are written only by
@@ -1154,8 +1103,8 @@ void TxApplet::wireControls()
             // button shows what it asked until the Core's state arrives.
             const bool asked = m_model->tunePressAsksOn(on);
             if (asked != on) {
-                QSignalBlocker b(m_tuneBtn);
-                m_tuneBtn->setChecked(asked);
+                QSignalBlocker b(m_keyingSection->tuneButton());
+                m_keyingSection->tuneButton()->setChecked(asked);
             }
             m_model->setTune(asked);
         }
@@ -1166,10 +1115,10 @@ void TxApplet::wireControls()
     // chkTUN.Checked = true (connection + power-on checks).
     connect(m_model, &RadioModel::tuneRefused, this, [this](const QString& /*reason*/) {
         if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
-        QSignalBlocker b(m_tuneBtn);
+        QSignalBlocker b(m_keyingSection->tuneButton());
         m_updatingFromModel = true;
-        m_tuneBtn->setChecked(false);
-        m_tuneBtn->setText(QStringLiteral("TUNE"));
+        m_keyingSection->tuneButton()->setChecked(false);
+        m_keyingSection->tuneButton()->setText(QStringLiteral("TUNE"));
         m_updatingFromModel = false;
     });
 
@@ -1184,7 +1133,7 @@ void TxApplet::wireControls()
         // key (Thetis chkMOX_Click, console.cs:29730-29747 [v2.10.3.15]);
         // RadioModel::setMoxFromButton also turns TUN and two-tone off on
         // the way off, as chkMOX_Click does.
-        connect(m_moxBtn, &QPushButton::toggled, this, [this](bool on) {
+        connect(m_keyingSection->moxButton(), &QPushButton::toggled, this, [this](bool on) {
             if (m_updatingFromModel) { return; }
             if (m_desktopMoxRequest) {
                 const QPointer<TxApplet> self(this);
@@ -1197,8 +1146,8 @@ void TxApplet::wireControls()
                 // arrives.
                 const bool asked = m_model->moxPressAsksOn(on);
                 if (asked != on) {
-                    QSignalBlocker b(m_moxBtn);
-                    m_moxBtn->setChecked(asked);
+                    QSignalBlocker b(m_keyingSection->moxButton());
+                    m_keyingSection->moxButton()->setChecked(asked);
                 }
                 m_model->setMoxFromButton(asked);
             }
@@ -1211,9 +1160,9 @@ void TxApplet::wireControls()
         connect(mox, &MoxController::moxStateChanged,
                 this, [this](bool on) {
             if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_moxBtn);
+            QSignalBlocker b(m_keyingSection->moxButton());
             m_updatingFromModel = true;
-            m_moxBtn->setChecked(on);
+            m_keyingSection->moxButton()->setChecked(on);
             m_updatingFromModel = false;
         });
 
@@ -1238,9 +1187,9 @@ void TxApplet::wireControls()
         connect(mox, &MoxController::moxRejected,
                 this, [this, mox](const QString& /*reason*/) {
             if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_moxBtn);
+            QSignalBlocker b(m_keyingSection->moxButton());
             m_updatingFromModel = true;
-            m_moxBtn->setChecked(mox->isMox());
+            m_keyingSection->moxButton()->setChecked(mox->isMox());
             m_updatingFromModel = false;
         });
 
@@ -1249,10 +1198,10 @@ void TxApplet::wireControls()
         connect(mox, &MoxController::manualMoxChanged,
                 this, [this](bool isManual) {
             if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_tuneBtn);
+            QSignalBlocker b(m_keyingSection->tuneButton());
             m_updatingFromModel = true;
-            m_tuneBtn->setChecked(isManual);
-            m_tuneBtn->setText(isManual
+            m_keyingSection->tuneButton()->setChecked(isManual);
+            m_keyingSection->tuneButton()->setText(isManual
                 ? QStringLiteral("TUNING...")
                 : QStringLiteral("TUNE"));
             m_updatingFromModel = false;
@@ -1857,15 +1806,15 @@ void TxApplet::syncRemoteIndicators()
 
     const bool wasUpdating = m_updatingFromModel;
     m_updatingFromModel = true;
-    if (m_moxBtn) {
-        QSignalBlocker b(m_moxBtn);
-        m_moxBtn->setChecked(m_model->isTransmitting());
+    if (m_keyingSection->moxButton()) {
+        QSignalBlocker b(m_keyingSection->moxButton());
+        m_keyingSection->moxButton()->setChecked(m_model->isTransmitting());
     }
-    if (m_tuneBtn) {
+    if (m_keyingSection->tuneButton()) {
         const bool tuning = m_model->transmitModel().isTune();
-        QSignalBlocker b(m_tuneBtn);
-        m_tuneBtn->setChecked(tuning);
-        m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+        QSignalBlocker b(m_keyingSection->tuneButton());
+        m_keyingSection->tuneButton()->setChecked(tuning);
+        m_keyingSection->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
     }
     if (m_twoToneBtn) {
         const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
@@ -1984,13 +1933,13 @@ void TxApplet::syncFromModel()
     if (m_model->role() == RadioModel::Role::Remote) {
         syncRemoteIndicators();
     } else if (mox) {
-        QSignalBlocker bm(m_moxBtn);
-        m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox());
+        QSignalBlocker bm(m_keyingSection->moxButton());
+        m_keyingSection->moxButton()->setChecked(m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox());
 
-        QSignalBlocker bt(m_tuneBtn);
+        QSignalBlocker bt(m_keyingSection->tuneButton());
         const bool isManual = m_desktopTuneOn ? m_desktopTuneOn() : mox->isManualMox();
-        m_tuneBtn->setChecked(isManual);
-        m_tuneBtn->setText(isManual ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+        m_keyingSection->tuneButton()->setChecked(isManual);
+        m_keyingSection->tuneButton()->setText(isManual ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
     }
 
     m_updatingFromModel = false;
@@ -2034,39 +1983,24 @@ void TxApplet::setTransmitSliceChoices(std::function<bool(int)> controlled,
 
 void TxApplet::refreshTransmitSliceChoices()
 {
-    if (!m_txSliceRow) { return; }
-    for (QPushButton* button : std::as_const(m_txSliceButtons)) {
-        m_txSliceRow->removeWidget(button);
-        button->deleteLater();
-    }
-    m_txSliceButtons.clear();
+    if (!m_keyingSection) { return; }
+    m_keyingSection->clearTransmitSliceButtons();
     if (!m_model) { return; }
     const SliceModel* current = transmitSlice();
     const QString reason = m_txSliceUnavailable ? m_txSliceUnavailable() : QString();
-    const QString btnStyle = Style::buttonBaseStyle()
-        + QStringLiteral("QPushButton { padding: 2px; }") + Style::greenCheckedStyle();
     for (SliceModel* slice : m_model->slices()) {
         if (!slice) { continue; }
         const int id = slice->sliceIndex();
         // U8: only the slices this window controls, never one it listens to.
         if (m_txSliceControlled && !m_txSliceControlled(id)) { continue; }
-        auto* button = new QPushButton(slice->sliceLetter(), this);
-        button->setObjectName(QStringLiteral("TxSliceButton%1").arg(slice->sliceLetter()));
-        button->setCheckable(true);
-        button->setChecked(slice == current);
-        button->setFixedHeight(20);
-        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        button->setStyleSheet(btnStyle);
-        button->setProperty("sliceId", id);
-        button->setAccessibleName(QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()));
-        // Disabled, never hidden: the reason is the tooltip.
         const TransmitSliceChoice availability = m_txSliceAvailability
             ? m_txSliceAvailability(id)
             : TransmitSliceChoice{reason.isEmpty(), reason};
-        button->setEnabled(availability.enabled);
-        button->setToolTip(availability.toolTip.isEmpty()
+        const QString toolTip = availability.toolTip.isEmpty()
             ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter())
-            : availability.toolTip);
+            : availability.toolTip;
+        QPushButton* button = m_keyingSection->addTransmitSliceButton(
+            slice->sliceLetter(), id, slice == current, availability.enabled, toolTip);
         connect(button, &QPushButton::clicked, this, [this, button, id](bool) {
             // The model's answer checks the row; the press alone does not.
             if (button) { button->setChecked(transmitSlice()
@@ -2078,24 +2012,22 @@ void TxApplet::refreshTransmitSliceChoices()
                 m_model->requestTxHandoffToSlice(id);
             }
         });
-        m_txSliceRow->addWidget(button, 1);
-        m_txSliceButtons.append(button);
     }
 }
 
 void TxApplet::syncDesktopKeyState()
 {
     if (!m_model || !m_model->moxController()) { return; }
-    const QSignalBlocker moxBlock(m_moxBtn);
-    const QSignalBlocker tuneBlock(m_tuneBtn);
-    m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn()
+    const QSignalBlocker moxBlock(m_keyingSection->moxButton());
+    const QSignalBlocker tuneBlock(m_keyingSection->tuneButton());
+    m_keyingSection->moxButton()->setChecked(m_desktopMoxOn ? m_desktopMoxOn()
                                        : m_model->moxController()->isMox());
     // Issue #357: the TUNE the release press clears, not isTune(), which
     // holds until the radio is back on receive.
     const bool tuning = m_desktopTuneOn ? m_desktopTuneOn()
                                         : m_model->transmitModel().isTune();
-    m_tuneBtn->setChecked(tuning);
-    m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+    m_keyingSection->tuneButton()->setChecked(tuning);
+    m_keyingSection->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
 }
 
 // (Phase 3M-1b J.2 showVoxSettingsPopup removed in 3M-3a-iii Task 16 —
@@ -2253,7 +2185,7 @@ QString TxApplet::tooltipForMode(DSPMode mode)
 //
 // Wired to SliceModel::dspModeChanged (via RadioModel active-slice accessor)
 // in wireControls(). Calls tooltipForMode(mode) to get the appropriate
-// tooltip text and installs it on m_moxBtn. If the mode is an allowed SSB
+// tooltip text and installs it on m_keyingSection->moxButton(). If the mode is an allowed SSB
 // mode the tooltip reverts to the normal "Manual transmit (MOX)".
 // ---------------------------------------------------------------------------
 // Wires the active slice's dspModeChanged to onMoxModeChanged, dropping the
@@ -2349,14 +2281,14 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     // Task 16: the receive-only lock sits on top of the tooltip; take it
     // off, change the tooltip under it, and put it back.
     removeReceiveOnlyLock();
-    if (m_moxBtn) {
+    if (m_keyingSection->moxButton()) {
         // Task 16 fix wave 2 (Minor 2): while the transmit-permission layer
         // holds the button, its reason stays visible and the mode's tooltip
         // goes into the tooltip that layer gives back.
-        if (m_moxBtn->property(kTransmitSavedTooltip).isValid()) {
-            m_moxBtn->setProperty(kTransmitSavedTooltip, tooltipForMode(mode));
+        if (m_keyingSection->moxButton()->property(kTransmitSavedTooltip).isValid()) {
+            m_keyingSection->moxButton()->setProperty(kTransmitSavedTooltip, tooltipForMode(mode));
         } else {
-            m_moxBtn->setToolTip(tooltipForMode(mode));
+            m_keyingSection->moxButton()->setToolTip(tooltipForMode(mode));
         }
     }
     applyReceiveOnlyLock();
@@ -2388,8 +2320,8 @@ constexpr auto kRxOnlySavedEnabled = "TxAppletRxOnlySavedEnabled";
 
 void TxApplet::removeReceiveOnlyLock()
 {
-    for (QWidget* control : {static_cast<QWidget*>(m_moxBtn),
-                             static_cast<QWidget*>(m_tuneBtn),
+    for (QWidget* control : {static_cast<QWidget*>(m_keyingSection->moxButton()),
+                             static_cast<QWidget*>(m_keyingSection->tuneButton()),
                              static_cast<QWidget*>(m_twoToneBtn),
                              static_cast<QWidget*>(voxButton())}) {
         if (!control || !control->property(kRxOnlySavedTooltip).isValid()) {
@@ -2425,15 +2357,36 @@ void TxApplet::applyReceiveOnlyLock()
         control->setAccessibleDescription(reason);
     };
     if (m_model->transmitLockCoversMox()) {
-        lock(m_moxBtn);
+        lock(m_keyingSection->moxButton());
     }
-    lock(m_tuneBtn);
+    lock(m_keyingSection->tuneButton());
     lock(m_twoToneBtn);   // MW0LGE_21a
     // TX safety (2026-09-30): a lost radio link leaves VOX alone, as
     // Thetis's power-off does (console.cs:27488-27493 [v2.10.3.15]).
     if (m_model->transmitLockCoversVox()) {
         lock(voxButton());
     }
+}
+
+// The keying rows' widgets, now owned by TxKeyingSection.
+QPushButton* TxApplet::moxButton() const
+{
+    return m_keyingSection ? m_keyingSection->moxButton() : nullptr;
+}
+
+QPushButton* TxApplet::tuneButton() const
+{
+    return m_keyingSection ? m_keyingSection->tuneButton() : nullptr;
+}
+
+QPushButton* TxApplet::takeTransmitButton() const
+{
+    return m_keyingSection ? m_keyingSection->takeTransmitButton() : nullptr;
+}
+
+QList<QPushButton*> TxApplet::transmitSliceButtons() const
+{
+    return m_keyingSection ? m_keyingSection->transmitSliceButtons() : QList<QPushButton*>();
 }
 
 // The power rows' widgets, now owned by TxPowerSection.
@@ -2771,8 +2724,8 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
     // setTransmitChainSettingsPermitted; parity Task 3: the profile combo
     // follows setTxProfilePermitted; parity Task 7: PS-A follows
     // setPureSignalArmingPermitted. This gate keeps the rest.
-    apply(m_tuneBtn);
-    apply(m_moxBtn);
+    apply(m_keyingSection->tuneButton());
+    apply(m_keyingSection->moxButton());
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
     gateTransmitControl(voxButton(), permitted && m_voxPermitted,
                         permitted ? m_voxReason : reason);
@@ -2895,10 +2848,10 @@ void TxApplet::setTxProfilePermitted(bool permitted, const QString& unavailableR
 
 void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
 {
-    if (!m_takeTransmitBtn) { return; }
-    m_takeTransmitBtn->setVisible(offered);
-    m_takeTransmitBtn->setProperty("holderOnAir", offered && holderOnAir);
-    m_takeTransmitBtn->setStyleSheet(offered && holderOnAir
+    if (!m_keyingSection->takeTransmitButton()) { return; }
+    m_keyingSection->takeTransmitButton()->setVisible(offered);
+    m_keyingSection->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
+    m_keyingSection->takeTransmitButton()->setStyleSheet(offered && holderOnAir
         ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
                          " border-radius: 3px; padding: 2px 8px; }")
         : QString());
@@ -2906,19 +2859,19 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
 
 bool TxApplet::takeTransmitOffered() const
 {
-    return m_takeTransmitBtn && !m_takeTransmitBtn->isHidden();
+    return m_keyingSection->takeTransmitButton() && !m_keyingSection->takeTransmitButton()->isHidden();
 }
 
 void TxApplet::setTransmitHolderText(const QString& text)
 {
-    if (!m_holderLabel) { return; }
-    m_holderLabel->setText(text);
-    m_holderLabel->setVisible(!text.isEmpty());
+    if (!m_keyingSection->holderLabel()) { return; }
+    m_keyingSection->holderLabel()->setText(text);
+    m_keyingSection->holderLabel()->setVisible(!text.isEmpty());
 }
 
 QString TxApplet::transmitHolderText() const
 {
-    return m_holderLabel ? m_holderLabel->text() : QString();
+    return m_keyingSection->holderLabel() ? m_keyingSection->holderLabel()->text() : QString();
 }
 
 bool TxApplet::remoteTunePower() const
