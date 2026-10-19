@@ -1259,7 +1259,7 @@ private slots:
             {"src/gui/SpotHubDialog.cpp",
              {"Enter Callsign Here (4-12 characters, required to publish spots)",
               "Enter Grid Here (Maidenhead, e.g. EM73 or EM73XY)"}},
-            {"src/gui/applets/TxApplet.cpp",
+            {"src/gui/applets/TxChainSection.cpp",
              {"TX Leveler: slow speech-leveling AGC. Improves intelligibility on weak speech."}},
             {"src/gui/applets/TxMonitorSection.cpp",
              // Remote-window parity Task 32: the MON output pair below

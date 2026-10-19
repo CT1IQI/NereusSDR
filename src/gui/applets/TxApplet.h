@@ -250,6 +250,7 @@ class TwoToneController;
 class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
+class TxChainSection;
 class TxKeyingSection;
 class TxMonitorSection;
 class TxPowerSection;
@@ -440,7 +441,7 @@ public:
     // ── Test accessors ──────────────────────────────────────────────────────
     // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
     // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
-    QComboBox*   profileCombo()      const { return m_profileCombo; }
+    QComboBox*   profileCombo()      const;
     QPushButton* twoToneButton()     const { return m_twoToneBtn; }
     // Task 16: the keying buttons receive only disables.
     QPushButton* moxButton()         const;
@@ -661,6 +662,10 @@ private:
     //      label that says who holds transmit, and the Take transmit button —
     //      now in TxKeyingSection. The applet keeps which slice transmits and
     //      the model's answers; the section owns the widgets and the row.
+    // 4e. The LEV, EQ and CFC buttons and the TX Profile combo — now in
+    //      TxChainSection. The applet keeps the model wiring and the dialogs
+    //      the right-click opens; the section owns the widgets.
+    TxChainSection* m_chainSection = nullptr;
     TxKeyingSection* m_keyingSection = nullptr;
     TxPowerSection* m_powerSection = nullptr;
     TxVoxSection* m_voxSection = nullptr;
@@ -681,9 +686,6 @@ private:
     //          right-click → TxEqDialog (3M-3a-i Batch 3)
     //     CFC: bidirectional ↔ TransmitModel.cfcEnabled (3M-3a-ii Batch 6 Task A)
     //          right-click → TxCfcDialog (modeless, mirrors EQ launch pattern)
-    QPushButton* m_levBtn     = nullptr;
-    QPushButton* m_eqBtn      = nullptr;
-    QPushButton* m_cfcBtn     = nullptr;
     // ── 3M-3a-ii Batch 6 (Task A): modeless CFC dialog instance ─────────────
     // Lazy-created on first right-click of [CFC] or first call to
     // requestOpenCfcDialog(). Owned by the retained applet across container
@@ -695,7 +697,6 @@ private:
     // 5. MOX
     // 6. TUNE
     // 7. TX Profile combo
-    QComboBox*   m_profileCombo = nullptr;
     // 8. 2-Tone test
     QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (Phase 3M-4 Task 13)

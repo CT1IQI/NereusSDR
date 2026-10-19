@@ -356,6 +356,7 @@
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
+#include "TxChainSection.h"
 #include "TxKeyingSection.h"
 #include "TxMonitorSection.h"
 #include "TxPowerSection.h"
@@ -561,101 +562,11 @@ void TxApplet::buildUI()
     m_monitorSection = new TxMonitorSection(body, vbox->spacing());
     vbox->addWidget(m_monitorSection);
 
-    // ── 4e. TX-processing quick toggles: [LEV] [EQ] [CFC] ──────────────────
-    // Phase 3M-3a-i Batch 2 (Task F): introduced the row of 3 (LEV/EQ/PROC).
-    // Phase 3M-3a-ii Batch 6 (Task A + F, then post-bench cleanup):
-    // PROC was promoted in Batch 6, then dropped here in the cleanup pass —
-    // PhoneCwApplet already had a wired PROC button + slider sitting un-wired
-    // since 3I-3 (NyiOverlay-marked).  Two PROC controls confused users.
-    // Row is now 3 buttons (LEV / EQ / CFC); PROC lives on PhoneCwApplet.
-    // All three share the same VOX/MON styling family (compact 22-px-tall,
-    // expanding width, green-checked LED look).
-    //
-    //   LEV  — checkable, bidirectional with TransmitModel::txLevelerOn.
-    //   EQ   — checkable, bidirectional with TransmitModel::txEqEnabled.
-    //          Left-click toggles.  Right-click → TxEqDialog (3M-3a-i Batch 3).
-    //   CFC  — checkable, bidirectional with TransmitModel::cfcEnabled.
-    //          Left-click toggles.  Right-click → modeless TxCfcDialog
-    //          (10-band per-band CFC editor; mirrors Thetis frmCFCConfig
-    //          [v2.10.3.13]).
-    //
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(2);
-
-        const QString btnStyle = Style::buttonBaseStyle()
-            + Style::greenCheckedStyle();
-
-        m_levBtn = new QPushButton(QStringLiteral("LEV"), this);
-        m_levBtn->setCheckable(true);
-        m_levBtn->setFixedHeight(22);
-        m_levBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_levBtn->setStyleSheet(btnStyle);
-        m_levBtn->setAccessibleName(QStringLiteral("TX Leveler enable"));
-        m_levBtn->setObjectName(QStringLiteral("TxLevButton"));
-        m_levBtn->setToolTip(QStringLiteral(
-            "TX Leveler: slow speech-leveling AGC. Improves intelligibility on weak speech."));
-        row->addWidget(m_levBtn, 1);
-
-        m_eqBtn = new QPushButton(QStringLiteral("EQ"), this);
-        m_eqBtn->setCheckable(true);
-        m_eqBtn->setFixedHeight(22);
-        m_eqBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_eqBtn->setStyleSheet(btnStyle);
-        m_eqBtn->setAccessibleName(QStringLiteral("TX EQ enable"));
-        m_eqBtn->setObjectName(QStringLiteral("TxEqButton"));
-        m_eqBtn->setToolTip(QStringLiteral(
-            "TX 10-band graphic EQ.  Left-click to toggle.\n"
-            "Right-click to open the EQ dialog."));
-        // Custom context-menu policy so right-click hits a slot (not the
-        // default menu).
-        m_eqBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-        row->addWidget(m_eqBtn, 1);
-
-        m_cfcBtn = new QPushButton(QStringLiteral("CFC"), this);
-        m_cfcBtn->setCheckable(true);
-        m_cfcBtn->setFixedHeight(22);
-        m_cfcBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_cfcBtn->setStyleSheet(btnStyle);
-        m_cfcBtn->setAccessibleName(QStringLiteral("Continuous Frequency Compressor enable"));
-        m_cfcBtn->setObjectName(QStringLiteral("TxCfcButton"));
-        m_cfcBtn->setToolTip(QStringLiteral(
-            "CFC: 10-band continuous frequency compressor. Left-click to "
-            "toggle. Right-click to open the CFC dialog."));
-        // Right-click → modeless TxCfcDialog (mirrors EQ button pattern).
-        m_cfcBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-        row->addWidget(m_cfcBtn, 1);
-
-        vbox->addLayout(row);
-    }
-
-    // ── Profile combo row (full width) ──────────────────────────────────────
-    // Tune Mode combo removed (ATU phase, no plan yet).
-    // (AetherSDR TxApplet.cpp:131–153)
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(2);
-
-        // ── Phase 3M-1c J.1 ─ TX Profile combo ─────────────────────────────────
-        // Populated from MicProfileManager via setMicProfileManager().
-        // Right-click → emit txProfileMenuRequested (mirrors Thetis
-        // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
-        m_profileCombo = new QComboBox(this);
-        m_profileCombo->addItem(QStringLiteral("Default"));
-        m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_profileCombo->setFixedHeight(22);
-        applyComboStyle(m_profileCombo);
-        m_profileCombo->setAccessibleName(QStringLiteral("TX profile"));
-        m_profileCombo->setToolTip(QStringLiteral(
-            "TX Profile: left-click to switch.  Right-click to edit "
-            "(Setup → Audio → TX Profile)."));
-        // Custom context-menu policy so right-click emits
-        // customContextMenuRequested instead of the default popup.
-        m_profileCombo->setContextMenuPolicy(Qt::CustomContextMenu);
-        row->addWidget(m_profileCombo, 1);
-
-        vbox->addLayout(row);
-    }
+    // ── 4e. The LEV, EQ and CFC buttons and the TX Profile combo — all
+    // moved to TxChainSection. The section is given this column's own row
+    // spacing so the rows inside it keep the same gap they had here.
+    m_chainSection = new TxChainSection(body, vbox->spacing());
+    vbox->addWidget(m_chainSection);
 
     // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ──────
     // Low/High cutoff spinboxes for the TX bandpass filter.  Bidirectional with
@@ -1477,40 +1388,40 @@ void TxApplet::wireControls()
     // ── Phase 3M-3a-i Batch 2 (Task F): LEV / EQ quick toggles ──────────────
     //
     // LEV button ↔ TransmitModel::txLevelerOn (bidirectional, echo-guarded).
-    if (m_levBtn) {
-        connect(m_levBtn, &QPushButton::toggled,
+    if (m_chainSection->levButton()) {
+        connect(m_chainSection->levButton(), &QPushButton::toggled,
                 this, [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setTxLevelerOn(on);
         });
         connect(&tx, &TransmitModel::txLevelerOnChanged,
                 this, [this](bool on) {
-            QSignalBlocker b(m_levBtn);
+            QSignalBlocker b(m_chainSection->levButton());
             m_updatingFromModel = true;
-            m_levBtn->setChecked(on);
+            m_chainSection->levButton()->setChecked(on);
             m_updatingFromModel = false;
         });
     }
 
     // EQ button ↔ TransmitModel::txEqEnabled (bidirectional, echo-guarded).
     // Right-click: placeholder slot for the TxEqDialog launch (Batch 3).
-    if (m_eqBtn) {
-        connect(m_eqBtn, &QPushButton::toggled,
+    if (m_chainSection->eqButton()) {
+        connect(m_chainSection->eqButton(), &QPushButton::toggled,
                 this, [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setTxEqEnabled(on);
         });
         connect(&tx, &TransmitModel::txEqEnabledChanged,
                 this, [this](bool on) {
-            QSignalBlocker b(m_eqBtn);
+            QSignalBlocker b(m_chainSection->eqButton());
             m_updatingFromModel = true;
-            m_eqBtn->setChecked(on);
+            m_chainSection->eqButton()->setChecked(on);
             m_updatingFromModel = false;
         });
         // Right-click → open TxEqDialog (Phase 3M-3a-i Batch 3 A.1).
         // Modeless singleton; show + raise + activateWindow so a
         // hidden-but-alive instance is brought forward.
-        connect(m_eqBtn, &QPushButton::customContextMenuRequested,
+        connect(m_chainSection->eqButton(), &QPushButton::customContextMenuRequested,
                 this, [this](const QPoint& /*pos*/) {
             // R-R3-49 (parity Task 4): opens in a remote window too; the
             // dialog greys itself with the reason while the Core cannot
@@ -1526,20 +1437,20 @@ void TxApplet::wireControls()
     // ── Phase 3M-3a-ii Batch 6 (Task A): CFC button ↔ TransmitModel::cfcEnabled
     // Right-click opens the modeless TxCfcDialog (lazy-create singleton kept
     // alive for fast re-opens — same pattern as TxEqDialog).
-    if (m_cfcBtn) {
-        connect(m_cfcBtn, &QPushButton::toggled,
+    if (m_chainSection->cfcButton()) {
+        connect(m_chainSection->cfcButton(), &QPushButton::toggled,
                 this, [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setCfcEnabled(on);
         });
         connect(&tx, &TransmitModel::cfcEnabledChanged,
                 this, [this](bool on) {
-            QSignalBlocker b(m_cfcBtn);
+            QSignalBlocker b(m_chainSection->cfcButton());
             m_updatingFromModel = true;
-            m_cfcBtn->setChecked(on);
+            m_chainSection->cfcButton()->setChecked(on);
             m_updatingFromModel = false;
         });
-        connect(m_cfcBtn, &QPushButton::customContextMenuRequested,
+        connect(m_chainSection->cfcButton(), &QPushButton::customContextMenuRequested,
                 this, [this](const QPoint& /*pos*/) {
             requestOpenCfcDialog();
         });
@@ -1560,7 +1471,7 @@ void TxApplet::wireControls()
     // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
     // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
     // doesn't bounce back into setActiveProfile.
-    connect(m_profileCombo, &QComboBox::currentTextChanged,
+    connect(m_chainSection->profileCombo(), &QComboBox::currentTextChanged,
             this, [this](const QString& name) {
         if (m_updatingFromModel) { return; }
         if (!m_micProfileMgr) { return; }
@@ -1572,7 +1483,7 @@ void TxApplet::wireControls()
 
     // Right-click on combo → emit txProfileMenuRequested (Thetis cite at the
     // signal declaration).
-    connect(m_profileCombo, &QComboBox::customContextMenuRequested,
+    connect(m_chainSection->profileCombo(), &QComboBox::customContextMenuRequested,
             this, [this](const QPoint& /*pos*/) {
         emit txProfileMenuRequested();
     });
@@ -1902,17 +1813,17 @@ void TxApplet::syncFromModel()
     // LEV / EQ / CFC button state (3M-3a-i Batch 2 Task F + 3M-3a-ii
     // Batch 6 Task A — CFC button added; PROC moved to PhoneCwApplet
     // 3M-3a-ii post-bench cleanup).
-    if (m_levBtn) {
-        QSignalBlocker b(m_levBtn);
-        m_levBtn->setChecked(tx.txLevelerOn());
+    if (m_chainSection->levButton()) {
+        QSignalBlocker b(m_chainSection->levButton());
+        m_chainSection->levButton()->setChecked(tx.txLevelerOn());
     }
-    if (m_eqBtn) {
-        QSignalBlocker b(m_eqBtn);
-        m_eqBtn->setChecked(tx.txEqEnabled());
+    if (m_chainSection->eqButton()) {
+        QSignalBlocker b(m_chainSection->eqButton());
+        m_chainSection->eqButton()->setChecked(tx.txEqEnabled());
     }
-    if (m_cfcBtn) {
-        QSignalBlocker b(m_cfcBtn);
-        m_cfcBtn->setChecked(tx.cfcEnabled());
+    if (m_chainSection->cfcButton()) {
+        QSignalBlocker b(m_chainSection->cfcButton());
+        m_chainSection->cfcButton()->setChecked(tx.cfcEnabled());
     }
 
     // TX BW spinboxes + status label (Plan 4 Cluster C Task 4 / D2+D3+D9)
@@ -2368,6 +2279,12 @@ void TxApplet::applyReceiveOnlyLock()
     }
 }
 
+// The TX chain rows' widgets, now owned by TxChainSection.
+QComboBox* TxApplet::profileCombo() const
+{
+    return m_chainSection ? m_chainSection->profileCombo() : nullptr;
+}
+
 // The keying rows' widgets, now owned by TxKeyingSection.
 QPushButton* TxApplet::moxButton() const
 {
@@ -2508,12 +2425,12 @@ void TxApplet::setMicProfileManager(MicProfileManager* mgr)
         // setActiveProfile callback (m_updatingFromModel guards that).
         connect(m_micProfileMgr, &MicProfileManager::activeProfileChanged,
                 this, [this](const QString& name) {
-            if (!m_profileCombo) { return; }
-            QSignalBlocker blk(m_profileCombo);
+            if (!m_chainSection->profileCombo()) { return; }
+            QSignalBlocker blk(m_chainSection->profileCombo());
             m_updatingFromModel = true;
-            const int idx = m_profileCombo->findText(name);
+            const int idx = m_chainSection->profileCombo()->findText(name);
             if (idx >= 0) {
-                m_profileCombo->setCurrentIndex(idx);
+                m_chainSection->profileCombo()->setCurrentIndex(idx);
             }
             m_updatingFromModel = false;
         });
@@ -2792,9 +2709,9 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
                                  ? m_monitorSection->monButton() : nullptr),
                              static_cast<QWidget*>(m_monitorSection
                                  ? m_monitorSection->volumeSlider() : nullptr),
-                             static_cast<QWidget*>(m_levBtn),
-                             static_cast<QWidget*>(m_eqBtn),
-                             static_cast<QWidget*>(m_cfcBtn)}) {
+                             static_cast<QWidget*>(m_chainSection->levButton()),
+                             static_cast<QWidget*>(m_chainSection->eqButton()),
+                             static_cast<QWidget*>(m_chainSection->cfcButton())}) {
         gateTransmitControl(control, permitted, reason);
     }
     // Parity Task 32: the MON output pair also needs a Core that sends MON.
@@ -2840,7 +2757,7 @@ void TxApplet::applyMonitorOutputGate()
 void TxApplet::setTxProfilePermitted(bool permitted, const QString& unavailableReason)
 {
     m_txProfilePermitted = permitted;
-    gateTransmitControl(m_profileCombo, permitted,
+    gateTransmitControl(m_chainSection->profileCombo(), permitted,
                         unavailableReason.isEmpty()
                             ? IStationLink::transmitSettingsUnavailableReason()
                             : unavailableReason);
@@ -2987,25 +2904,25 @@ void TxApplet::removePsaFacadeReason()
 // ---------------------------------------------------------------------------
 void TxApplet::rebuildProfileCombo()
 {
-    if (!m_profileCombo) { return; }
+    if (!m_chainSection->profileCombo()) { return; }
     if (!m_micProfileMgr) {
         // No manager → leave the placeholder "Default" item alone.
         return;
     }
 
-    QSignalBlocker blk(m_profileCombo);
+    QSignalBlocker blk(m_chainSection->profileCombo());
     m_updatingFromModel = true;
 
     const QStringList names = m_micProfileMgr->profileNames();
     const QString active = m_micProfileMgr->activeProfileName();
 
-    resetItemsBeforeRowChange(m_profileCombo);
-    m_profileCombo->clear();
-    m_profileCombo->addItems(names);
+    resetItemsBeforeRowChange(m_chainSection->profileCombo());
+    m_chainSection->profileCombo()->clear();
+    m_chainSection->profileCombo()->addItems(names);
 
-    const int idx = m_profileCombo->findText(active);
+    const int idx = m_chainSection->profileCombo()->findText(active);
     if (idx >= 0) {
-        m_profileCombo->setCurrentIndex(idx);
+        m_chainSection->profileCombo()->setCurrentIndex(idx);
     }
 
     m_updatingFromModel = false;
