@@ -616,7 +616,6 @@ void TxApplet::wireControls()
     }
 
     TransmitModel& tx = m_model->transmitModel();
-    MoxController* mox = m_model->moxController();
 
     wirePowerSection(m_powerSection);
     wireKeyingSection(m_keyingSection);
@@ -2221,25 +2220,25 @@ void TxApplet::wireMonitorSection(TxMonitorSection* s)
     {
         if (AudioEngine* engine = m_model->localAudioDevices()) {
             connectRow(s, monSpeakersBtn, &QPushButton::clicked,
-                    [this, engine, s](bool) {
+                    [engine, s](bool) {
                 s->showMonitorOutput(false);
                 engine->setTxMonitorOutput(TxMonitorOutput::Speakers);
             });
             connectRow(s, monHeadphonesBtn, &QPushButton::clicked,
-                    [this, engine, s](bool) {
+                    [engine, s](bool) {
                 s->showMonitorOutput(true);
                 engine->setTxMonitorOutput(TxMonitorOutput::Headphones);
             });
             connectRow(s, engine, &AudioEngine::txMonitorOutputChanged,
-                    [this, s](TxMonitorOutput output) {
+                    [s](TxMonitorOutput output) {
                 s->showMonitorOutput(output == TxMonitorOutput::Headphones);
             });
             connectRow(s, engine, &AudioEngine::headphonesAvailableChanged,
-                    [this, s](bool available) {
+                    [s](bool available) {
                 s->setHeadphonesAvailable(available);
             });
             connectRow(s, engine, &AudioEngine::headphonesEnabledChanged,
-                    [this, s](bool enabled) {
+                    [s](bool enabled) {
                 s->setHeadphonesEnabled(enabled);
             });
             s->setHeadphonesAvailable(engine->headphonesAvailable());
@@ -2396,12 +2395,12 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
         }
         refreshPowerReadouts();
     });
-    const auto refreshAmplifier = [this, s, meter] {
+    const auto refreshAmplifier = [this, meter] {
         if (meter->onAmplifier()) { refreshPowerReadouts(); }
     };
     connectRow(s, meter, &MainPowerMeter::readingChanged, refreshAmplifier);
     connectRow(s, meter, &MainPowerMeter::driveChanged, refreshAmplifier);
-    connectRow(s, meter, &MainPowerMeter::scaleChanged, [this, s] {
+    connectRow(s, meter, &MainPowerMeter::scaleChanged, [this] {
         rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
         refreshPowerReadouts();
     });
@@ -2429,7 +2428,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
     //  every other SKU → canonical 0..100/1 with bare integer labels).
     connectRow(s, m_model, &RadioModel::currentRadioChanged,
-            [this, s](const NereusSDR::RadioInfo&) {
+            [this](const NereusSDR::RadioInfo&) {
         const auto model = m_model->hardwareProfile().model;
         rescaleFwdGaugeForModel(model);
         rescalePowerSlidersForModel(model);
@@ -2452,7 +2451,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // which formats the value in -X.X dB on HL2 and bare integer on every
     // other SKU.  The old direct setText(QString::number(val)) would have
     // bypassed the dB conversion on HL2.
-    connectRow(s, s->rfPowerSlider(), &QSlider::valueChanged, [this, s, &tx](int val) {
+    connectRow(s, s->rfPowerSlider(), &QSlider::valueChanged, [this, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
         tx.setPower(val);
@@ -2603,18 +2602,18 @@ void TxApplet::wireFilterSection(TxFilterSection* s)
     // Model → UI: TransmitModel::filterChanged(int,int) → QSignalBlocker on
     //             both spinboxes, then setValue + refresh status label.
     // Status label refresh helper (shared by filterChanged and dspModeChanged).
-    auto refreshFilterStatus = [this, s]() { refreshTxFilterStatus(); };
+    auto refreshFilterStatus = [this]() { refreshTxFilterStatus(); };
 
     if (s->filterLowSpin()) {
         connectRow(s, s->filterLowSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
-                [this, s](int v) {
+                [this](int v) {
             if (m_updatingFromModel) { return; }
             m_model->transmitModel().setFilterLow(v);
         });
     }
     if (s->filterHighSpin()) {
         connectRow(s, s->filterHighSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
-                [this, s](int v) {
+                [this](int v) {
             if (m_updatingFromModel) { return; }
             m_model->transmitModel().setFilterHigh(v);
         });
@@ -2660,7 +2659,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
     // LEV button ↔ TransmitModel::txLevelerOn (bidirectional, echo-guarded).
     if (s->levButton()) {
         connectRow(s, s->levButton(), &QPushButton::toggled,
-                [this, s, &tx](bool on) {
+                [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setTxLevelerOn(on);
         });
@@ -2677,7 +2676,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
     // Right-click: placeholder slot for the TxEqDialog launch (Batch 3).
     if (s->eqButton()) {
         connectRow(s, s->eqButton(), &QPushButton::toggled,
-                [this, s, &tx](bool on) {
+                [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setTxEqEnabled(on);
         });
@@ -2692,7 +2691,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
         // Modeless singleton; show + raise + activateWindow so a
         // hidden-but-alive instance is brought forward.
         connectRow(s, s->eqButton(), &QPushButton::customContextMenuRequested,
-                [this, s](const QPoint& /*pos*/) {
+                [this](const QPoint& /*pos*/) {
             // R-R3-49 (parity Task 4): opens in a remote window too; the
             // dialog greys itself with the reason while the Core cannot
             // take a change (TxEqDialog::setSettingsPermitted).
@@ -2710,7 +2709,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
     // alive for fast re-opens — same pattern as TxEqDialog).
     if (s->cfcButton()) {
         connectRow(s, s->cfcButton(), &QPushButton::toggled,
-                [this, s, &tx](bool on) {
+                [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setCfcEnabled(on);
         });
@@ -2722,7 +2721,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
             m_updatingFromModel = false;
         });
         connectRow(s, s->cfcButton(), &QPushButton::customContextMenuRequested,
-                [this, s](const QPoint& /*pos*/) {
+                [this](const QPoint& /*pos*/) {
             requestOpenCfcDialog();
         });
     }
@@ -2731,7 +2730,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
     // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
     // doesn't bounce back into setActiveProfile.
     connectRow(s, s->profileCombo(), &QComboBox::currentTextChanged,
-            [this, s](const QString& name) {
+            [this](const QString& name) {
         if (m_updatingFromModel) { return; }
         if (!m_micProfileMgr) { return; }
         if (name.isEmpty()) { return; }
@@ -2743,7 +2742,7 @@ void TxApplet::wireChainSection(TxChainSection* s)
     // Right-click on combo → emit txProfileMenuRequested (Thetis cite at the
     // signal declaration).
     connectRow(s, s->profileCombo(), &QComboBox::customContextMenuRequested,
-            [this, s](const QPoint& /*pos*/) {
+            [this](const QPoint& /*pos*/) {
         emit txProfileMenuRequested();
     });
 
@@ -3074,7 +3073,7 @@ void TxApplet::wireVoxSection(TxVoxSection* s)
             s->button()->setChecked(tx.voxEnabled());
         }
         // UI → Model
-        connectRow(s, s->button(), &QPushButton::toggled, [this, s, &tx](bool on) {
+        connectRow(s, s->button(), &QPushButton::toggled, [this, &tx](bool on) {
             if (m_updatingFromModel) { return; }
             tx.setVoxEnabled(on);
         });
@@ -3162,7 +3161,7 @@ void TxApplet::wireVoxSection(TxVoxSection* s)
     // listens and jumps the SetupDialog to the "DEXP/VOX" leaf page.
     if (s->button()) {
         connectRow(s, s->button(), &QPushButton::customContextMenuRequested,
-                [this, s](const QPoint&) {
+                [this](const QPoint&) {
             emit openSetupRequested(QStringLiteral("Transmit"),
                                     QStringLiteral("DEXP/VOX"));
         });
@@ -3193,7 +3192,7 @@ void TxApplet::wireProcessingSection(TxProcessingSection* s)
     // the radio's SWR-protection state changes. Light the LED amber when
     // high-SWR protection is active; dim it when cleared.
     {
-        auto updateSwrProtLed = [this, s](bool isHigh) {
+        auto updateSwrProtLed = [s](bool isHigh) {
             if (!s->swrProtectionLed()) { return; }
             const QString color = isHigh ? QStringLiteral("#ffaa00")
                                          : Style::kTextInactive;
@@ -3252,13 +3251,13 @@ void TxApplet::wireProcessingSection(TxProcessingSection* s)
         // coordinator is bound (test harness verifies the signal emit).
         s->psaButton()->setContextMenuPolicy(Qt::CustomContextMenu);
         connectRow(s, s->psaButton(), &QWidget::customContextMenuRequested,
-                [this, s](const QPoint&) {
+                [this](const QPoint&) {
             emit openPureSignalDialogRequested();
         });
 
         // The checked state expresses automatic-calibration intent. Turning
         // it off uses the acknowledged Off/reset action.
-        connectRow(s, s->psaButton(), &QPushButton::toggled, [this, s](bool on) {
+        connectRow(s, s->psaButton(), &QPushButton::toggled, [this](bool on) {
             if (m_updatingFromModel || !m_psFacade) {
                 return;
             }
