@@ -11,7 +11,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxChainSection.h  (NereusSDR)
+// src/gui/applets/TxChainSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:

@@ -11,7 +11,7 @@
 #include <utility>
 
 // =================================================================
-// src/gui/applets/TxKeyingSection.h  (NereusSDR)
+// src/gui/applets/TxKeyingSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:

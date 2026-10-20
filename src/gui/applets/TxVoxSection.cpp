@@ -12,7 +12,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxVoxSection.h  (NereusSDR)
+// src/gui/applets/TxVoxSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:

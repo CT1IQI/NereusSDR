@@ -11,7 +11,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxProcessingSection.h  (NereusSDR)
+// src/gui/applets/TxProcessingSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:

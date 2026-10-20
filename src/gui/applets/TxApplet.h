@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20 - connectRow: a row's connection ends with the row or the
+//                applet, whichever goes first. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -226,6 +229,7 @@
 #include <QPointer>
 #include <QList>
 #include <functional>
+#include <utility>
 #include <QString>
 #include "models/Band.h"
 #include "core/BoardCapabilities.h"  // setBoardCapabilities slot
@@ -733,6 +737,17 @@ private:
     void wireVoxSection(TxVoxSection* section);
     void wireProcessingSection(TxProcessingSection* section);
     void wireKeyingSection(TxKeyingSection* section);
+    // Connects a signal to a handler for one row.  The connection ends with
+    // whichever goes first: the row, which a container may close while the
+    // applet lives, or the applet, which a copy in a container may outlive.
+    // The handlers use both, so neither one alone can be the context.
+    template <typename Sender, typename Signal, typename Handler>
+    void connectRow(QObject* row, const Sender* sender, Signal signal, Handler&& handler)
+    {
+        const QMetaObject::Connection c =
+            connect(sender, signal, row, std::forward<Handler>(handler));
+        connect(this, &QObject::destroyed, row, [c] { QObject::disconnect(c); });
+    }
     int txRowSpacing() const;
     QMargins txRowMargins() const;
     QMargins txCopyMargins() const;

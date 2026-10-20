@@ -11,7 +11,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxFilterSection.h  (NereusSDR)
+// src/gui/applets/TxFilterSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:

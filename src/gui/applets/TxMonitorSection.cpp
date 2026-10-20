@@ -10,7 +10,7 @@
 #include <QVBoxLayout>
 
 // =================================================================
-// src/gui/applets/TxMonitorSection.h  (NereusSDR)
+// src/gui/applets/TxMonitorSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:
