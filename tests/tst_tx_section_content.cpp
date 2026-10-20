@@ -27,6 +27,8 @@
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QLabel>
+#include <QLayout>
+#include <QMargins>
 #include <QMenu>
 #include <QPushButton>
 #include <QSlider>
@@ -245,6 +247,39 @@ private slots:
         // one whose entries cannot be built.
         ContainerContentRegistry bare;
         QVERIFY(txMenuTitles(bare).isEmpty());
+    }
+
+    // ── 9. A copy gives itself the margins the applet's column gives ─────
+    // The applet's own rows give none, because their column already has
+    // the margins.  A copy in a container has no column of its own, so it
+    // gives itself the margins the column would have given it.
+    void aCopyGivesItselfTheColumnMargins()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QWidget host;
+        auto* copy = registry.createWidget(registry.makeEntry("tx.chain"), &host);
+        QVERIFY(copy);
+        auto* chain = qobject_cast<TxChainSection*>(copy);
+        QVERIFY(chain);
+
+        const QMargins copyMargins = chain->layout()->contentsMargins();
+        QCOMPARE(copyMargins.left(), 4);
+        QCOMPARE(copyMargins.right(), 4);
+        QCOMPARE(copyMargins.top(), 2);
+        QCOMPARE(copyMargins.bottom(), 2);
+
+        // The applet's own row gives none: its column already has them.
+        auto* own = applet.findChild<TxChainSection*>();
+        QVERIFY(own);
+        const QMargins ownMargins = own->layout()->contentsMargins();
+        QCOMPARE(ownMargins.left(), 0);
+        QCOMPARE(ownMargins.right(), 0);
+        QCOMPARE(ownMargins.top(), 0);
+        QCOMPARE(ownMargins.bottom(), 0);
     }
 
     // ── 8. A copy the container destroys leaves the applet's list ─────────

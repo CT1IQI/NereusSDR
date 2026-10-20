@@ -222,6 +222,7 @@
 
 #include "AppletWidget.h"
 #include "gui/NereusGuiExport.h"
+#include <QMargins>
 #include <QPointer>
 #include <QList>
 #include <functional>
@@ -733,6 +734,8 @@ private:
     void wireProcessingSection(TxProcessingSection* section);
     void wireKeyingSection(TxKeyingSection* section);
     int txRowSpacing() const;
+    QMargins txRowMargins() const;
+    QMargins txCopyMargins() const;
     QList<QWidget*> monitorChainControls() const;
     QList<QWidget*> monitorOutputControls() const;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup

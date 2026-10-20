@@ -413,6 +413,11 @@ namespace NereusSDR {
 namespace {
 
 constexpr int kWorkspaceTxRowSpacing = 6;
+// The margins the applet's own column gives its rows: 4 px at the sides,
+// 2 px above and below.  A copy of a row in a container has no column of
+// its own, so it gives itself these margins itself.
+constexpr int kTxColumnMarginH = 4;
+constexpr int kTxColumnMarginV = 2;
 
 // The tooltip a control had before the transmit-permission layer
 // (setTransmitPermitted) disabled it, given back when permission returns.
@@ -482,7 +487,8 @@ void TxApplet::buildUI()
     auto* body = new QWidget(this);
     body->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     auto* vbox = new QVBoxLayout(body);
-    vbox->setContentsMargins(4, 2, 4, 2);
+    vbox->setContentsMargins(kTxColumnMarginH, kTxColumnMarginV,
+                            kTxColumnMarginH, kTxColumnMarginV);
     vbox->setSpacing(WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2);
     outer->addWidget(body);
 
@@ -508,7 +514,8 @@ void TxApplet::buildUI()
     // had here, and the model's power meter so the gauge is scaled the way it
     // was scaled when the rows were built.
     m_powerSection = new TxPowerSection(
-        body, vbox->spacing(), m_model ? m_model->mainPowerMeter() : nullptr);
+        body, vbox->spacing(), m_model ? m_model->mainPowerMeter() : nullptr,
+        txRowMargins());
     vbox->addWidget(m_powerSection);
 
     // ── Button row: TUNE + MOX (50% each) ──────────────────────────────────
@@ -521,7 +528,7 @@ void TxApplet::buildUI()
     // label that says who holds transmit, and the Take transmit button — all
     // moved to TxKeyingSection. The section is given this column's own row
     // spacing so the rows inside it keep the same gap they had here.
-    m_keyingSection = new TxKeyingSection(body, vbox->spacing());
+    m_keyingSection = new TxKeyingSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_keyingSection);
     // The Take-transmit press is this applet's own signal, so it is wired
     // here rather than inside the section.
@@ -552,7 +559,7 @@ void TxApplet::buildUI()
     // DexpPeakMeter strip, the hold-time slider and their inset readouts —
     // all moved to TxVoxSection. The section is given this column's own
     // row spacing so the rows inside it keep the same gap they had here.
-    m_voxSection = new TxVoxSection(body, vbox->spacing());
+    m_voxSection = new TxVoxSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_voxSection);
 
     // ── 4c. MON toggle button + 4d. Monitor volume slider ─────────────────────
@@ -561,26 +568,26 @@ void TxApplet::buildUI()
     // slider — all moved to TxMonitorSection. The section is given this
     // column's own row spacing so the rows inside it keep the same gap
     // they had here.
-    m_monitorSection = new TxMonitorSection(body, vbox->spacing());
+    m_monitorSection = new TxMonitorSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_monitorSection);
 
     // ── 4e. The LEV, EQ and CFC buttons and the TX Profile combo — all
     // moved to TxChainSection. The section is given this column's own row
     // spacing so the rows inside it keep the same gap they had here.
-    m_chainSection = new TxChainSection(body, vbox->spacing());
+    m_chainSection = new TxChainSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_chainSection);
 
     // ── 4f. The TX bandpass filter cutoff spinboxes and the filter status
     // label — all moved to TxFilterSection. The section is given this
     // column's own row spacing so the rows inside it keep the same gap they
     // had here.
-    m_filterSection = new TxFilterSection(body, vbox->spacing());
+    m_filterSection = new TxFilterSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_filterSection);
 
     // ── 4g. The 2-Tone, PS-A and DUP buttons and the SWR protection LED —
     // all moved to TxProcessingSection. The section is given this column's
     // own row spacing so the rows inside it keep the same gap they had here.
-    m_processingSection = new TxProcessingSection(body, vbox->spacing());
+    m_processingSection = new TxProcessingSection(body, vbox->spacing(), txRowMargins());
     vbox->addWidget(m_processingSection);
     // The DUP press raises this applet's own signal, so it is wired here
     // rather than inside the section.
@@ -2265,12 +2272,22 @@ int TxApplet::txRowSpacing() const
     return WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2;
 }
 
+QMargins TxApplet::txRowMargins() const
+{
+    return QMargins();
+}
+
+QMargins TxApplet::txCopyMargins() const
+{
+    return QMargins(kTxColumnMarginH, kTxColumnMarginV, kTxColumnMarginH, kTxColumnMarginV);
+}
+
 // An independent copy of the MON row, for a container that holds the monitor
 // controls on their own. The applet wires it and keeps it, so the
 // transmit-permission gates reach it like they reach the applet's own.
 TxMonitorSection* TxApplet::createMonitorSection(QWidget* parent)
 {
-    auto* s = new TxMonitorSection(parent, txRowSpacing());
+    auto* s = new TxMonitorSection(parent, txRowSpacing(), txCopyMargins());
     wireMonitorSection(s);
     m_extraMonitorSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2731,7 +2748,8 @@ void TxApplet::wireChainSection(TxChainSection* s)
 TxPowerSection* TxApplet::createPowerSection(QWidget* parent)
 {
     auto* s = new TxPowerSection(parent, txRowSpacing(),
-                               m_model ? m_model->mainPowerMeter() : nullptr);
+                               m_model ? m_model->mainPowerMeter() : nullptr,
+                               txCopyMargins());
     wirePowerSection(s);
     m_extraPowerSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2751,7 +2769,7 @@ TxPowerSection* TxApplet::createPowerSection(QWidget* parent)
 
 TxFilterSection* TxApplet::createFilterSection(QWidget* parent)
 {
-    auto* s = new TxFilterSection(parent, txRowSpacing());
+    auto* s = new TxFilterSection(parent, txRowSpacing(), txCopyMargins());
     wireFilterSection(s);
     m_extraFilterSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2771,7 +2789,7 @@ TxFilterSection* TxApplet::createFilterSection(QWidget* parent)
 
 TxChainSection* TxApplet::createChainSection(QWidget* parent)
 {
-    auto* s = new TxChainSection(parent, txRowSpacing());
+    auto* s = new TxChainSection(parent, txRowSpacing(), txCopyMargins());
     wireChainSection(s);
     m_extraChainSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2791,7 +2809,7 @@ TxChainSection* TxApplet::createChainSection(QWidget* parent)
 
 TxVoxSection* TxApplet::createVoxSection(QWidget* parent)
 {
-    auto* s = new TxVoxSection(parent, txRowSpacing());
+    auto* s = new TxVoxSection(parent, txRowSpacing(), txCopyMargins());
     wireVoxSection(s);
     m_extraVoxSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2811,7 +2829,7 @@ TxVoxSection* TxApplet::createVoxSection(QWidget* parent)
 
 TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent)
 {
-    auto* s = new TxProcessingSection(parent, txRowSpacing());
+    auto* s = new TxProcessingSection(parent, txRowSpacing(), txCopyMargins());
     wireProcessingSection(s);
     m_extraProcessingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2831,7 +2849,7 @@ TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent)
 
 TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent)
 {
-    auto* s = new TxKeyingSection(parent, txRowSpacing());
+    auto* s = new TxKeyingSection(parent, txRowSpacing(), txCopyMargins());
     wireKeyingSection(s);
     m_extraKeyingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it

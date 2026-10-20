@@ -95,9 +95,11 @@
 
 namespace NereusSDR {
 
-TxVoxSection::TxVoxSection(QWidget* parent, int rowSpacing)
+TxVoxSection::TxVoxSection(QWidget* parent, int rowSpacing,
+                           const QMargins& outerMargins)
     : QWidget(parent)
 {
+    m_outerMargins = outerMargins;
     buildUI(rowSpacing);
 }
 
@@ -106,7 +108,7 @@ void TxVoxSection::buildUI(int rowSpacing)
     // The column the applet puts its rows in, with the applet's own
     // contents margins. The row below is added to it unchanged.
     auto* vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setContentsMargins(m_outerMargins);
     vbox->setSpacing(rowSpacing);
 
 auto* row = new QHBoxLayout;

@@ -143,6 +143,29 @@ gates, the receive-only lock, the state pushes — reads it through the
 `allXSections()` helpers, which return the applet's own row and every copy
 that is still alive.
 
+### 4.3 A copy's own margins
+
+Each TX section's layout has no margins of its own: all the padding in the
+TX panel comes from the applet's *column* — 4 px at the sides, 2 px above
+and below, with the column's spacing between the rows.
+
+A copy in a container has no column of its own, and the container host's
+body layout has a spacing of zero, so a copy would sit flush against its
+neighbours and against the container's edges. That is why the host's other
+per-instance content — the Longpath instruments — each carry their own
+outer margins (`BarInstrument` and `NeedleInstrument` use 10/8/14/10,
+`FrequencyInstrument` 14/10/14/10).
+
+So a section is told the margins it gives itself. The applet's own rows are
+told to give none, because their column already has them; a copy is told to
+give itself the column's margins, so a TX object in a container has the
+same breathing room the row has in the panel. Two adjacent TX objects then
+sit 4 px apart (2 + 2), rather than the panel's 6 px.
+
+The margins are the section's own layout margins, so they sit outside the
+row's own controls; the spacing *between* the rows inside a section is
+unchanged, and is already handed in as the same value the applet uses.
+
 ## 5. How the content is registered
 
 The new content registers through the registry's **widget factory** path,

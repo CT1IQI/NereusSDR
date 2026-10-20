@@ -97,9 +97,11 @@
 namespace NereusSDR {
 
 TxPowerSection::TxPowerSection(QWidget* parent, int rowSpacing,
-                             const MainPowerMeter* meter)
+                               const MainPowerMeter* meter,
+                               const QMargins& outerMargins)
     : QWidget(parent)
 {
+    m_outerMargins = outerMargins;
     buildUI(rowSpacing, meter);
 }
 
@@ -108,7 +110,7 @@ void TxPowerSection::buildUI(int rowSpacing, const MainPowerMeter* meter)
     // The column the applet puts its rows in, with the applet's own
     // contents margins. The rows below are added to it unchanged.
     auto* vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setContentsMargins(m_outerMargins);
     vbox->setSpacing(rowSpacing);
 
 // ── 1. Forward Power gauge — per-SKU scale ──────────────────────────────

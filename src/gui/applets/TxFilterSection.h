@@ -80,6 +80,7 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
 
+#include <QMargins>
 #include <QString>
 #include <QWidget>
 
@@ -96,7 +97,7 @@ class TxFilterSection : public QWidget
 public:
     // rowSpacing is the gap the applet's own column puts between rows, so the
     // rows inside this section keep the same gap they had there.
-    explicit TxFilterSection(QWidget* parent, int rowSpacing);
+    explicit TxFilterSection(QWidget* parent, int rowSpacing, const QMargins& outerMargins);
 
     QSpinBox* filterLowSpin() const { return m_txFilterLowSpin; }
     QSpinBox* filterHighSpin() const { return m_txFilterHighSpin; }
@@ -104,6 +105,11 @@ public:
 
 private:
     void buildUI(int rowSpacing);
+    // The margins this section gives itself.  The applet's own rows
+    // give none, because the applet's column already has them; a copy
+    // in a container has no column of its own, so it gives itself the
+    // margins the column would have given it.
+    QMargins m_outerMargins;
 
     QSpinBox* m_txFilterLowSpin{nullptr};
     QSpinBox* m_txFilterHighSpin{nullptr};
