@@ -34,9 +34,11 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QWidget>
 
 #include "core/AppSettings.h"
+#include "core/RadioStatus.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxChainSection.h"
 #include "gui/applets/TxKeyingSection.h"
@@ -328,6 +330,54 @@ private slots:
 
         // The applet's own row still works.
         QVERIFY(applet.findChild<QPushButton*>(QStringLiteral("TxLevButton")));
+    }
+
+    // ── 9. The model's signals do not reach a copy that is gone ──────────
+    // A copy's model wiring belongs to the copy.  After the container
+    // destroys it, a model change must not write to its widgets; the copy's
+    // own refresh timer must stop with it too.  Run with MallocScribble=1 on
+    // macOS (or under ASan) so a write to freed memory fails every time.
+    void theModelDoesNotReachACopyThatIsGone()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        const int timersBefore = applet.findChildren<QTimer*>().size();
+        QWidget host;
+        QList<QWidget*> copies;
+        for (const char* type : kRowTypes) {
+            auto* copy = registry.createWidget(
+                registry.makeEntry(QString::fromLatin1(type)), &host);
+            QVERIFY(copy);
+            copies << copy;
+        }
+        for (QWidget* copy : copies) {
+            delete copy;
+        }
+        // No timer a copy started outlives it.
+        QCOMPARE(applet.findChildren<QTimer*>().size(), timersBefore);
+
+        // Every model signal the power, filter, chain and VOX rows follow.
+        TransmitModel& tx = rm.transmitModel();
+        tx.setPower(tx.power() == 37 ? 38 : 37);
+        tx.setTunePowerForBand(Band::Band20m, 23);
+        tx.setFilterLow(tx.filterLow() + 10);
+        tx.setFilterHigh(tx.filterHigh() - 10);
+        tx.setTxLevelerOn(!tx.txLevelerOn());
+        tx.setTxEqEnabled(!tx.txEqEnabled());
+        tx.setCfcEnabled(!tx.cfcEnabled());
+        tx.setVoxEnabled(!tx.voxEnabled());
+        tx.setVoxThresholdDb(tx.voxThresholdDb() == -40 ? -41 : -40);
+        tx.setVoxHangTimeMs(tx.voxHangTimeMs() == 300 ? 310 : 300);
+        rm.radioStatus().setForwardPower(12.5);
+        QTest::qWait(120);   // the 20 Hz power refresh and the 100 ms VOX poll
+
+        // The applet's own row still follows the model.
+        auto* own = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(own);
+        QCOMPARE(own->value(), tx.power());
     }
 
     // ── 6. The transmit-permission gate reaches the copy ─────────────────
