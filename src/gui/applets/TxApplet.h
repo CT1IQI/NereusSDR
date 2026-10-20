@@ -406,6 +406,16 @@ public slots:
     void setMonitorOutputPermitted(bool permitted,
                                    const QString& unavailableReason = QString());
     static QString monitorOutputUnavailableReason();
+    // A second, independent copy of the MON row, for a container that holds
+    // the monitor controls on their own. The applet wires it exactly as it
+    // wires its own, so both show and set the same state.
+    TxMonitorSection* createMonitorSection(QWidget* parent);
+    TxPowerSection* createPowerSection(QWidget* parent);
+    TxFilterSection* createFilterSection(QWidget* parent);
+    TxChainSection* createChainSection(QWidget* parent);
+    TxVoxSection* createVoxSection(QWidget* parent);
+    TxProcessingSection* createProcessingSection(QWidget* parent);
+    TxKeyingSection* createKeyingSection(QWidget* parent);
     // R-R3-49 (group A fix wave, M3): whether an RF Power move also writes
     // the tune drive source (tuneDrivePowerSource on the link), which a Core
     // takes from transmitSettingsVersion 5. MainWindow supplies false for an
@@ -688,6 +698,43 @@ private:
     //      keeps the wiring to the model, the audio engine and the gates;
     //      the section owns the widgets and their presentation.
     TxMonitorSection* m_monitorSection = nullptr;
+    // Independent copies of the MON row made for containers (see
+    // createMonitorSection). The applet wires each of them, and the
+    // transmit-permission gates reach all of them.
+    QList<QPointer<TxMonitorSection>> m_extraMonitorSections;
+    QList<QPointer<TxPowerSection>> m_extraPowerSections;
+    QList<QPointer<TxFilterSection>> m_extraFilterSections;
+    QList<QPointer<TxChainSection>> m_extraChainSections;
+    QList<QPointer<TxVoxSection>> m_extraVoxSections;
+    QList<QPointer<TxProcessingSection>> m_extraProcessingSections;
+    QList<QPointer<TxKeyingSection>> m_extraKeyingSections;
+    // The controls each transmit-permission gate covers, in the applet's own
+    // rows and in every independent copy of them.
+    QList<TxMonitorSection*> allMonitorSections() const;
+    QList<TxPowerSection*> allPowerSections() const;
+    QList<TxFilterSection*> allFilterSections() const;
+    QList<TxChainSection*> allChainSections() const;
+    QList<TxVoxSection*> allVoxSections() const;
+    QList<TxProcessingSection*> allProcessingSections() const;
+    QList<TxKeyingSection*> allKeyingSections() const;
+    QList<QWidget*> rxOnlyLockedControls() const;
+    void syncSectionInstances();
+    void syncPsaFromFacadeIn(TxProcessingSection* s);
+    void refreshTransmitSliceChoicesIn(TxKeyingSection* s);
+    void removePsaFacadeReasonIn(TxProcessingSection* s);
+    QList<QWidget*> transmitSettingsGatedControls() const;
+    QList<QWidget*> chainSettingsGatedControls() const;
+    QList<QWidget*> profileGatedControls() const;
+    void wireMonitorSection(TxMonitorSection* section);
+    void wirePowerSection(TxPowerSection* section);
+    void wireFilterSection(TxFilterSection* section);
+    void wireChainSection(TxChainSection* section);
+    void wireVoxSection(TxVoxSection* section);
+    void wireProcessingSection(TxProcessingSection* section);
+    void wireKeyingSection(TxKeyingSection* section);
+    int txRowSpacing() const;
+    QList<QWidget*> monitorChainControls() const;
+    QList<QWidget*> monitorOutputControls() const;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup
     //     drops the duplicate PROC button; PROC lives on PhoneCwApplet which
     //     already had a wired button + slider sitting un-wired since 3I-3):
@@ -742,6 +789,14 @@ private:
 
     // Flag preventing echo loops between the model and the UI.
     bool m_updatingFromModel{false};
+    // The state the applet has pushed into its own rows, so a copy made
+    // later starts where the applet's own row is.
+    bool m_takeTransmitOffered{false};
+    bool m_holderOnAir{false};
+    QString m_transmitHolderText;
+    bool m_dupChecked{false};
+    bool m_dupAvailable{false};
+    QString m_dupTooltip;
     std::function<void(bool)> m_desktopMoxRequest;
     std::function<void(bool)> m_desktopTuneRequest;
     std::function<bool()> m_desktopMoxOn;

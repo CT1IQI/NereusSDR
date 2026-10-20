@@ -2194,6 +2194,7 @@ set(GUI_SOURCES
     src/gui/applets/TxChainSection.cpp
     src/gui/applets/TxKeyingSection.cpp
     src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/TxSectionContent.cpp
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp
     src/gui/applets/TxEqDialog.cpp

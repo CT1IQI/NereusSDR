@@ -584,8 +584,6 @@ void TxApplet::buildUI()
     vbox->addWidget(m_processingSection);
     // The DUP press raises this applet's own signal, so it is wired here
     // rather than inside the section.
-    connect(m_processingSection->dupButton(), &QPushButton::clicked, this,
-            &TxApplet::displayDuplexRequested);
 
     vbox->addStretch();
 }
@@ -608,372 +606,8 @@ void TxApplet::wireControls()
     TransmitModel& tx = m_model->transmitModel();
     MoxController* mox = m_model->moxController();
 
-    // ── Forward-power gauge ← RadioStatus::powerChanged ─────────────────────
-    // 3M-1a (2026-04-27): wire the previously-NYI fwd-power gauge to the
-    // radio's reported forward power.  Pipeline:
-    //   P2RadioConnection → paTelemetryUpdated(fwdRaw,...)
-    //     → RadioModel handler scaleFwdPowerWatts() → m_radioStatus.setForwardPower(W)
-    //     → RadioStatus::powerChanged(fwd, rev, swr)  ← we listen here
-    //
-    // Two-stage de-jitter (Phase 3I-1 will replace with the proper Thetis
-    // peak-decay filter):
-    //   1.  alpha=0.30 EMA on every powerChanged emit — smooths the per-
-    //       sample noise without much lag (~10 sample time-constant).
-    //   2.  20 Hz QTimer reads the smoothed state into the gauge — keeps
-    //       the visible digits stable even when RadioStatus::powerChanged
-    //       fires twice per hardware sample (documented in
-    //       RadioModel.cpp:572).  Without this throttle the digit
-    //       characters update too fast to read.
-    connect(&m_model->radioStatus(), &RadioStatus::powerChanged,
-            this, [this](double fwdW, double /*revW*/, double /*swr*/) {
-        if (!m_model->mainPowerMeter()->onAmplifier()) {
-            constexpr double kAlpha = 0.30;
-            m_powerSection->setSmoothedForwardPowerW(kAlpha * fwdW + (1.0 - kAlpha) * m_powerSection->smoothedForwardPowerW());
-        }
-    });
-    auto* fwdGaugeRefreshTimer = new QTimer(this);
-    fwdGaugeRefreshTimer->setInterval(50);   // 20 Hz UI refresh
-    connect(fwdGaugeRefreshTimer, &QTimer::timeout,
-            this, &TxApplet::refreshPowerReadouts);
-    fwdGaugeRefreshTimer->start();
-
-    MainPowerMeter* meter = m_model->mainPowerMeter();
-    connect(meter, &MainPowerMeter::sourceChanged, this, [this, meter] {
-        if (!meter->onAmplifier()) {
-            m_powerSection->setSmoothedForwardPowerW(meter->forwardW());
-        }
-        refreshPowerReadouts();
-    });
-    const auto refreshAmplifier = [this, meter] {
-        if (meter->onAmplifier()) { refreshPowerReadouts(); }
-    };
-    connect(meter, &MainPowerMeter::readingChanged, this, refreshAmplifier);
-    connect(meter, &MainPowerMeter::driveChanged, this, refreshAmplifier);
-    connect(meter, &MainPowerMeter::scaleChanged, this, [this] {
-        rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
-        refreshPowerReadouts();
-    });
-    // Bench #167: a lone zero after unkey left the EMA stuck above zero.
-    // Keep the explicit reset; the new rows then show their no-reading dashes.
-    if (mox) {
-        connect(mox, &MoxController::moxStateChanged, this, [this](bool active) {
-            if (!active) { m_powerSection->setSmoothedForwardPowerW(0.0); }
-            refreshPowerReadouts();
-        });
-    }
-    // R-R3-49 parity Task 33: the remote controller never keys; the Core's
-    // mirrored transmit state clears the rows and drive note instead.
-    connect(m_model, &RadioModel::transmittingChanged, this, [this](bool active) {
-        if (!active) { m_powerSection->setSmoothedForwardPowerW(0.0); }
-        refreshPowerReadouts();
-    });
-
-    // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
-    // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
-    // unreadable.  Subscribe to currentRadioChanged so the gauge ticks
-    // and red-zone redraw whenever the active radio changes.
-    //
-    // Issue #175 Task 7: also rescale the RF Power and Tune Power sliders
-    // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
-    //  every other SKU → canonical 0..100/1 with bare integer labels).
-    connect(m_model, &RadioModel::currentRadioChanged, this,
-            [this](const NereusSDR::RadioInfo&) {
-        const auto model = m_model->hardwareProfile().model;
-        rescaleFwdGaugeForModel(model);
-        rescalePowerSlidersForModel(model);
-    });
-    // Apply the current model's scale at wireControls() time so cold-launch
-    // (or reconnect-on-startup) lands a properly-sized gauge + sliders before
-    // the first telemetry sample.
-    {
-        const auto model = m_model->hardwareProfile().model;
-        rescaleFwdGaugeForModel(model);
-        rescalePowerSlidersForModel(model);
-    }
-
-    // ── SWR Prot LED ← SwrProtectionController::highSwrChanged ─────────────
-    // SwrProtectionController (Phase 3G-13) emits highSwrChanged(bool) when
-    // the radio's SWR-protection state changes. Light the LED amber when
-    // high-SWR protection is active; dim it when cleared.
-    {
-        auto updateSwrProtLed = [this](bool isHigh) {
-            if (!m_processingSection->swrProtectionLed()) { return; }
-            const QString color = isHigh ? QStringLiteral("#ffaa00")
-                                         : Style::kTextInactive;
-            m_processingSection->swrProtectionLed()->setStyleSheet(QStringLiteral(
-                "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
-            ).arg(color));
-        };
-        connect(&m_model->swrProt(),
-                &safety::SwrProtectionController::highSwrChanged,
-                this, updateSwrProtLed);
-        // Initialise to current state.
-        updateSwrProtLed(m_model->swrProt().highSwr());
-    }
-
-    // ── RF Power slider → TransmitModel::setPower(int) ──────────────────────
-    // From Thetis chkMOX_CheckedChanged2 power flow [v2.10.3.13]:
-    //   the RF Power slider maps 0–100 to TX drive level.
-    //
-    // Issue #175 Task 7: label text is now driven by updatePowerSliderLabels()
-    // which formats the value in -X.X dB on HL2 and bare integer on every
-    // other SKU.  The old direct setText(QString::number(val)) would have
-    // bypassed the dB conversion on HL2.
-    connect(m_powerSection->rfPowerSlider(), &QSlider::valueChanged, this, [this, &tx](int val) {
-        updatePowerSliderLabels();
-        if (m_updatingFromModel) { return; }
-        tx.setPower(val);
-        // The per-band slot (Thetis ptbPWR_Scroll, console.cs:28682-28693
-        // [v2.10.3.15]: `power_by_band[(int)_tx_band] = ptbPWR.Value;`) has
-        // one writer: RadioModel on the radio's side, which saves PWR into
-        // its transmit band on powerChanged (drivePowerScroll). A local
-        // window leaves it there; a remote window sends the power setting
-        // alone and the Core saves it. Writing the slot here too could pick
-        // a different band (this applet's active slice) from the one that
-        // transmits.
-        if (m_model && m_model->role() == RadioModel::Role::Local) {
-            tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
-            return;
-        }
-        // R-R3-49 (group A fix wave, M3): a Core below
-        // transmitSettingsVersion 5 refuses tuneDrivePowerSource and takes
-        // `power` alone.
-        if (!m_powerByBandPermitted) { return; }
-        // Symmetric to the tune-slider auto-switch above: touching the RF
-        // Power slider restores the tune source to DriveSlider so the
-        // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
-        // TUNE.  Last-touched-slider-wins UX. From Thetis console.cs:46553
-        // [v2.10.3.13] DrivePowerSource.DRIVE_SLIDER is the canonical default.
-        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
-    });
-
-    // Reverse: TransmitModel::powerChanged → slider
-    connect(&tx, &TransmitModel::powerChanged, this, [this](int power) {
-        QSignalBlocker b(m_powerSection->rfPowerSlider());
-        m_updatingFromModel = true;
-        m_powerSection->rfPowerSlider()->setValue(power);
-        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
-        m_updatingFromModel = false;
-    });
-
-    // ── Tune Power slider → TransmitModel::setTunePowerForTxBand ────────────
-    // Per-band tune power, ported from Thetis console.cs:12094 [v2.10.3.13]:
-    //   private int[] tunePower_by_band;
-    // The slider writes and shows the transmit band's slot, as Thetis
-    // ptbTune_Scroll does (PA on-air gate review):
-    // From Thetis console.cs:46618 [v2.10.3.15]
-    //   tunePower_by_band[(int)_tx_band] = ptbTune.Value;
-    // m_currentBand (the pan or slice band) is used only before RadioModel
-    // knows the transmit band.
-    //
-    // Issue #175 Task 7: label text routed through updatePowerSliderLabels()
-    // for the HL2 (slider/3.0 - 33.0)/2.0 dB conversion.
-    connect(m_powerSection->tunePowerSlider(), &QSlider::valueChanged, this, [this, &tx](int val) {
-        updatePowerSliderLabels();
-        if (m_updatingFromModel) { return; }
-        // R-R3-49 (parity Task 2): a remote window asks the Core, which
-        // does what the lines below do for its own transmit band. A drag
-        // asks once, on release.
-        if (remoteTunePower()) {
-            if (!m_powerSection->tunePowerSlider()->isSliderDown()) {
-                requestRemoteTunePower(val);
-            }
-            return;
-        }
-        if (tx.setTunePowerForTxBand(val)) { return; }
-        tx.setTunePowerForBand(m_currentBand, val);
-        // When the user touches the tune slider, switch the tune drive
-        // source so TUNE actually reads from tunePowerForBand instead of
-        // the regular drive slider (the default per Thetis console.cs:46553
-        // [v2.10.3.13]).  Without this the tune slider is dead UI: its
-        // value persists per-band but the math kernel
-        // (TransmitModel::setPowerUsingTargetDbm txMode 1) only consults
-        // tunePowerForBand when m_tuneDrivePowerSource == TuneSlider.
-        // NereusSDR-spin: Thetis exposes _tuneDrivePowerSource via a
-        // separate Setup combo; NereusSDR follows last-touched-slider-wins
-        // UX so users don't need to know the enum exists.
-        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
-    });
-
-    connect(m_powerSection->tunePowerSlider(), &QSlider::sliderReleased, this, [this]() {
-        if (m_updatingFromModel || !remoteTunePower()) { return; }
-        requestRemoteTunePower(m_powerSection->tunePowerSlider()->value());
-    });
-
-    // Fix round 1 (minor 2): the change answered, the slider shows the
-    // Core's value, whichever arrived first, its answer or its next value
-    // (or a value it clamped). Not while the operator holds the slider.
-    connect(&tx, &TransmitModel::tunePowerForTxBandWriteInFlightChanged,
-            this, [this, &tx](bool inFlight) {
-        if (inFlight || !remoteTunePower() || m_powerSection->tunePowerSlider()->isSliderDown()) { return; }
-        QSignalBlocker b(m_powerSection->tunePowerSlider());
-        m_updatingFromModel = true;
-        m_powerSection->tunePowerSlider()->setValue(tx.tunePowerForTxBand());
-        updatePowerSliderLabels();
-        m_updatingFromModel = false;
-    });
-
-    // R-R3-49 (parity Task 2): in a remote window the slider shows the
-    // Core's tune power for its transmit band; a local window shows its own
-    // transmit band's (PA on-air gate review).
-    connect(&tx, &TransmitModel::tunePowerForTxBandChanged,
-            this, [this, &tx](int watts) {
-        if (!remoteTunePower() && !tx.tuneTxBandKnown()) { return; }
-        // Fix wave GUI-I6: the Core's value does not move the slider out
-        // from under the operator's hand, nor back to an older value while
-        // the operator's change is on its way (the Core's next value, after
-        // its answer, shows; a refusal shows the Core's value again).
-        if (remoteTunePower()
-            && (m_powerSection->tunePowerSlider()->isSliderDown() || tx.tunePowerForTxBandWriteInFlight())) {
-            return;
-        }
-        QSignalBlocker b(m_powerSection->tunePowerSlider());
-        m_updatingFromModel = true;
-        m_powerSection->tunePowerSlider()->setValue(watts);
-        updatePowerSliderLabels();
-        m_updatingFromModel = false;
-    });
-
-    // Reverse: TransmitModel::tunePowerByBandChanged → slider (only for
-    // current band, and only before the transmit band is known; after that
-    // tunePowerForTxBandChanged above repaints it).
-    connect(&tx, &TransmitModel::tunePowerByBandChanged,
-            this, [this, &tx](Band band, int watts) {
-        if (band != m_currentBand || remoteTunePower() || tx.tuneTxBandKnown()) { return; }
-        QSignalBlocker b(m_powerSection->tunePowerSlider());
-        m_updatingFromModel = true;
-        m_powerSection->tunePowerSlider()->setValue(watts);
-        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
-        m_updatingFromModel = false;
-    });
-
-    // ── TUNE button → RadioModel::setTune(bool) ──────────────────────────────
-    // G.4 orchestrator: CW mode swap, tone setup, tune-power push.
-    // From Thetis console.cs:29978-30157 [v2.10.3.13] chkTUN_CheckedChanged.
-    // G8NJJ tell ARIES that tune is active  [original inline comment from console.cs:30153]
-    // MW0LGE_22b setupTuneDriveSlider  [original inline comment from console.cs:30155]
-    connect(m_keyingSection->tuneButton(), &QPushButton::toggled, this, [this](bool on) {
-        if (m_updatingFromModel) { return; }
-        if (!m_model) { return; }
-        // R-R3-21: the button's text and checked state are written only by
-        // the Tune state and refusal handlers below (manualMoxChanged,
-        // tuneRefused). Writing "TUNING..." here, after setTune returned,
-        // painted a refused press as tuning: the refusal had already reset
-        // the button inside this call.
-        if (m_desktopTuneRequest) {
-            const QPointer<TxApplet> self(this);
-            m_desktopTuneRequest(on);
-            if (self) { syncDesktopKeyState(); }
-        } else {
-            // TX rulings (item 1): a remote window's press keys after a
-            // release even while the Core's TUNE still reads on, and the
-            // button shows what it asked until the Core's state arrives.
-            const bool asked = m_model->tunePressAsksOn(on);
-            if (asked != on) {
-                QSignalBlocker b(m_keyingSection->tuneButton());
-                m_keyingSection->tuneButton()->setChecked(asked);
-            }
-            m_model->setTune(asked);
-        }
-    });
-
-    // Reverse: tuneRefused → uncheck TUN button + clear text.
-    // From Thetis console.cs:30076 [v2.10.3.13]: guard conditions before
-    // chkTUN.Checked = true (connection + power-on checks).
-    connect(m_model, &RadioModel::tuneRefused, this, [this](const QString& /*reason*/) {
-        if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
-        QSignalBlocker b(m_keyingSection->tuneButton());
-        m_updatingFromModel = true;
-        m_keyingSection->tuneButton()->setChecked(false);
-        m_keyingSection->tuneButton()->setText(QStringLiteral("TUNE"));
-        m_updatingFromModel = false;
-    });
-
-    // ── MOX button → RadioModel::setMoxFromButton(bool) ─────────────────────
-    // B.5 setter: drives state machine through RX→TX or TX→RX transitions.
-    // From Thetis console.cs:29311-29678 [v2.10.3.13] chkMOX_CheckedChanged2.
-    // //[2.10.1.0]MW0LGE changed  [original inline comment from console.cs:29355]
-    // //MW0LGE [2.9.0.7]  [original inline comment from console.cs:29400, 29561]
-    // //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29567-29568, 29659]
-    if (mox) {
-        // Receiver and transmit gaps plan, Task 7: the MOX button is a manual
-        // key (Thetis chkMOX_Click, console.cs:29730-29747 [v2.10.3.15]);
-        // RadioModel::setMoxFromButton also turns TUN and two-tone off on
-        // the way off, as chkMOX_Click does.
-        connect(m_keyingSection->moxButton(), &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel) { return; }
-            if (m_desktopMoxRequest) {
-                const QPointer<TxApplet> self(this);
-                m_desktopMoxRequest(on);
-                if (self) { syncDesktopKeyState(); }
-            } else {
-                // TX rulings (item 1): a remote window's press keys after a
-                // release even while the Core's confirmation is on its way,
-                // and the button shows what it asked until the Core's state
-                // arrives.
-                const bool asked = m_model->moxPressAsksOn(on);
-                if (asked != on) {
-                    QSignalBlocker b(m_keyingSection->moxButton());
-                    m_keyingSection->moxButton()->setChecked(asked);
-                }
-                m_model->setMoxFromButton(asked);
-            }
-        });
-
-        // Reverse: MoxController::moxStateChanged → button checked state.
-        // moxStateChanged fires at end of the timer walk (TX fully engaged
-        // or fully released), not at setMox() entry — so the button reflects
-        // the confirmed state, not the in-progress request.
-        connect(mox, &MoxController::moxStateChanged,
-                this, [this](bool on) {
-            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_keyingSection->moxButton());
-            m_updatingFromModel = true;
-            m_keyingSection->moxButton()->setChecked(on);
-            m_updatingFromModel = false;
-        });
-
-        // Reverse, the rejection half: MoxController::moxRejected → button
-        // follows the state that actually holds.
-        //
-        // setMox(true) returns on rejection without advancing anything, so
-        // moxStateChanged never fires -- and the connect immediately above
-        // was the ONLY thing that unchecked this button. The user's own
-        // press left it checked and red, reading "transmitting", with the
-        // radio in RX.
-        //
-        // Pre-existing locally, where rejections are occasional (band-plan
-        // and TX-interlock refusals). Remote-daemon R2 is what made it
-        // worth fixing: on a Role::Remote model EVERY press is refused, so
-        // the button was not occasionally wrong, it was permanently wrong.
-        //
-        // isMox() rather than a literal false: setMox() only ever rejects
-        // a TX-on request, but reading the controller keeps the button
-        // following the authority instead of an assumption about which
-        // requests can be refused.
-        connect(mox, &MoxController::moxRejected,
-                this, [this, mox](const QString& /*reason*/) {
-            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_keyingSection->moxButton());
-            m_updatingFromModel = true;
-            m_keyingSection->moxButton()->setChecked(mox->isMox());
-            m_updatingFromModel = false;
-        });
-
-        // TUNE button checked state driven by manualMoxChanged.
-        // manualMoxChanged fires when setTune() sets/clears m_manualMox.
-        connect(mox, &MoxController::manualMoxChanged,
-                this, [this](bool isManual) {
-            if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
-            QSignalBlocker b(m_keyingSection->tuneButton());
-            m_updatingFromModel = true;
-            m_keyingSection->tuneButton()->setChecked(isManual);
-            m_keyingSection->tuneButton()->setText(isManual
-                ? QStringLiteral("TUNING...")
-                : QStringLiteral("TUNE"));
-            m_updatingFromModel = false;
-        });
-    }
+    wirePowerSection(m_powerSection);
+    wireKeyingSection(m_keyingSection);
 
     // ── K.2: MOX button tooltip override ← SliceModel::dspModeChanged ─────────
     // Phase 3M-1b K.2: update MOX button tooltip when DSP mode changes.
@@ -1050,106 +684,7 @@ void TxApplet::wireControls()
     // Mirrors the wiring pattern from PhoneCwApplet (Phase 3M-3a-iii Task
     // 15) — relocated here as part of the 2026-05-04 bench polish.
 
-    // ── VOX [ON] toggle ↔ TransmitModel::voxEnabled ──────────────────────────
-    if (voxButton()) {
-        {
-            QSignalBlocker b(voxButton());
-            voxButton()->setChecked(tx.voxEnabled());
-        }
-        // UI → Model
-        connect(voxButton(), &QPushButton::toggled, this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
-            tx.setVoxEnabled(on);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxEnabledChanged, this, [this](bool on) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(voxButton());
-                voxButton()->setChecked(on);
-            }
-            m_updatingFromModel = false;
-        });
-    }
-
-    // ── VOX threshold slider ↔ TransmitModel::voxThresholdDb ─────────────────
-    // Range -80..0 dB from console.Designer.cs:6018-6019 [v2.10.3.13]
-    // (already set in buildUI).  Default value -20 dB matches Thetis
-    // ptbVOX.Value=-20 (console.Designer.cs:6024 [v2.10.3.13]).
-    if (voxThresholdSlider()) {
-        {
-            QSignalBlocker b(voxThresholdSlider());
-            voxThresholdSlider()->setValue(tx.voxThresholdDb());
-        }
-        if (voxThresholdLabel()) {
-            voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
-        }
-        // UI → Model + label refresh
-        connect(voxThresholdSlider(), &QSlider::valueChanged, this, [this, &tx](int dB) {
-            if (voxThresholdLabel()) {
-                voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
-            }
-            if (m_updatingFromModel) { return; }
-            tx.setVoxThresholdDb(dB);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxThresholdDbChanged, this, [this](int dB) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(voxThresholdSlider());
-                voxThresholdSlider()->setValue(dB);
-            }
-            if (voxThresholdLabel()) {
-                voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
-            }
-            m_updatingFromModel = false;
-        });
-    }
-
-    // ── VOX Hold slider ↔ TransmitModel::voxHangTimeMs ───────────────────────
-    // Range 1..2000 ms from setup.designer.cs:45005-45013 [v2.10.3.13]
-    // (already set in buildUI).  Default 500 ms matches udDEXPHold.Value
-    // (setup.designer.cs:45020 [v2.10.3.13]).
-    if (voxHoldSlider()) {
-        {
-            QSignalBlocker b(voxHoldSlider());
-            voxHoldSlider()->setValue(tx.voxHangTimeMs());
-        }
-        if (voxHoldLabel()) {
-            voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
-        }
-        // UI → Model + label refresh
-        connect(voxHoldSlider(), &QSlider::valueChanged, this, [this, &tx](int ms) {
-            if (voxHoldLabel()) {
-                voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(ms));
-            }
-            if (m_updatingFromModel) { return; }
-            tx.setVoxHangTimeMs(ms);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxHangTimeMsChanged, this, [this](int ms) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(voxHoldSlider());
-                voxHoldSlider()->setValue(ms);
-            }
-            if (voxHoldLabel()) {
-                voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(ms));
-            }
-            m_updatingFromModel = false;
-        });
-    }
-
-    // ── Right-click on VOX → emit openSetupRequested ─────────────────────────
-    // Mirrors PhoneCwApplet's DEXP-button right-click pattern.  MainWindow
-    // listens and jumps the SetupDialog to the "DEXP/VOX" leaf page.
-    if (voxButton()) {
-        connect(voxButton(), &QPushButton::customContextMenuRequested, this,
-                [this](const QPoint&) {
-            emit openSetupRequested(QStringLiteral("Transmit"),
-                                    QStringLiteral("DEXP/VOX"));
-        });
-    }
+    wireVoxSection(m_voxSection);
 
     // ── 100 ms timer driving the VOX peak meter ──────────────────────────────────
     // Cadence matches Thetis UpdateNoiseGate Task.Delay(100) at
@@ -1163,154 +698,12 @@ void TxApplet::wireControls()
             this, &TxApplet::pollVoxMeter);
     m_voxMeterTimer->start();
 
-    // ── MON row (TxMonitorSection) ↔ TransmitModel / AudioEngine ─────────────
-    // Phase 3M-1b J.3.
-    // UI → Model: toggled → setMonEnabled (with m_updatingFromModel guard).
-    // Model → UI: monEnabledChanged → update checked state with QSignalBlocker.
-    auto* monBtn = m_monitorSection->monButton();
-    auto* monSpeakersBtn = m_monitorSection->speakersButton();
-    auto* monHeadphonesBtn = m_monitorSection->headphonesButton();
-    auto* monitorVolumeSlider = m_monitorSection->volumeSlider();
-    auto* monitorVolumeValue = m_monitorSection->volumeValue();
+    // ── MON row (TxMonitorSection) ───────────────────────────────────────────
+    // The wiring lives in wireMonitorSection() so an independent copy of the
+    // row, made for a container, is wired exactly the same way.
+    wireMonitorSection(m_monitorSection);
 
-    connect(monBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
-        if (m_updatingFromModel) { return; }
-        tx.setMonEnabled(on);
-    });
-
-    connect(&tx, &TransmitModel::monEnabledChanged, this, [this, monBtn](bool on) {
-        QSignalBlocker b(monBtn);
-        m_updatingFromModel = true;
-        monBtn->setChecked(on);
-        m_updatingFromModel = false;
-    });
-
-    // ── R-R3-45: MON output ↔ AudioEngine::txMonitorOutput ──────────────────
-    // This computer's choice: the audio engine that plays this window's
-    // sound. R-R3-49 (parity Task 2): a remote window too, where it is this
-    // computer's own routing (a window-scope setting), as in a local window;
-    // it follows setTransmitChainSettingsPermitted there.
-    {
-        if (AudioEngine* engine = m_model->localAudioDevices()) {
-            connect(monSpeakersBtn, &QPushButton::clicked, this,
-                    [this, engine](bool) {
-                m_monitorSection->showMonitorOutput(false);
-                engine->setTxMonitorOutput(TxMonitorOutput::Speakers);
-            });
-            connect(monHeadphonesBtn, &QPushButton::clicked, this,
-                    [this, engine](bool) {
-                m_monitorSection->showMonitorOutput(true);
-                engine->setTxMonitorOutput(TxMonitorOutput::Headphones);
-            });
-            connect(engine, &AudioEngine::txMonitorOutputChanged, this,
-                    [this](TxMonitorOutput output) {
-                m_monitorSection->showMonitorOutput(output == TxMonitorOutput::Headphones);
-            });
-            connect(engine, &AudioEngine::headphonesAvailableChanged, this,
-                    [this](bool available) {
-                m_monitorSection->setHeadphonesAvailable(available);
-            });
-            connect(engine, &AudioEngine::headphonesEnabledChanged, this,
-                    [this](bool enabled) {
-                m_monitorSection->setHeadphonesEnabled(enabled);
-            });
-            m_monitorSection->setHeadphonesAvailable(engine->headphonesAvailable());
-            m_monitorSection->setHeadphonesEnabled(engine->headphonesEnabled());
-            m_monitorSection->showMonitorOutput(engine->txMonitorOutput() == TxMonitorOutput::Headphones);
-        }
-    }
-
-    // ── Monitor volume slider ↔ TransmitModel::monitorVolume ─────────────────
-    // Phase 3M-1b J.3.
-    // UI → Model: slider valueChanged(int) → setMonitorVolume(value / 100.0f).
-    // Model → UI: monitorVolumeChanged(float) → slider = qRound(v * 100.0f).
-    connect(monitorVolumeSlider, &QSlider::valueChanged,
-            this, [this, &tx, monitorVolumeValue](int val) {
-        if (m_updatingFromModel) { return; }
-        monitorVolumeValue->setText(QString::number(val));
-        tx.setMonitorVolume(static_cast<float>(val) / 100.0f);
-    });
-
-    connect(&tx, &TransmitModel::monitorVolumeChanged,
-            this, [this, monitorVolumeSlider, monitorVolumeValue](float volume) {
-        QSignalBlocker b(monitorVolumeSlider);
-        m_updatingFromModel = true;
-        const int uiVal = qRound(volume * 100.0f);
-        monitorVolumeSlider->setValue(uiVal);
-        monitorVolumeValue->setText(QString::number(uiVal));
-        m_updatingFromModel = false;
-    });
-
-    // ── Phase 3M-3a-i Batch 2 (Task F): LEV / EQ quick toggles ──────────────
-    //
-    // LEV button ↔ TransmitModel::txLevelerOn (bidirectional, echo-guarded).
-    if (m_chainSection->levButton()) {
-        connect(m_chainSection->levButton(), &QPushButton::toggled,
-                this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
-            tx.setTxLevelerOn(on);
-        });
-        connect(&tx, &TransmitModel::txLevelerOnChanged,
-                this, [this](bool on) {
-            QSignalBlocker b(m_chainSection->levButton());
-            m_updatingFromModel = true;
-            m_chainSection->levButton()->setChecked(on);
-            m_updatingFromModel = false;
-        });
-    }
-
-    // EQ button ↔ TransmitModel::txEqEnabled (bidirectional, echo-guarded).
-    // Right-click: placeholder slot for the TxEqDialog launch (Batch 3).
-    if (m_chainSection->eqButton()) {
-        connect(m_chainSection->eqButton(), &QPushButton::toggled,
-                this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
-            tx.setTxEqEnabled(on);
-        });
-        connect(&tx, &TransmitModel::txEqEnabledChanged,
-                this, [this](bool on) {
-            QSignalBlocker b(m_chainSection->eqButton());
-            m_updatingFromModel = true;
-            m_chainSection->eqButton()->setChecked(on);
-            m_updatingFromModel = false;
-        });
-        // Right-click → open TxEqDialog (Phase 3M-3a-i Batch 3 A.1).
-        // Modeless singleton; show + raise + activateWindow so a
-        // hidden-but-alive instance is brought forward.
-        connect(m_chainSection->eqButton(), &QPushButton::customContextMenuRequested,
-                this, [this](const QPoint& /*pos*/) {
-            // R-R3-49 (parity Task 4): opens in a remote window too; the
-            // dialog greys itself with the reason while the Core cannot
-            // take a change (TxEqDialog::setSettingsPermitted).
-            if (!m_model) { return; }
-            TxEqDialog* dlg = TxEqDialog::instance(m_model, this);
-            dlg->show();
-            dlg->raise();
-            dlg->activateWindow();
-        });
-    }
-
-    // ── Phase 3M-3a-ii Batch 6 (Task A): CFC button ↔ TransmitModel::cfcEnabled
-    // Right-click opens the modeless TxCfcDialog (lazy-create singleton kept
-    // alive for fast re-opens — same pattern as TxEqDialog).
-    if (m_chainSection->cfcButton()) {
-        connect(m_chainSection->cfcButton(), &QPushButton::toggled,
-                this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
-            tx.setCfcEnabled(on);
-        });
-        connect(&tx, &TransmitModel::cfcEnabledChanged,
-                this, [this](bool on) {
-            QSignalBlocker b(m_chainSection->cfcButton());
-            m_updatingFromModel = true;
-            m_chainSection->cfcButton()->setChecked(on);
-            m_updatingFromModel = false;
-        });
-        connect(m_chainSection->cfcButton(), &QPushButton::customContextMenuRequested,
-                this, [this](const QPoint& /*pos*/) {
-            requestOpenCfcDialog();
-        });
-    }
+    wireChainSection(m_chainSection);
 
     // ── Mic-source badge ← TransmitModel::micSourceChanged ───────────────────
     // Phase 3M-1b J.3. Read-only: updates badge text on signal, no user interaction.
@@ -1323,95 +716,7 @@ void TxApplet::wireControls()
     connect(m_model, &RadioModel::pcMicStatusChanged,
             this, &TxApplet::refreshMicSourceBadge);
 
-    // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
-    // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
-    // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
-    // doesn't bounce back into setActiveProfile.
-    connect(m_chainSection->profileCombo(), &QComboBox::currentTextChanged,
-            this, [this](const QString& name) {
-        if (m_updatingFromModel) { return; }
-        if (!m_micProfileMgr) { return; }
-        if (name.isEmpty()) { return; }
-        if (m_model) {
-            m_micProfileMgr->setActiveProfile(name, &m_model->transmitModel());
-        }
-    });
-
-    // Right-click on combo → emit txProfileMenuRequested (Thetis cite at the
-    // signal declaration).
-    connect(m_chainSection->profileCombo(), &QComboBox::customContextMenuRequested,
-            this, [this](const QPoint& /*pos*/) {
-        emit txProfileMenuRequested();
-    });
-
-    // ── Plan 4 Cluster C (Task 4 / D2+D3): TX BW spinbox wiring ─────────────
-    //
-    // UI → Model: spinbox valueChanged → setFilterLow / setFilterHigh.
-    //             m_updatingFromModel guard prevents echo loops.
-    // Model → UI: TransmitModel::filterChanged(int,int) → QSignalBlocker on
-    //             both spinboxes, then setValue + refresh status label.
-    // Status label refresh helper (shared by filterChanged and dspModeChanged).
-    auto refreshFilterStatus = [this]() { refreshTxFilterStatus(); };
-
-    if (m_filterSection->filterLowSpin()) {
-        connect(m_filterSection->filterLowSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
-                this, [this](int v) {
-            if (m_updatingFromModel) { return; }
-            m_model->transmitModel().setFilterLow(v);
-        });
-    }
-    if (m_filterSection->filterHighSpin()) {
-        connect(m_filterSection->filterHighSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
-                this, [this](int v) {
-            if (m_updatingFromModel) { return; }
-            m_model->transmitModel().setFilterHigh(v);
-        });
-    }
-
-    // Model → spinboxes + status label on filterChanged.
-    connect(&tx, &TransmitModel::filterChanged,
-            this, [this, refreshFilterStatus](int low, int high) {
-        m_updatingFromModel = true;
-        if (m_filterSection->filterLowSpin()) {
-            QSignalBlocker bLo(m_filterSection->filterLowSpin());
-            m_filterSection->filterLowSpin()->setValue(low);
-        }
-        if (m_filterSection->filterHighSpin()) {
-            QSignalBlocker bHi(m_filterSection->filterHighSpin());
-            m_filterSection->filterHighSpin()->setValue(high);
-        }
-        m_updatingFromModel = false;
-        refreshFilterStatus();
-    });
-
-    // Status label refresh on DSP mode change (symmetric ↔ asymmetric format)
-    // rides followTransmitSlice's connection (slice control plan Task 11).
-    refreshFilterStatus();
-
-    // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
-    // toggled → TwoToneController::setActive.  Echo-guarded.
-    connect(m_processingSection->twoToneButton(), &QPushButton::toggled, this, [this](bool on) {
-        if (m_updatingFromModel) { return; }
-        // Desktop remote transmit: a remote window asks the Core.
-        if (m_model && m_model->remoteTransmitRouted()) {
-            m_model->setTwoTone(on);
-            return;
-        }
-        // Fix wave (hosting 2-TONE parity): a hosting window asks to take
-        // transmit first. The button shows the test's own state after.
-        if (m_desktopTwoToneRequest) {
-            const QPointer<TxApplet> self(this);
-            m_desktopTwoToneRequest(on);
-            if (self && m_processingSection->twoToneButton()) {
-                const QSignalBlocker blocker(m_processingSection->twoToneButton());
-                m_processingSection->twoToneButton()->setChecked(m_twoToneCtrl && m_twoToneCtrl->isActive());
-            }
-            return;
-        }
-        if (!m_twoToneCtrl) { return; }
-        m_twoToneCtrl->setActive(on);
-    });
-
+    wireFilterSection(m_filterSection);
     // ── iPhone app plan, desktop remote transmit (R-IOS-13) ─────────────────
     // A remote window's own MoxController never keys: MOX, TUNE and 2-TONE
     // light from the Core's state (its `transmitting`, the transmit object's
@@ -1436,31 +741,14 @@ void TxApplet::wireControls()
     //                                                              EventArgs.Empty);
     //     ).
     //
+    // The button's own connections live in wireProcessingSection() so an
+    // independent copy of the row, made for a container, is wired the same
+    // way.  The PureSignal facade wiring below is applet-wide, not per row.
+    wireProcessingSection(m_processingSection);
+
     // Production always uses RadioModel's one session facade. The local
     // coordinator remains late-bound behind that facade.
     if (m_processingSection->psaButton()) {
-        // Right-click → emit openPureSignalDialogRequested.  Wired
-        // unconditionally so the seam exists even when no PureSignal
-        // coordinator is bound (test harness verifies the signal emit).
-        m_processingSection->psaButton()->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(m_processingSection->psaButton(), &QWidget::customContextMenuRequested, this,
-                [this](const QPoint&) {
-            emit openPureSignalDialogRequested();
-        });
-
-        // The checked state expresses automatic-calibration intent. Turning
-        // it off uses the acknowledged Off/reset action.
-        connect(m_processingSection->psaButton(), &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel || !m_psFacade) {
-                return;
-            }
-            const Ps3Action action = on
-                ? Ps3Action::StartAutomatic : Ps3Action::OffReset;
-            if (m_psFacade->requestAction(action) == 0) {
-                syncPsaFromFacade();
-            }
-        });
-
         if (m_model) {
             m_psFacade = m_model->pureSignalFacade();
             if (m_psFacade) {
@@ -1486,7 +774,7 @@ void TxApplet::wireControls()
         }
         syncPsaFromFacade();
     }
-
+    
     // ── Initial sync from model ──────────────────────────────────────────────
     syncFromModel();
 }
@@ -1573,15 +861,19 @@ void TxApplet::syncRemoteIndicators()
 
     const bool wasUpdating = m_updatingFromModel;
     m_updatingFromModel = true;
-    if (m_keyingSection->moxButton()) {
-        QSignalBlocker b(m_keyingSection->moxButton());
-        m_keyingSection->moxButton()->setChecked(m_model->isTransmitting());
-    }
-    if (m_keyingSection->tuneButton()) {
+    {
         const bool tuning = m_model->transmitModel().isTune();
-        QSignalBlocker b(m_keyingSection->tuneButton());
-        m_keyingSection->tuneButton()->setChecked(tuning);
-        m_keyingSection->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+        for (TxKeyingSection* s : allKeyingSections()) {
+            if (s->moxButton()) {
+                QSignalBlocker b(s->moxButton());
+                s->moxButton()->setChecked(m_model->isTransmitting());
+            }
+            if (s->tuneButton()) {
+                QSignalBlocker b(s->tuneButton());
+                s->tuneButton()->setChecked(tuning);
+                s->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+            }
+        }
     }
     if (m_processingSection->twoToneButton()) {
         const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
@@ -1598,19 +890,25 @@ void TxApplet::syncFromModel()
     TransmitModel& tx = m_model->transmitModel();
     MoxController* mox = m_model->moxController();
 
+    // The guard is saved and restored, not just set and cleared, so a sync
+    // that happens inside another one (a copy made while the applet is
+    // syncing) cannot clear the outer sync's guard early.
+    const bool wasUpdating = m_updatingFromModel;
     m_updatingFromModel = true;
 
     // RF Power
-    {
-        QSignalBlocker b(m_powerSection->rfPowerSlider());
-        m_powerSection->rfPowerSlider()->setValue(tx.power());
+    for (TxPowerSection* s : allPowerSections()) {
+        QSignalBlocker b(s->rfPowerSlider());
+        s->rfPowerSlider()->setValue(tx.power());
     }
 
     // Tune Power for current band
     {
-        QSignalBlocker b(m_powerSection->tunePowerSlider());
         const int tunePwr = shownTunePower(m_currentBand);
-        m_powerSection->tunePowerSlider()->setValue(tunePwr);
+        for (TxPowerSection* s : allPowerSections()) {
+            QSignalBlocker b(s->tunePowerSlider());
+            s->tunePowerSlider()->setValue(tunePwr);
+        }
     }
 
     // Issue #175 Task 7: refresh both labels through the central
@@ -1625,71 +923,77 @@ void TxApplet::syncFromModel()
     // always starts OFF), but we still pull whatever the current model
     // state is so any other UI surface (e.g. Setup → DEXP/VOX page) stays
     // in agreement.
-    if (voxButton()) {
-        QSignalBlocker bv(voxButton());
-        voxButton()->setChecked(tx.voxEnabled());
-    }
-    if (voxThresholdSlider()) {
-        {
-            QSignalBlocker b(voxThresholdSlider());
-            voxThresholdSlider()->setValue(tx.voxThresholdDb());
+    for (TxVoxSection* s : allVoxSections()) {
+        if (s->button()) {
+            QSignalBlocker bv(s->button());
+            s->button()->setChecked(tx.voxEnabled());
         }
-        if (voxThresholdLabel()) {
-            voxThresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        if (s->thresholdSlider()) {
+            {
+                QSignalBlocker b(s->thresholdSlider());
+                s->thresholdSlider()->setValue(tx.voxThresholdDb());
+            }
+            if (s->thresholdLabel()) {
+                s->thresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+            }
         }
-    }
-    if (voxHoldSlider()) {
-        {
-            QSignalBlocker b(voxHoldSlider());
-            voxHoldSlider()->setValue(tx.voxHangTimeMs());
-        }
-        if (voxHoldLabel()) {
-            voxHoldLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        if (s->holdSlider()) {
+            {
+                QSignalBlocker b(s->holdSlider());
+                s->holdSlider()->setValue(tx.voxHangTimeMs());
+            }
+            if (s->holdLabel()) {
+                s->holdLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+            }
         }
     }
 
     // MON button state (J.3 Phase 3M-1b)
     // monEnabled intentionally loads as OFF — plan §0 row 9 safety rule.
-    if (m_monitorSection) {
-        QSignalBlocker bm(m_monitorSection->monButton());
-        m_monitorSection->monButton()->setChecked(tx.monEnabled());
+    for (TxMonitorSection* s : allMonitorSections()) {
+        QSignalBlocker bm(s->monButton());
+        s->monButton()->setChecked(tx.monEnabled());
     }
 
     // Monitor volume slider (J.3 Phase 3M-1b)
     // Sync slider position from model; default 0.5f → slider 50.
-    if (m_monitorSection) {
-        auto* monitorVolumeSlider = m_monitorSection->volumeSlider();
-        auto* monitorVolumeValue = m_monitorSection->volumeValue();
-        QSignalBlocker bvol(monitorVolumeSlider);
+    {
         const int uiVal = qRound(tx.monitorVolume() * 100.0f);
-        monitorVolumeSlider->setValue(uiVal);
-        monitorVolumeValue->setText(QString::number(uiVal));
+        for (TxMonitorSection* s : allMonitorSections()) {
+            QSignalBlocker bvol(s->volumeSlider());
+            s->volumeSlider()->setValue(uiVal);
+            s->volumeValue()->setText(QString::number(uiVal));
+        }
     }
 
     // LEV / EQ / CFC button state (3M-3a-i Batch 2 Task F + 3M-3a-ii
     // Batch 6 Task A — CFC button added; PROC moved to PhoneCwApplet
     // 3M-3a-ii post-bench cleanup).
-    if (m_chainSection->levButton()) {
-        QSignalBlocker b(m_chainSection->levButton());
-        m_chainSection->levButton()->setChecked(tx.txLevelerOn());
-    }
-    if (m_chainSection->eqButton()) {
-        QSignalBlocker b(m_chainSection->eqButton());
-        m_chainSection->eqButton()->setChecked(tx.txEqEnabled());
-    }
-    if (m_chainSection->cfcButton()) {
-        QSignalBlocker b(m_chainSection->cfcButton());
-        m_chainSection->cfcButton()->setChecked(tx.cfcEnabled());
+    for (TxChainSection* s : allChainSections()) {
+        if (s->levButton()) {
+            QSignalBlocker b(s->levButton());
+            s->levButton()->setChecked(tx.txLevelerOn());
+        }
+        if (s->eqButton()) {
+            QSignalBlocker b(s->eqButton());
+            s->eqButton()->setChecked(tx.txEqEnabled());
+        }
+        if (s->cfcButton()) {
+            QSignalBlocker b(s->cfcButton());
+            s->cfcButton()->setChecked(tx.cfcEnabled());
+        }
     }
 
     // TX BW spinboxes + status label (Plan 4 Cluster C Task 4 / D2+D3+D9)
-    if (m_filterSection->filterLowSpin()) {
-        QSignalBlocker bLo(m_filterSection->filterLowSpin());
-        m_filterSection->filterLowSpin()->setValue(tx.filterLow());
-    }
-    if (m_filterSection->filterHighSpin()) {
-        QSignalBlocker bHi(m_filterSection->filterHighSpin());
-        m_filterSection->filterHighSpin()->setValue(tx.filterHigh());
+    for (TxFilterSection* s : allFilterSections()) {
+        if (s->filterLowSpin()) {
+            QSignalBlocker bLo(s->filterLowSpin());
+            s->filterLowSpin()->setValue(tx.filterLow());
+        }
+        if (s->filterHighSpin()) {
+            QSignalBlocker bHi(s->filterHighSpin());
+            s->filterHighSpin()->setValue(tx.filterHigh());
+        }
     }
     refreshTxFilterStatus();
 
@@ -1700,18 +1004,20 @@ void TxApplet::syncFromModel()
     if (m_model->role() == RadioModel::Role::Remote) {
         syncRemoteIndicators();
     } else if (mox) {
-        QSignalBlocker bm(m_keyingSection->moxButton());
-        m_keyingSection->moxButton()->setChecked(m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox());
-
-        QSignalBlocker bt(m_keyingSection->tuneButton());
+        const bool moxOn = m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox();
         const bool isManual = m_desktopTuneOn ? m_desktopTuneOn() : mox->isManualMox();
-        m_keyingSection->tuneButton()->setChecked(isManual);
-        m_keyingSection->tuneButton()->setText(isManual ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+        for (TxKeyingSection* s : allKeyingSections()) {
+            QSignalBlocker bm(s->moxButton());
+            s->moxButton()->setChecked(moxOn);
+
+            QSignalBlocker bt(s->tuneButton());
+            s->tuneButton()->setChecked(isManual);
+            s->tuneButton()->setText(isManual ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+        }
     }
 
-    m_updatingFromModel = false;
+    m_updatingFromModel = wasUpdating;
 }
-
 void TxApplet::setDesktopKeyHandlers(std::function<void(bool)> mox,
                                      std::function<void(bool)> tune,
                                      std::function<bool()> moxOn,
@@ -1750,8 +1056,16 @@ void TxApplet::setTransmitSliceChoices(std::function<bool(int)> controlled,
 
 void TxApplet::refreshTransmitSliceChoices()
 {
-    if (!m_keyingSection) { return; }
-    m_keyingSection->clearTransmitSliceButtons();
+    // Every copy of the keying rows, not just the applet's own.
+    for (TxKeyingSection* s : allKeyingSections()) {
+        refreshTransmitSliceChoicesIn(s);
+    }
+}
+
+void TxApplet::refreshTransmitSliceChoicesIn(TxKeyingSection* s)
+{
+    if (!s) { return; }
+    s->clearTransmitSliceButtons();
     if (!m_model) { return; }
     const SliceModel* current = transmitSlice();
     const QString reason = m_txSliceUnavailable ? m_txSliceUnavailable() : QString();
@@ -1766,7 +1080,7 @@ void TxApplet::refreshTransmitSliceChoices()
         const QString toolTip = availability.toolTip.isEmpty()
             ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter())
             : availability.toolTip;
-        QPushButton* button = m_keyingSection->addTransmitSliceButton(
+        QPushButton* button = s->addTransmitSliceButton(
             slice->sliceLetter(), id, slice == current, availability.enabled, toolTip);
         connect(button, &QPushButton::clicked, this, [this, button, id](bool) {
             // The model's answer checks the row; the press alone does not.
@@ -1785,16 +1099,19 @@ void TxApplet::refreshTransmitSliceChoices()
 void TxApplet::syncDesktopKeyState()
 {
     if (!m_model || !m_model->moxController()) { return; }
-    const QSignalBlocker moxBlock(m_keyingSection->moxButton());
-    const QSignalBlocker tuneBlock(m_keyingSection->tuneButton());
-    m_keyingSection->moxButton()->setChecked(m_desktopMoxOn ? m_desktopMoxOn()
-                                       : m_model->moxController()->isMox());
+    const bool moxOn = m_desktopMoxOn ? m_desktopMoxOn()
+                                       : m_model->moxController()->isMox();
     // Issue #357: the TUNE the release press clears, not isTune(), which
     // holds until the radio is back on receive.
     const bool tuning = m_desktopTuneOn ? m_desktopTuneOn()
                                         : m_model->transmitModel().isTune();
-    m_keyingSection->tuneButton()->setChecked(tuning);
-    m_keyingSection->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+    for (TxKeyingSection* s : allKeyingSections()) {
+        const QSignalBlocker moxBlock(s->moxButton());
+        const QSignalBlocker tuneBlock(s->tuneButton());
+        s->moxButton()->setChecked(moxOn);
+        s->tuneButton()->setChecked(tuning);
+        s->tuneButton()->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+    }
 }
 
 // (Phase 3M-1b J.2 showVoxSettingsPopup removed in 3M-3a-iii Task 16 —
@@ -1804,28 +1121,36 @@ void TxApplet::syncDesktopKeyState()
 void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
 {
     if (!m_powerSection) { return; }
-    m_powerSection->rescaleFwdGaugeForModel(
-        model, m_model ? m_model->mainPowerMeter() : nullptr);
+    // Every copy of the power rows, not just the applet's own.
+    for (TxPowerSection* s : allPowerSections()) {
+        s->rescaleFwdGaugeForModel(
+            model, m_model ? m_model->mainPowerMeter() : nullptr);
+    }
 }
 
 void TxApplet::refreshPowerReadouts()
 {
     if (!m_model || !m_powerSection) { return; }
-    m_powerSection->refreshPowerReadouts(
-        m_model->mainPowerMeter(), m_model->isTransmitting(),
-        m_model->hardwareProfile().model);
+    // Every copy of the power rows, not just the applet's own.
+    for (TxPowerSection* s : allPowerSections()) {
+        s->refreshPowerReadouts(
+            m_model->mainPowerMeter(), m_model->isTransmitting(),
+            m_model->hardwareProfile().model);
+    }
 }
 
 void TxApplet::rescalePowerSlidersForModel(HPSDRModel model)
 {
-    if (!m_powerSection) { return; }
-    m_powerSection->rescalePowerSlidersForModel(model);
+    for (TxPowerSection* s : allPowerSections()) {
+        s->rescalePowerSlidersForModel(model);
+    }
 }
 
 void TxApplet::updatePowerSliderLabels()
 {
-    if (!m_powerSection) { return; }
-    m_powerSection->updatePowerSliderLabels();
+    for (TxPowerSection* s : allPowerSections()) {
+        s->updatePowerSliderLabels();
+    }
 }
 
 // Canonical TX band — derived from the active slice's frequency (which
@@ -1880,9 +1205,11 @@ void TxApplet::setCurrentBand(Band band)
     // Update the Tune Power slider to reflect the per-band stored value.
     {
         const int tunePwr = shownTunePower(band);
-        QSignalBlocker b(m_powerSection->tunePowerSlider());
         m_updatingFromModel = true;
-        m_powerSection->tunePowerSlider()->setValue(tunePwr);
+        for (TxPowerSection* s : allPowerSections()) {
+            QSignalBlocker b(s->tunePowerSlider());
+            s->tunePowerSlider()->setValue(tunePwr);
+        }
         // Issue #175 Task 7: HL2 dB / non-HL2 integer — replaces the
         // bare m_powerSection->tunePowerLabel()->setText(QString::number(tunePwr)) so HL2
         // operators see the dB-attenuator label rather than a raw 0..99
@@ -2037,10 +1364,15 @@ void TxApplet::onSliceTransmitFlagChanged(bool)
 
 void TxApplet::refreshTxFilterStatus()
 {
-    if (!m_filterSection->filterStatusLabel() || !m_model) { return; }
+    if (!m_model) { return; }
     SliceModel* slice = transmitSlice();
     const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
-    m_filterSection->filterStatusLabel()->setText(m_model->transmitModel().filterDisplayText(mode));
+    const QString text = m_model->transmitModel().filterDisplayText(mode);
+    for (TxFilterSection* s : allFilterSections()) {
+        if (s->filterStatusLabel()) {
+            s->filterStatusLabel()->setText(text);
+        }
+    }
 }
 
 void TxApplet::onMoxModeChanged(DSPMode mode)
@@ -2048,14 +1380,15 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     // Task 16: the receive-only lock sits on top of the tooltip; take it
     // off, change the tooltip under it, and put it back.
     removeReceiveOnlyLock();
-    if (m_keyingSection->moxButton()) {
+    for (TxKeyingSection* s : allKeyingSections()) {
+        if (!s->moxButton()) { continue; }
         // Task 16 fix wave 2 (Minor 2): while the transmit-permission layer
         // holds the button, its reason stays visible and the mode's tooltip
         // goes into the tooltip that layer gives back.
-        if (m_keyingSection->moxButton()->property(kTransmitSavedTooltip).isValid()) {
-            m_keyingSection->moxButton()->setProperty(kTransmitSavedTooltip, tooltipForMode(mode));
+        if (s->moxButton()->property(kTransmitSavedTooltip).isValid()) {
+            s->moxButton()->setProperty(kTransmitSavedTooltip, tooltipForMode(mode));
         } else {
-            m_keyingSection->moxButton()->setToolTip(tooltipForMode(mode));
+            s->moxButton()->setToolTip(tooltipForMode(mode));
         }
     }
     applyReceiveOnlyLock();
@@ -2087,10 +1420,7 @@ constexpr auto kRxOnlySavedEnabled = "TxAppletRxOnlySavedEnabled";
 
 void TxApplet::removeReceiveOnlyLock()
 {
-    for (QWidget* control : {static_cast<QWidget*>(m_keyingSection->moxButton()),
-                             static_cast<QWidget*>(m_keyingSection->tuneButton()),
-                             static_cast<QWidget*>(m_processingSection->twoToneButton()),
-                             static_cast<QWidget*>(voxButton())}) {
+    for (QWidget* control : rxOnlyLockedControls()) {
         if (!control || !control->property(kRxOnlySavedTooltip).isValid()) {
             continue;
         }
@@ -2123,15 +1453,21 @@ void TxApplet::applyReceiveOnlyLock()
         control->setToolTip(reason);
         control->setAccessibleDescription(reason);
     };
-    if (m_model->transmitLockCoversMox()) {
-        lock(m_keyingSection->moxButton());
+    for (TxKeyingSection* s : allKeyingSections()) {
+        if (m_model->transmitLockCoversMox()) {
+            lock(s->moxButton());
+        }
+        lock(s->tuneButton());
     }
-    lock(m_keyingSection->tuneButton());
-    lock(m_processingSection->twoToneButton());   // MW0LGE_21a
+    for (TxProcessingSection* s : allProcessingSections()) {
+        lock(s->twoToneButton());   // MW0LGE_21a
+    }
     // TX safety (2026-09-30): a lost radio link leaves VOX alone, as
     // Thetis's power-off does (console.cs:27488-27493 [v2.10.3.15]).
     if (m_model->transmitLockCoversVox()) {
-        lock(voxButton());
+        for (TxVoxSection* s : allVoxSections()) {
+            lock(s->button());
+        }
     }
 }
 
@@ -2254,12 +1590,16 @@ void TxApplet::pollVoxMeter()
         ? 20.0 * std::log10(linearPeak)
         : -80.0;
     const double voxPeak01  = std::clamp((voxPeakDb + 80.0) / 80.0, 0.0, 1.0);
-    m_voxSection->setPeakLevel(voxPeak01);
+    for (TxVoxSection* s : allVoxSections()) {
+        s->setPeakLevel(voxPeak01);
+    }
 
     // VOX threshold marker: voxThresholdDb is in -80..0 dB range.
     const int thDb = m_model->transmitModel().voxThresholdDb();
-    m_voxSection->setThresholdMarker(
-        std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
+    for (TxVoxSection* s : allVoxSections()) {
+        s->setThresholdMarker(
+            std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2287,12 +1627,14 @@ void TxApplet::setMicProfileManager(MicProfileManager* mgr)
         // setActiveProfile callback (m_updatingFromModel guards that).
         connect(m_micProfileMgr, &MicProfileManager::activeProfileChanged,
                 this, [this](const QString& name) {
-            if (!m_chainSection->profileCombo()) { return; }
-            QSignalBlocker blk(m_chainSection->profileCombo());
             m_updatingFromModel = true;
-            const int idx = m_chainSection->profileCombo()->findText(name);
-            if (idx >= 0) {
-                m_chainSection->profileCombo()->setCurrentIndex(idx);
+            for (TxChainSection* s : allChainSections()) {
+                if (!s->profileCombo()) { continue; }
+                QSignalBlocker blk(s->profileCombo());
+                const int idx = s->profileCombo()->findText(name);
+                if (idx >= 0) {
+                    s->profileCombo()->setCurrentIndex(idx);
+                }
             }
             m_updatingFromModel = false;
         });
@@ -2311,10 +1653,15 @@ void TxApplet::setMicProfileManager(MicProfileManager* mgr)
 // ---------------------------------------------------------------------------
 void TxApplet::setDisplayDuplexState(bool checked, bool available, const QString& tooltip)
 {
-    const QSignalBlocker block(m_processingSection->dupButton());
-    m_processingSection->dupButton()->setChecked(checked);
-    m_processingSection->dupButton()->setEnabled(available);
-    m_processingSection->dupButton()->setToolTip(tooltip);
+    m_dupChecked = checked;
+    m_dupAvailable = available;
+    m_dupTooltip = tooltip;
+    for (TxProcessingSection* s : allProcessingSections()) {
+        const QSignalBlocker block(s->dupButton());
+        s->dupButton()->setChecked(checked);
+        s->dupButton()->setEnabled(available);
+        s->dupButton()->setToolTip(tooltip);
+    }
 }
 
 void TxApplet::setTwoToneController(TwoToneController* controller)
@@ -2334,11 +1681,13 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
                 syncRemoteIndicators();
                 return;
             }
-            if (!m_processingSection->twoToneButton()) { return; }
-            QSignalBlocker blk(m_processingSection->twoToneButton());
-            m_updatingFromModel = true;
-            m_processingSection->twoToneButton()->setChecked(active);
-            m_updatingFromModel = false;
+            for (TxProcessingSection* s : allProcessingSections()) {
+                if (!s->twoToneButton()) { continue; }
+                QSignalBlocker blk(s->twoToneButton());
+                m_updatingFromModel = true;
+                s->twoToneButton()->setChecked(active);
+                m_updatingFromModel = false;
+            }
         });
 
         // Remote indicators keep the Core facade as their authority.
@@ -2348,10 +1697,12 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
         }
 
         // Sync initial state.
-        QSignalBlocker blk(m_processingSection->twoToneButton());
-        m_updatingFromModel = true;
-        m_processingSection->twoToneButton()->setChecked(m_twoToneCtrl->isActive());
-        m_updatingFromModel = false;
+        for (TxProcessingSection* s : allProcessingSections()) {
+            QSignalBlocker blk(s->twoToneButton());
+            m_updatingFromModel = true;
+            s->twoToneButton()->setChecked(m_twoToneCtrl->isActive());
+            m_updatingFromModel = false;
+        }
     }
 }
 
@@ -2503,12 +1854,16 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
     // setTransmitChainSettingsPermitted; parity Task 3: the profile combo
     // follows setTxProfilePermitted; parity Task 7: PS-A follows
     // setPureSignalArmingPermitted. This gate keeps the rest.
-    apply(m_keyingSection->tuneButton());
-    apply(m_keyingSection->moxButton());
+    for (TxKeyingSection* s : allKeyingSections()) {
+        apply(s->tuneButton());
+        apply(s->moxButton());
+    }
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
     gateTransmitControl(voxButton(), permitted && m_voxPermitted,
                         permitted ? m_voxReason : reason);
-    apply(m_processingSection->twoToneButton());
+    for (TxProcessingSection* s : allProcessingSections()) {
+        apply(s->twoToneButton());
+    }
     // Task 16: the receive-only lock back on top (checkpoint join).
     applyReceiveOnlyLock();
 }
@@ -2518,8 +1873,10 @@ void TxApplet::setVoxPermitted(bool permitted, const QString& reason)
     removeReceiveOnlyLock();
     m_voxPermitted = permitted;
     m_voxReason = reason;
-    gateTransmitControl(voxButton(), m_transmitPermitted && permitted,
-                        m_transmitPermitted ? reason : m_transmitPermissionReason);
+    for (TxVoxSection* s : allVoxSections()) {
+        gateTransmitControl(s->button(), m_transmitPermitted && permitted,
+                            m_transmitPermitted ? reason : m_transmitPermissionReason);
+    }
     applyReceiveOnlyLock();
 }
 
@@ -2532,7 +1889,9 @@ void TxApplet::setPureSignalArmingPermitted(bool permitted, const QString& unava
     // Fix wave GUI-I7: the facade's reason off first, so this gate keeps
     // the button's own tooltip to put back.
     removePsaFacadeReason();
-    gateTransmitControl(m_processingSection->psaButton(), permitted, reason);
+    for (TxProcessingSection* s : allProcessingSections()) {
+        gateTransmitControl(s->psaButton(), permitted, reason);
+    }
     syncPsaFromFacade();
     applyReceiveOnlyLock();
 }
@@ -2546,9 +1905,7 @@ void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unava
     const QString reason = unavailableReason.isEmpty()
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
-    for (QWidget* control : {static_cast<QWidget*>(m_powerSection->rfPowerSlider()),
-                             static_cast<QWidget*>(m_filterSection->filterLowSpin()),
-                             static_cast<QWidget*>(m_filterSection->filterHighSpin())}) {
+    for (QWidget* control : transmitSettingsGatedControls()) {
         gateTransmitControl(control, permitted, reason);
     }
 }
@@ -2564,16 +1921,10 @@ void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
     m_transmitChainSettingsReason = reason;
-    for (QWidget* control : {static_cast<QWidget*>(m_powerSection->tunePowerSlider()),
-                             static_cast<QWidget*>(voxThresholdSlider()),
-                             static_cast<QWidget*>(voxHoldSlider()),
-                             static_cast<QWidget*>(m_monitorSection
-                                 ? m_monitorSection->monButton() : nullptr),
-                             static_cast<QWidget*>(m_monitorSection
-                                 ? m_monitorSection->volumeSlider() : nullptr),
-                             static_cast<QWidget*>(m_chainSection->levButton()),
-                             static_cast<QWidget*>(m_chainSection->eqButton()),
-                             static_cast<QWidget*>(m_chainSection->cfcButton())}) {
+    for (QWidget* control : chainSettingsGatedControls()) {
+        gateTransmitControl(control, permitted, reason);
+    }
+    for (QWidget* control : monitorChainControls()) {
         gateTransmitControl(control, permitted, reason);
     }
     // Parity Task 32: the MON output pair also needs a Core that sends MON.
@@ -2606,10 +1957,7 @@ void TxApplet::applyMonitorOutputGate()
                ? IStationLink::transmitSettingsUnavailableReason()
                : m_transmitChainSettingsReason)
         : m_monitorOutputReason;
-    for (QWidget* control : {static_cast<QWidget*>(m_monitorSection
-                                 ? m_monitorSection->speakersButton() : nullptr),
-                             static_cast<QWidget*>(m_monitorSection
-                                 ? m_monitorSection->headphonesButton() : nullptr)}) {
+    for (QWidget* control : monitorOutputControls()) {
         gateTransmitControl(control, permitted, reason);
     }
 }
@@ -2619,21 +1967,27 @@ void TxApplet::applyMonitorOutputGate()
 void TxApplet::setTxProfilePermitted(bool permitted, const QString& unavailableReason)
 {
     m_txProfilePermitted = permitted;
-    gateTransmitControl(m_chainSection->profileCombo(), permitted,
-                        unavailableReason.isEmpty()
-                            ? IStationLink::transmitSettingsUnavailableReason()
-                            : unavailableReason);
+    for (QWidget* control : profileGatedControls()) {
+        gateTransmitControl(control, permitted,
+                            unavailableReason.isEmpty()
+                                ? IStationLink::transmitSettingsUnavailableReason()
+                                : unavailableReason);
+    }
 }
 
 void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
 {
-    if (!m_keyingSection->takeTransmitButton()) { return; }
-    m_keyingSection->takeTransmitButton()->setVisible(offered);
-    m_keyingSection->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
-    m_keyingSection->takeTransmitButton()->setStyleSheet(offered && holderOnAir
-        ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
-                         " border-radius: 3px; padding: 2px 8px; }")
-        : QString());
+    m_takeTransmitOffered = offered;
+    m_holderOnAir = holderOnAir;
+    for (TxKeyingSection* s : allKeyingSections()) {
+        if (!s->takeTransmitButton()) { continue; }
+        s->takeTransmitButton()->setVisible(offered);
+        s->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
+        s->takeTransmitButton()->setStyleSheet(offered && holderOnAir
+            ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
+                             " border-radius: 3px; padding: 2px 8px; }")
+            : QString());
+    }
 }
 
 bool TxApplet::takeTransmitOffered() const
@@ -2643,9 +1997,12 @@ bool TxApplet::takeTransmitOffered() const
 
 void TxApplet::setTransmitHolderText(const QString& text)
 {
-    if (!m_keyingSection->holderLabel()) { return; }
-    m_keyingSection->holderLabel()->setText(text);
-    m_keyingSection->holderLabel()->setVisible(!text.isEmpty());
+    m_transmitHolderText = text;
+    for (TxKeyingSection* s : allKeyingSections()) {
+        if (!s->holderLabel()) { continue; }
+        s->holderLabel()->setText(text);
+        s->holderLabel()->setVisible(!text.isEmpty());
+    }
 }
 
 QString TxApplet::transmitHolderText() const
@@ -2696,7 +2053,9 @@ void TxApplet::setBoardCapabilities(const NereusSDR::BoardCapabilities& caps)
     // a known board without PureSignal hides it.
     const bool boardUnknown = caps.board == HPSDRHW::Unknown;
     m_psBoardUnknown = boardUnknown && !caps.hasPureSignal;
-    m_processingSection->psaButton()->setVisible(caps.hasPureSignal || boardUnknown);
+    for (TxProcessingSection* s : allProcessingSections()) {
+        s->psaButton()->setVisible(caps.hasPureSignal || boardUnknown);
+    }
     syncPsaFromFacade();
 }
 
@@ -2716,45 +2075,61 @@ void TxApplet::setPureSignal(NereusSDR::PureSignal* coordinator)
 
 void TxApplet::syncPsaFromFacade()
 {
-    if (!m_processingSection->psaButton()) {
+    // Every copy of the processing rows, not just the applet's own.
+    for (TxProcessingSection* s : allProcessingSections()) {
+        syncPsaFromFacadeIn(s);
+    }
+}
+
+void TxApplet::syncPsaFromFacadeIn(TxProcessingSection* s)
+{
+    if (!s || !s->psaButton()) {
         return;
     }
     const bool automaticIntent = m_psFacade && m_psFacade->settings()
         ? m_psFacade->settings()->autoCalEnabled() : false;
-    const QSignalBlocker blocker(m_processingSection->psaButton());
+    const QSignalBlocker blocker(s->psaButton());
     m_updatingFromModel = true;
-    m_processingSection->psaButton()->setChecked(automaticIntent);
+    s->psaButton()->setChecked(automaticIntent);
     // R-R3-49 (parity Task 7): arming keys nothing, so canArm.
     const bool canArm = !m_psBoardUnknown && m_psFacade && m_psFacade->available()
         && m_psFacade->canArm();
     // Fix wave GUI-I7: greyed by the facade, with the facade's reason. The
     // arming gate's reason, when it is on, stays (its tooltip is set).
-    removePsaFacadeReason();
+    removePsaFacadeReasonIn(s);
     if (m_psArmingPermitted && !canArm) {
         // Fix round 1 (minor 5): a board not known says it needs one.
         const QString refusal = m_psBoardUnknown || !m_psFacade ? QString()
                                                                : m_psFacade->armingRefusal();
         const QString reason = refusal.isEmpty()
             ? PureSignalSessionFacade::needsRadioReason() : refusal;
-        m_processingSection->psaButton()->setProperty(kPsaFacadeSavedTooltip, m_processingSection->psaButton()->toolTip());
-        m_processingSection->psaButton()->setProperty(kPsaFacadeSavedDescription, m_processingSection->psaButton()->accessibleDescription());
-        m_processingSection->psaButton()->setToolTip(reason);
-        m_processingSection->psaButton()->setAccessibleDescription(reason);
+        s->psaButton()->setProperty(kPsaFacadeSavedTooltip, s->psaButton()->toolTip());
+        s->psaButton()->setProperty(kPsaFacadeSavedDescription, s->psaButton()->accessibleDescription());
+        s->psaButton()->setToolTip(reason);
+        s->psaButton()->setAccessibleDescription(reason);
     }
-    m_processingSection->psaButton()->setEnabled(m_psArmingPermitted && canArm);
+    s->psaButton()->setEnabled(m_psArmingPermitted && canArm);
     m_updatingFromModel = false;
 }
 
 void TxApplet::removePsaFacadeReason()
 {
-    if (!m_processingSection->psaButton() || !m_processingSection->psaButton()->property(kPsaFacadeSavedTooltip).isValid()) {
+    // Every copy of the processing rows, not just the applet's own.
+    for (TxProcessingSection* s : allProcessingSections()) {
+        removePsaFacadeReasonIn(s);
+    }
+}
+
+void TxApplet::removePsaFacadeReasonIn(TxProcessingSection* s)
+{
+    if (!s || !s->psaButton() || !s->psaButton()->property(kPsaFacadeSavedTooltip).isValid()) {
         return;
     }
-    m_processingSection->psaButton()->setToolTip(m_processingSection->psaButton()->property(kPsaFacadeSavedTooltip).toString());
-    m_processingSection->psaButton()->setAccessibleDescription(
-        m_processingSection->psaButton()->property(kPsaFacadeSavedDescription).toString());
-    m_processingSection->psaButton()->setProperty(kPsaFacadeSavedTooltip, QVariant());
-    m_processingSection->psaButton()->setProperty(kPsaFacadeSavedDescription, QVariant());
+    s->psaButton()->setToolTip(s->psaButton()->property(kPsaFacadeSavedTooltip).toString());
+    s->psaButton()->setAccessibleDescription(
+        s->psaButton()->property(kPsaFacadeSavedDescription).toString());
+    s->psaButton()->setProperty(kPsaFacadeSavedTooltip, QVariant());
+    s->psaButton()->setProperty(kPsaFacadeSavedDescription, QVariant());
 }
 
 // ---------------------------------------------------------------------------
@@ -2766,28 +2141,1293 @@ void TxApplet::removePsaFacadeReason()
 // ---------------------------------------------------------------------------
 void TxApplet::rebuildProfileCombo()
 {
-    if (!m_chainSection->profileCombo()) { return; }
     if (!m_micProfileMgr) {
         // No manager → leave the placeholder "Default" item alone.
         return;
     }
 
-    QSignalBlocker blk(m_chainSection->profileCombo());
-    m_updatingFromModel = true;
-
     const QStringList names = m_micProfileMgr->profileNames();
     const QString active = m_micProfileMgr->activeProfileName();
 
-    resetItemsBeforeRowChange(m_chainSection->profileCombo());
-    m_chainSection->profileCombo()->clear();
-    m_chainSection->profileCombo()->addItems(names);
+    m_updatingFromModel = true;
+    for (TxChainSection* s : allChainSections()) {
+        if (!s->profileCombo()) { continue; }
+        QSignalBlocker blk(s->profileCombo());
+        resetItemsBeforeRowChange(s->profileCombo());
+        s->profileCombo()->clear();
+        s->profileCombo()->addItems(names);
 
-    const int idx = m_chainSection->profileCombo()->findText(active);
-    if (idx >= 0) {
-        m_chainSection->profileCombo()->setCurrentIndex(idx);
+        const int idx = s->profileCombo()->findText(active);
+        if (idx >= 0) {
+            s->profileCombo()->setCurrentIndex(idx);
+        }
     }
 
     m_updatingFromModel = false;
+}
+
+// ---------------------------------------------------------------------------
+// The MON row's wiring, for any instance of it.
+//
+// The applet owns the MON row, and a container may hold an independent copy
+// of it (createMonitorSection). Both are wired here, so both show and set
+// the same model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireMonitorSection(TxMonitorSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    // ── MON row (TxMonitorSection) ↔ TransmitModel / AudioEngine ─────────────
+    // Phase 3M-1b J.3.
+    // UI → Model: toggled → setMonEnabled (with m_updatingFromModel guard).
+    // Model → UI: monEnabledChanged → update checked state with QSignalBlocker.
+    auto* monBtn = s->monButton();
+    auto* monSpeakersBtn = s->speakersButton();
+    auto* monHeadphonesBtn = s->headphonesButton();
+    auto* monitorVolumeSlider = s->volumeSlider();
+    auto* monitorVolumeValue = s->volumeValue();
+
+    connect(monBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+        if (m_updatingFromModel) { return; }
+        tx.setMonEnabled(on);
+    });
+
+    connect(&tx, &TransmitModel::monEnabledChanged, this, [this, monBtn](bool on) {
+        QSignalBlocker b(monBtn);
+        m_updatingFromModel = true;
+        monBtn->setChecked(on);
+        m_updatingFromModel = false;
+    });
+
+    // ── R-R3-45: MON output ↔ AudioEngine::txMonitorOutput ──────────────────
+    // This computer's choice: the audio engine that plays this window's
+    // sound. R-R3-49 (parity Task 2): a remote window too, where it is this
+    // computer's own routing (a window-scope setting), as in a local window;
+    // it follows setTransmitChainSettingsPermitted there.
+    {
+        if (AudioEngine* engine = m_model->localAudioDevices()) {
+            connect(monSpeakersBtn, &QPushButton::clicked, this,
+                    [this, engine, s](bool) {
+                s->showMonitorOutput(false);
+                engine->setTxMonitorOutput(TxMonitorOutput::Speakers);
+            });
+            connect(monHeadphonesBtn, &QPushButton::clicked, this,
+                    [this, engine, s](bool) {
+                s->showMonitorOutput(true);
+                engine->setTxMonitorOutput(TxMonitorOutput::Headphones);
+            });
+            connect(engine, &AudioEngine::txMonitorOutputChanged, this,
+                    [this, s](TxMonitorOutput output) {
+                s->showMonitorOutput(output == TxMonitorOutput::Headphones);
+            });
+            connect(engine, &AudioEngine::headphonesAvailableChanged, this,
+                    [this, s](bool available) {
+                s->setHeadphonesAvailable(available);
+            });
+            connect(engine, &AudioEngine::headphonesEnabledChanged, this,
+                    [this, s](bool enabled) {
+                s->setHeadphonesEnabled(enabled);
+            });
+            s->setHeadphonesAvailable(engine->headphonesAvailable());
+            s->setHeadphonesEnabled(engine->headphonesEnabled());
+            s->showMonitorOutput(engine->txMonitorOutput() == TxMonitorOutput::Headphones);
+        }
+    }
+
+    // ── Monitor volume slider ↔ TransmitModel::monitorVolume ─────────────────
+    // Phase 3M-1b J.3.
+    // UI → Model: slider valueChanged(int) → setMonitorVolume(value / 100.0f).
+    // Model → UI: monitorVolumeChanged(float) → slider = qRound(v * 100.0f).
+    connect(monitorVolumeSlider, &QSlider::valueChanged,
+            this, [this, &tx, monitorVolumeValue](int val) {
+        if (m_updatingFromModel) { return; }
+        monitorVolumeValue->setText(QString::number(val));
+        tx.setMonitorVolume(static_cast<float>(val) / 100.0f);
+    });
+
+    connect(&tx, &TransmitModel::monitorVolumeChanged,
+            this, [this, monitorVolumeSlider, monitorVolumeValue](float volume) {
+        QSignalBlocker b(monitorVolumeSlider);
+        m_updatingFromModel = true;
+        const int uiVal = qRound(volume * 100.0f);
+        monitorVolumeSlider->setValue(uiVal);
+        monitorVolumeValue->setText(QString::number(uiVal));
+        m_updatingFromModel = false;
+    });
+}
+
+// The gap the applet's own column puts between its rows, so an independent
+// copy of a row keeps the same spacing.
+int TxApplet::txRowSpacing() const
+{
+    return WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2;
+}
+
+// An independent copy of the MON row, for a container that holds the monitor
+// controls on their own. The applet wires it and keeps it, so the
+// transmit-permission gates reach it like they reach the applet's own.
+TxMonitorSection* TxApplet::createMonitorSection(QWidget* parent)
+{
+    auto* s = new TxMonitorSection(parent, txRowSpacing());
+    wireMonitorSection(s);
+    m_extraMonitorSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxMonitorSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraMonitorSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+// The controls the transmit-chain gate covers: the MON toggle and the
+// monitor volume slider, in the applet's own row and in every copy.
+QList<QWidget*> TxApplet::monitorChainControls() const
+{
+    QList<QWidget*> controls;
+    if (m_monitorSection) {
+        controls << m_monitorSection->monButton()
+                  << m_monitorSection->volumeSlider();
+    }
+    for (const TxMonitorSection* s : m_extraMonitorSections) {
+        controls << s->monButton()
+                  << s->volumeSlider();
+    }
+    return controls;
+}
+
+// The controls the monitor-output gate covers: the SPEAKERS / PHONES pair,
+// in the applet's own row and in every copy.
+QList<QWidget*> TxApplet::monitorOutputControls() const
+{
+    QList<QWidget*> controls;
+    if (m_monitorSection) {
+        controls << m_monitorSection->speakersButton()
+                  << m_monitorSection->headphonesButton();
+    }
+    for (const TxMonitorSection* s : m_extraMonitorSections) {
+        controls << s->speakersButton()
+                  << s->headphonesButton();
+    }
+    return controls;
+}
+
+// ---------------------------------------------------------------------------
+// The TxPowerSection row's wiring, for any instance of it.
+//
+// The applet owns the row, and a container may hold an independent copy of
+// it (createPowerSection). Both are wired here, so both show and set the same
+// model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wirePowerSection(TxPowerSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    MoxController* mox = m_model->moxController();
+    // ── Forward-power gauge ← RadioStatus::powerChanged ─────────────────────
+    // 3M-1a (2026-04-27): wire the previously-NYI fwd-power gauge to the
+    // radio's reported forward power.  Pipeline:
+    //   P2RadioConnection → paTelemetryUpdated(fwdRaw,...)
+    //     → RadioModel handler scaleFwdPowerWatts() → m_radioStatus.setForwardPower(W)
+    //     → RadioStatus::powerChanged(fwd, rev, swr)  ← we listen here
+    //
+    // Two-stage de-jitter (Phase 3I-1 will replace with the proper Thetis
+    // peak-decay filter):
+    //   1.  alpha=0.30 EMA on every powerChanged emit — smooths the per-
+    //       sample noise without much lag (~10 sample time-constant).
+    //   2.  20 Hz QTimer reads the smoothed state into the gauge — keeps
+    //       the visible digits stable even when RadioStatus::powerChanged
+    //       fires twice per hardware sample (documented in
+    //       RadioModel.cpp:572).  Without this throttle the digit
+    //       characters update too fast to read.
+    connect(&m_model->radioStatus(), &RadioStatus::powerChanged,
+            this, [this, s](double fwdW, double /*revW*/, double /*swr*/) {
+        if (!m_model->mainPowerMeter()->onAmplifier()) {
+            constexpr double kAlpha = 0.30;
+            s->setSmoothedForwardPowerW(kAlpha * fwdW + (1.0 - kAlpha) * s->smoothedForwardPowerW());
+        }
+    });
+    auto* fwdGaugeRefreshTimer = new QTimer(this);
+    fwdGaugeRefreshTimer->setInterval(50);   // 20 Hz UI refresh
+    connect(fwdGaugeRefreshTimer, &QTimer::timeout,
+            this, &TxApplet::refreshPowerReadouts);
+    fwdGaugeRefreshTimer->start();
+
+    MainPowerMeter* meter = m_model->mainPowerMeter();
+    connect(meter, &MainPowerMeter::sourceChanged, this, [this, s, meter] {
+        if (!meter->onAmplifier()) {
+            s->setSmoothedForwardPowerW(meter->forwardW());
+        }
+        refreshPowerReadouts();
+    });
+    const auto refreshAmplifier = [this, s, meter] {
+        if (meter->onAmplifier()) { refreshPowerReadouts(); }
+    };
+    connect(meter, &MainPowerMeter::readingChanged, this, refreshAmplifier);
+    connect(meter, &MainPowerMeter::driveChanged, this, refreshAmplifier);
+    connect(meter, &MainPowerMeter::scaleChanged, this, [this, s] {
+        rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
+        refreshPowerReadouts();
+    });
+    // Bench #167: a lone zero after unkey left the EMA stuck above zero.
+    // Keep the explicit reset; the new rows then show their no-reading dashes.
+    if (mox) {
+        connect(mox, &MoxController::moxStateChanged, this, [this, s](bool active) {
+            if (!active) { s->setSmoothedForwardPowerW(0.0); }
+            refreshPowerReadouts();
+        });
+    }
+    // R-R3-49 parity Task 33: the remote controller never keys; the Core's
+    // mirrored transmit state clears the rows and drive note instead.
+    connect(m_model, &RadioModel::transmittingChanged, this, [this, s](bool active) {
+        if (!active) { s->setSmoothedForwardPowerW(0.0); }
+        refreshPowerReadouts();
+    });
+
+    // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
+    // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
+    // unreadable.  Subscribe to currentRadioChanged so the gauge ticks
+    // and red-zone redraw whenever the active radio changes.
+    //
+    // Issue #175 Task 7: also rescale the RF Power and Tune Power sliders
+    // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
+    //  every other SKU → canonical 0..100/1 with bare integer labels).
+    connect(m_model, &RadioModel::currentRadioChanged, this,
+            [this, s](const NereusSDR::RadioInfo&) {
+        const auto model = m_model->hardwareProfile().model;
+        rescaleFwdGaugeForModel(model);
+        rescalePowerSlidersForModel(model);
+    });
+    // Apply the current model's scale at wireControls() time so cold-launch
+    // (or reconnect-on-startup) lands a properly-sized gauge + sliders before
+    // the first telemetry sample.
+    {
+        const auto model = m_model->hardwareProfile().model;
+        rescaleFwdGaugeForModel(model);
+        rescalePowerSlidersForModel(model);
+    }
+
+
+    // ── RF Power slider → TransmitModel::setPower(int) ──────────────────────
+    // From Thetis chkMOX_CheckedChanged2 power flow [v2.10.3.13]:
+    //   the RF Power slider maps 0–100 to TX drive level.
+    //
+    // Issue #175 Task 7: label text is now driven by updatePowerSliderLabels()
+    // which formats the value in -X.X dB on HL2 and bare integer on every
+    // other SKU.  The old direct setText(QString::number(val)) would have
+    // bypassed the dB conversion on HL2.
+    connect(s->rfPowerSlider(), &QSlider::valueChanged, this, [this, s, &tx](int val) {
+        updatePowerSliderLabels();
+        if (m_updatingFromModel) { return; }
+        tx.setPower(val);
+        // The per-band slot (Thetis ptbPWR_Scroll, console.cs:28682-28693
+        // [v2.10.3.15]: `power_by_band[(int)_tx_band] = ptbPWR.Value;`) has
+        // one writer: RadioModel on the radio's side, which saves PWR into
+        // its transmit band on powerChanged (drivePowerScroll). A local
+        // window leaves it there; a remote window sends the power setting
+        // alone and the Core saves it. Writing the slot here too could pick
+        // a different band (this applet's active slice) from the one that
+        // transmits.
+        if (m_model && m_model->role() == RadioModel::Role::Local) {
+            tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+            return;
+        }
+        // R-R3-49 (group A fix wave, M3): a Core below
+        // transmitSettingsVersion 5 refuses tuneDrivePowerSource and takes
+        // `power` alone.
+        if (!m_powerByBandPermitted) { return; }
+        // Symmetric to the tune-slider auto-switch above: touching the RF
+        // Power slider restores the tune source to DriveSlider so the
+        // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
+        // TUNE.  Last-touched-slider-wins UX. From Thetis console.cs:46553
+        // [v2.10.3.13] DrivePowerSource.DRIVE_SLIDER is the canonical default.
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+    });
+
+    // Reverse: TransmitModel::powerChanged → slider
+    connect(&tx, &TransmitModel::powerChanged, this, [this, s](int power) {
+        QSignalBlocker b(s->rfPowerSlider());
+        m_updatingFromModel = true;
+        s->rfPowerSlider()->setValue(power);
+        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
+        m_updatingFromModel = false;
+    });
+
+
+    // ── Tune Power slider → TransmitModel::setTunePowerForTxBand ────────────
+    // Per-band tune power, ported from Thetis console.cs:12094 [v2.10.3.13]:
+    //   private int[] tunePower_by_band;
+    // The slider writes and shows the transmit band's slot, as Thetis
+    // ptbTune_Scroll does (PA on-air gate review):
+    // From Thetis console.cs:46618 [v2.10.3.15]
+    //   tunePower_by_band[(int)_tx_band] = ptbTune.Value;
+    // m_currentBand (the pan or slice band) is used only before RadioModel
+    // knows the transmit band.
+    //
+    // Issue #175 Task 7: label text routed through updatePowerSliderLabels()
+    // for the HL2 (slider/3.0 - 33.0)/2.0 dB conversion.
+    connect(s->tunePowerSlider(), &QSlider::valueChanged, this, [this, s, &tx](int val) {
+        updatePowerSliderLabels();
+        if (m_updatingFromModel) { return; }
+        // R-R3-49 (parity Task 2): a remote window asks the Core, which
+        // does what the lines below do for its own transmit band. A drag
+        // asks once, on release.
+        if (remoteTunePower()) {
+            if (!s->tunePowerSlider()->isSliderDown()) {
+                requestRemoteTunePower(val);
+            }
+            return;
+        }
+        if (tx.setTunePowerForTxBand(val)) { return; }
+        tx.setTunePowerForBand(m_currentBand, val);
+        // When the user touches the tune slider, switch the tune drive
+        // source so TUNE actually reads from tunePowerForBand instead of
+        // the regular drive slider (the default per Thetis console.cs:46553
+        // [v2.10.3.13]).  Without this the tune slider is dead UI: its
+        // value persists per-band but the math kernel
+        // (TransmitModel::setPowerUsingTargetDbm txMode 1) only consults
+        // tunePowerForBand when m_tuneDrivePowerSource == TuneSlider.
+        // NereusSDR-spin: Thetis exposes _tuneDrivePowerSource via a
+        // separate Setup combo; NereusSDR follows last-touched-slider-wins
+        // UX so users don't need to know the enum exists.
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+    });
+
+    connect(s->tunePowerSlider(), &QSlider::sliderReleased, this, [this, s]() {
+        if (m_updatingFromModel || !remoteTunePower()) { return; }
+        requestRemoteTunePower(s->tunePowerSlider()->value());
+    });
+
+    // Fix round 1 (minor 2): the change answered, the slider shows the
+    // Core's value, whichever arrived first, its answer or its next value
+    // (or a value it clamped). Not while the operator holds the slider.
+    connect(&tx, &TransmitModel::tunePowerForTxBandWriteInFlightChanged,
+            this, [this, s, &tx](bool inFlight) {
+        if (inFlight || !remoteTunePower() || s->tunePowerSlider()->isSliderDown()) { return; }
+        QSignalBlocker b(s->tunePowerSlider());
+        m_updatingFromModel = true;
+        s->tunePowerSlider()->setValue(tx.tunePowerForTxBand());
+        updatePowerSliderLabels();
+        m_updatingFromModel = false;
+    });
+
+    // R-R3-49 (parity Task 2): in a remote window the slider shows the
+    // Core's tune power for its transmit band; a local window shows its own
+    // transmit band's (PA on-air gate review).
+    connect(&tx, &TransmitModel::tunePowerForTxBandChanged,
+            this, [this, s, &tx](int watts) {
+        if (!remoteTunePower() && !tx.tuneTxBandKnown()) { return; }
+        // Fix wave GUI-I6: the Core's value does not move the slider out
+        // from under the operator's hand, nor back to an older value while
+        // the operator's change is on its way (the Core's next value, after
+        // its answer, shows; a refusal shows the Core's value again).
+        if (remoteTunePower()
+            && (s->tunePowerSlider()->isSliderDown() || tx.tunePowerForTxBandWriteInFlight())) {
+            return;
+        }
+        QSignalBlocker b(s->tunePowerSlider());
+        m_updatingFromModel = true;
+        s->tunePowerSlider()->setValue(watts);
+        updatePowerSliderLabels();
+        m_updatingFromModel = false;
+    });
+
+    // Reverse: TransmitModel::tunePowerByBandChanged → slider (only for
+    // current band, and only before the transmit band is known; after that
+    // tunePowerForTxBandChanged above repaints it).
+    connect(&tx, &TransmitModel::tunePowerByBandChanged,
+            this, [this, s, &tx](Band band, int watts) {
+        if (band != m_currentBand || remoteTunePower() || tx.tuneTxBandKnown()) { return; }
+        QSignalBlocker b(s->tunePowerSlider());
+        m_updatingFromModel = true;
+        s->tunePowerSlider()->setValue(watts);
+        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
+        m_updatingFromModel = false;
+    });
+
+}
+
+// ---------------------------------------------------------------------------
+// The TxFilterSection row's wiring, for any instance of it.
+//
+// The applet owns the row, and a container may hold an independent copy of
+// it (createFilterSection). Both are wired here, so both show and set the same
+// model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireFilterSection(TxFilterSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    // ── Plan 4 Cluster C (Task 4 / D2+D3): TX BW spinbox wiring ─────────────
+    //
+    // UI → Model: spinbox valueChanged → setFilterLow / setFilterHigh.
+    //             m_updatingFromModel guard prevents echo loops.
+    // Model → UI: TransmitModel::filterChanged(int,int) → QSignalBlocker on
+    //             both spinboxes, then setValue + refresh status label.
+    // Status label refresh helper (shared by filterChanged and dspModeChanged).
+    auto refreshFilterStatus = [this, s]() { refreshTxFilterStatus(); };
+
+    if (s->filterLowSpin()) {
+        connect(s->filterLowSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this, s](int v) {
+            if (m_updatingFromModel) { return; }
+            m_model->transmitModel().setFilterLow(v);
+        });
+    }
+    if (s->filterHighSpin()) {
+        connect(s->filterHighSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this, s](int v) {
+            if (m_updatingFromModel) { return; }
+            m_model->transmitModel().setFilterHigh(v);
+        });
+    }
+
+    // Model → spinboxes + status label on filterChanged.
+    connect(&tx, &TransmitModel::filterChanged,
+            this, [this, s, refreshFilterStatus](int low, int high) {
+        m_updatingFromModel = true;
+        if (s->filterLowSpin()) {
+            QSignalBlocker bLo(s->filterLowSpin());
+            s->filterLowSpin()->setValue(low);
+        }
+        if (s->filterHighSpin()) {
+            QSignalBlocker bHi(s->filterHighSpin());
+            s->filterHighSpin()->setValue(high);
+        }
+        m_updatingFromModel = false;
+        refreshFilterStatus();
+    });
+
+    // Status label refresh on DSP mode change (symmetric ↔ asymmetric format)
+    // rides followTransmitSlice's connection (slice control plan Task 11).
+    refreshFilterStatus();
+
+}
+
+// ---------------------------------------------------------------------------
+// The TxChainSection row's wiring, for any instance of it.
+//
+// The applet owns the row, and a container may hold an independent copy of
+// it (createChainSection). Both are wired here, so both show and set the same
+// model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireChainSection(TxChainSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    // ── Phase 3M-3a-i Batch 2 (Task F): LEV / EQ quick toggles ──────────────
+    //
+    // LEV button ↔ TransmitModel::txLevelerOn (bidirectional, echo-guarded).
+    if (s->levButton()) {
+        connect(s->levButton(), &QPushButton::toggled,
+                this, [this, s, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setTxLevelerOn(on);
+        });
+        connect(&tx, &TransmitModel::txLevelerOnChanged,
+                this, [this, s](bool on) {
+            QSignalBlocker b(s->levButton());
+            m_updatingFromModel = true;
+            s->levButton()->setChecked(on);
+            m_updatingFromModel = false;
+        });
+    }
+
+    // EQ button ↔ TransmitModel::txEqEnabled (bidirectional, echo-guarded).
+    // Right-click: placeholder slot for the TxEqDialog launch (Batch 3).
+    if (s->eqButton()) {
+        connect(s->eqButton(), &QPushButton::toggled,
+                this, [this, s, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setTxEqEnabled(on);
+        });
+        connect(&tx, &TransmitModel::txEqEnabledChanged,
+                this, [this, s](bool on) {
+            QSignalBlocker b(s->eqButton());
+            m_updatingFromModel = true;
+            s->eqButton()->setChecked(on);
+            m_updatingFromModel = false;
+        });
+        // Right-click → open TxEqDialog (Phase 3M-3a-i Batch 3 A.1).
+        // Modeless singleton; show + raise + activateWindow so a
+        // hidden-but-alive instance is brought forward.
+        connect(s->eqButton(), &QPushButton::customContextMenuRequested,
+                this, [this, s](const QPoint& /*pos*/) {
+            // R-R3-49 (parity Task 4): opens in a remote window too; the
+            // dialog greys itself with the reason while the Core cannot
+            // take a change (TxEqDialog::setSettingsPermitted).
+            if (!m_model) { return; }
+            TxEqDialog* dlg = TxEqDialog::instance(m_model, this);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+    }
+
+
+    // ── Phase 3M-3a-ii Batch 6 (Task A): CFC button ↔ TransmitModel::cfcEnabled
+    // Right-click opens the modeless TxCfcDialog (lazy-create singleton kept
+    // alive for fast re-opens — same pattern as TxEqDialog).
+    if (s->cfcButton()) {
+        connect(s->cfcButton(), &QPushButton::toggled,
+                this, [this, s, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setCfcEnabled(on);
+        });
+        connect(&tx, &TransmitModel::cfcEnabledChanged,
+                this, [this, s](bool on) {
+            QSignalBlocker b(s->cfcButton());
+            m_updatingFromModel = true;
+            s->cfcButton()->setChecked(on);
+            m_updatingFromModel = false;
+        });
+        connect(s->cfcButton(), &QPushButton::customContextMenuRequested,
+                this, [this, s](const QPoint& /*pos*/) {
+            requestOpenCfcDialog();
+        });
+    }
+    // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
+    // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
+    // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
+    // doesn't bounce back into setActiveProfile.
+    connect(s->profileCombo(), &QComboBox::currentTextChanged,
+            this, [this, s](const QString& name) {
+        if (m_updatingFromModel) { return; }
+        if (!m_micProfileMgr) { return; }
+        if (name.isEmpty()) { return; }
+        if (m_model) {
+            m_micProfileMgr->setActiveProfile(name, &m_model->transmitModel());
+        }
+    });
+
+    // Right-click on combo → emit txProfileMenuRequested (Thetis cite at the
+    // signal declaration).
+    connect(s->profileCombo(), &QComboBox::customContextMenuRequested,
+            this, [this, s](const QPoint& /*pos*/) {
+        emit txProfileMenuRequested();
+    });
+
+}
+
+// ---------------------------------------------------------------------------
+// Independent copies of the power, filter and chain rows, for containers that
+// hold them on their own.  The applet makes each copy and wires it, so the
+// copy shows and sets the same state as the applet's own row.
+// ---------------------------------------------------------------------------
+TxPowerSection* TxApplet::createPowerSection(QWidget* parent)
+{
+    auto* s = new TxPowerSection(parent, txRowSpacing(),
+                               m_model ? m_model->mainPowerMeter() : nullptr);
+    wirePowerSection(s);
+    m_extraPowerSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxPowerSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraPowerSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+TxFilterSection* TxApplet::createFilterSection(QWidget* parent)
+{
+    auto* s = new TxFilterSection(parent, txRowSpacing());
+    wireFilterSection(s);
+    m_extraFilterSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxFilterSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraFilterSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+TxChainSection* TxApplet::createChainSection(QWidget* parent)
+{
+    auto* s = new TxChainSection(parent, txRowSpacing());
+    wireChainSection(s);
+    m_extraChainSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxChainSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraChainSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+TxVoxSection* TxApplet::createVoxSection(QWidget* parent)
+{
+    auto* s = new TxVoxSection(parent, txRowSpacing());
+    wireVoxSection(s);
+    m_extraVoxSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxVoxSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraVoxSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent)
+{
+    auto* s = new TxProcessingSection(parent, txRowSpacing());
+    wireProcessingSection(s);
+    m_extraProcessingSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxProcessingSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraProcessingSections.removeAll(guard);
+    });
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent)
+{
+    auto* s = new TxKeyingSection(parent, txRowSpacing());
+    wireKeyingSection(s);
+    m_extraKeyingSections.append(s);
+    // The copy belongs to the container, which owns it and may destroy it
+    // when the operator closes the container or removes the item.  The
+    // applet's timers walk this list, so a copy that is gone must not stay
+    // in it.  The QPointer drops it on its own; this keeps the list from
+    // growing as copies come and go.
+    const QPointer<TxKeyingSection> guard(s);
+    connect(s, &QObject::destroyed, this, [this, guard]{
+        m_extraKeyingSections.removeAll(guard);
+    });
+    refreshTransmitSliceChoicesIn(s);
+    // The copy starts where the model is, not where the applet's own row was
+    // when it was built.
+    syncSectionInstances();
+    return s;
+}
+
+// Every instance of the monitor rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxMonitorSection*> TxApplet::allMonitorSections() const
+{
+    QList<TxMonitorSection*> sections;
+    if (m_monitorSection) {
+        sections << m_monitorSection;
+    }
+    for (const QPointer<TxMonitorSection>& copy : m_extraMonitorSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the filter rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxFilterSection*> TxApplet::allFilterSections() const
+{
+    QList<TxFilterSection*> sections;
+    if (m_filterSection) {
+        sections << m_filterSection;
+    }
+    for (const QPointer<TxFilterSection>& copy : m_extraFilterSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the chain rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxChainSection*> TxApplet::allChainSections() const
+{
+    QList<TxChainSection*> sections;
+    if (m_chainSection) {
+        sections << m_chainSection;
+    }
+    for (const QPointer<TxChainSection>& copy : m_extraChainSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the VOX rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxVoxSection*> TxApplet::allVoxSections() const
+{
+    QList<TxVoxSection*> sections;
+    if (m_voxSection) {
+        sections << m_voxSection;
+    }
+    for (const QPointer<TxVoxSection>& copy : m_extraVoxSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the processing rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxProcessingSection*> TxApplet::allProcessingSections() const
+{
+    QList<TxProcessingSection*> sections;
+    if (m_processingSection) {
+        sections << m_processingSection;
+    }
+    for (const QPointer<TxProcessingSection>& copy : m_extraProcessingSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the keying rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxKeyingSection*> TxApplet::allKeyingSections() const
+{
+    QList<TxKeyingSection*> sections;
+    if (m_keyingSection) {
+        sections << m_keyingSection;
+    }
+    for (const QPointer<TxKeyingSection>& copy : m_extraKeyingSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// Every instance of the power rows: the applet's own, and the independent
+// copies made for containers.
+QList<TxPowerSection*> TxApplet::allPowerSections() const
+{
+    QList<TxPowerSection*> sections;
+    if (m_powerSection) {
+        sections << m_powerSection;
+    }
+    for (const QPointer<TxPowerSection>& copy : m_extraPowerSections) {
+        if (copy) {
+            sections << copy.data();
+        }
+    }
+    return sections;
+}
+
+// The controls the receive-only lock covers: the transmit keys, the 2-TONE
+// button and the VOX toggle, in the applet's own rows and in every copy.
+QList<QWidget*> TxApplet::rxOnlyLockedControls() const
+{
+    QList<QWidget*> controls;
+    for (const TxKeyingSection* s : allKeyingSections()) {
+        controls << s->moxButton()
+                 << s->tuneButton();
+    }
+    for (const TxProcessingSection* s : allProcessingSections()) {
+        controls << s->twoToneButton();
+    }
+    for (const TxVoxSection* s : allVoxSections()) {
+        controls << s->button();
+    }
+    return controls;
+}
+
+// The controls the transmit-settings gate covers: the RF Power slider and the
+// TX filter cutoffs, in the applet's own rows and in every copy of them.
+QList<QWidget*> TxApplet::transmitSettingsGatedControls() const
+{
+    QList<QWidget*> controls;
+    for (const TxPowerSection* s : allPowerSections()) {
+        controls << s->rfPowerSlider();
+    }
+    for (const TxFilterSection* s : allFilterSections()) {
+        controls << s->filterLowSpin()
+                 << s->filterHighSpin();
+    }
+    return controls;
+}
+
+// The controls the transmit-chain-settings gate covers: the Tune Power slider,
+// the VOX sliders, the LEV / EQ / CFC buttons, the MON toggle and the
+// monitor volume slider, in the applet's own rows and in every copy of them.
+QList<QWidget*> TxApplet::chainSettingsGatedControls() const
+{
+    QList<QWidget*> controls;
+    for (const TxPowerSection* s : allPowerSections()) {
+        controls << s->tunePowerSlider();
+    }
+    for (const TxVoxSection* s : allVoxSections()) {
+        controls << s->thresholdSlider()
+                 << s->holdSlider();
+    }
+    for (const TxChainSection* s : allChainSections()) {
+        controls << s->levButton()
+                 << s->eqButton()
+                 << s->cfcButton();
+    }
+    return controls;
+}
+
+// The controls the TX-profile gate covers: the profile combo, in the applet's
+// own row and in every copy of it.
+QList<QWidget*> TxApplet::profileGatedControls() const
+{
+    QList<QWidget*> controls;
+    for (const TxChainSection* s : allChainSections()) {
+        controls << s->profileCombo();
+    }
+    return controls;
+}
+
+// ---------------------------------------------------------------------------
+// The VOX row's wiring, for any instance of it.
+//
+// The applet owns the row, and a container may hold an independent copy of
+// it (createVoxSection).  Both are wired here, so both show and set the same
+// model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireVoxSection(TxVoxSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    // ── VOX [ON] toggle ↔ TransmitModel::voxEnabled ──────────────────────────
+    if (s->button()) {
+        {
+            QSignalBlocker b(s->button());
+            s->button()->setChecked(tx.voxEnabled());
+        }
+        // UI → Model
+        connect(s->button(), &QPushButton::toggled, this, [this, s, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setVoxEnabled(on);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxEnabledChanged, this, [this, s](bool on) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(s->button());
+                s->button()->setChecked(on);
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── VOX threshold slider ↔ TransmitModel::voxThresholdDb ─────────────────
+    // Range -80..0 dB from console.Designer.cs:6018-6019 [v2.10.3.13]
+    // (already set in buildUI).  Default value -20 dB matches Thetis
+    // ptbVOX.Value=-20 (console.Designer.cs:6024 [v2.10.3.13]).
+    if (s->thresholdSlider()) {
+        {
+            QSignalBlocker b(s->thresholdSlider());
+            s->thresholdSlider()->setValue(tx.voxThresholdDb());
+        }
+        if (s->thresholdLabel()) {
+            s->thresholdLabel()->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        }
+        // UI → Model + label refresh
+        connect(s->thresholdSlider(), &QSlider::valueChanged, this, [this, s, &tx](int dB) {
+            if (s->thresholdLabel()) {
+                s->thresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
+            }
+            if (m_updatingFromModel) { return; }
+            tx.setVoxThresholdDb(dB);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxThresholdDbChanged, this, [this, s](int dB) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(s->thresholdSlider());
+                s->thresholdSlider()->setValue(dB);
+            }
+            if (s->thresholdLabel()) {
+                s->thresholdLabel()->setText(QStringLiteral("%1 dB").arg(dB));
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── VOX Hold slider ↔ TransmitModel::voxHangTimeMs ───────────────────────
+    // Range 1..2000 ms from setup.designer.cs:45005-45013 [v2.10.3.13]
+    // (already set in buildUI).  Default 500 ms matches udDEXPHold.Value
+    // (setup.designer.cs:45020 [v2.10.3.13]).
+    if (s->holdSlider()) {
+        {
+            QSignalBlocker b(s->holdSlider());
+            s->holdSlider()->setValue(tx.voxHangTimeMs());
+        }
+        if (s->holdLabel()) {
+            s->holdLabel()->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        }
+        // UI → Model + label refresh
+        connect(s->holdSlider(), &QSlider::valueChanged, this, [this, s, &tx](int ms) {
+            if (s->holdLabel()) {
+                s->holdLabel()->setText(QStringLiteral("%1 ms").arg(ms));
+            }
+            if (m_updatingFromModel) { return; }
+            tx.setVoxHangTimeMs(ms);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxHangTimeMsChanged, this, [this, s](int ms) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(s->holdSlider());
+                s->holdSlider()->setValue(ms);
+            }
+            if (s->holdLabel()) {
+                s->holdLabel()->setText(QStringLiteral("%1 ms").arg(ms));
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── Right-click on VOX → emit openSetupRequested ─────────────────────────
+    // Mirrors PhoneCwApplet's DEXP-button right-click pattern.  MainWindow
+    // listens and jumps the SetupDialog to the "DEXP/VOX" leaf page.
+    if (s->button()) {
+        connect(s->button(), &QPushButton::customContextMenuRequested, this,
+                [this, s](const QPoint&) {
+            emit openSetupRequested(QStringLiteral("Transmit"),
+                                    QStringLiteral("DEXP/VOX"));
+        });
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// The processing rows' wiring, for any instance of them.
+//
+// The applet owns the rows, and a container may hold an independent copy of
+// them (createProcessingSection).  Both are wired here, so both show and set
+// the same model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireProcessingSection(TxProcessingSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+
+    // The DUP press raises this applet's own signal, so it is wired here
+    // rather than inside the section.
+    connect(s->dupButton(), &QPushButton::clicked, this,
+            &TxApplet::displayDuplexRequested);
+
+    // ── SWR Prot LED ← SwrProtectionController::highSwrChanged ─────────────
+    // SwrProtectionController (Phase 3G-13) emits highSwrChanged(bool) when
+    // the radio's SWR-protection state changes. Light the LED amber when
+    // high-SWR protection is active; dim it when cleared.
+    {
+        auto updateSwrProtLed = [this, s](bool isHigh) {
+            if (!s->swrProtectionLed()) { return; }
+            const QString color = isHigh ? QStringLiteral("#ffaa00")
+                                         : Style::kTextInactive;
+            s->swrProtectionLed()->setStyleSheet(QStringLiteral(
+                "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
+            ).arg(color));
+        };
+        connect(&m_model->swrProt(),
+                &safety::SwrProtectionController::highSwrChanged,
+                this, updateSwrProtLed);
+        // Initialise to current state.
+        updateSwrProtLed(m_model->swrProt().highSwr());
+    }
+
+
+    // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
+    // toggled → TwoToneController::setActive.  Echo-guarded.
+    connect(s->twoToneButton(), &QPushButton::toggled, this, [this, s](bool on) {
+        if (m_updatingFromModel) { return; }
+        // Desktop remote transmit: a remote window asks the Core.
+        if (m_model && m_model->remoteTransmitRouted()) {
+            m_model->setTwoTone(on);
+            return;
+        }
+        // Fix wave (hosting 2-TONE parity): a hosting window asks to take
+        // transmit first. The button shows the test's own state after.
+        if (m_desktopTwoToneRequest) {
+            const QPointer<TxApplet> self(this);
+            m_desktopTwoToneRequest(on);
+            if (self && s->twoToneButton()) {
+                const QSignalBlocker blocker(s->twoToneButton());
+                s->twoToneButton()->setChecked(m_twoToneCtrl && m_twoToneCtrl->isActive());
+            }
+            return;
+        }
+        if (!m_twoToneCtrl) { return; }
+        m_twoToneCtrl->setActive(on);
+    });
+
+
+    // ── Phase 3M-4 / WDSP 2.10: PS-A button wiring ──────────────────────────
+    // Source-first port of Thetis chkFWCATUBypass:
+    //   - Left-click toggle drives PureSignal::setAutoCalEnabled (mirrors
+    //     chkFWCATUBypass_Click, console.cs:36762 [v2.10.3.13]).
+    //   - Right-click opens PsForm via openPureSignalDialogRequested (mirrors
+    //     chkFWCATUBypass_MouseDown, console.cs:46149-46152 [v2.10.3.13]:
+    //       if (IsRightButton(e)) linearityToolStripMenuItem_Click(null,
+    //                                                              EventArgs.Empty);
+    //     ).
+    //
+    // Production always uses RadioModel's one session facade. The local
+    // coordinator remains late-bound behind that facade.
+    if (s->psaButton()) {
+        // Right-click → emit openPureSignalDialogRequested.  Wired
+        // unconditionally so the seam exists even when no PureSignal
+        // coordinator is bound (test harness verifies the signal emit).
+        s->psaButton()->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(s->psaButton(), &QWidget::customContextMenuRequested, this,
+                [this, s](const QPoint&) {
+            emit openPureSignalDialogRequested();
+        });
+
+        // The checked state expresses automatic-calibration intent. Turning
+        // it off uses the acknowledged Off/reset action.
+        connect(s->psaButton(), &QPushButton::toggled, this, [this, s](bool on) {
+            if (m_updatingFromModel || !m_psFacade) {
+                return;
+            }
+            const Ps3Action action = on
+                ? Ps3Action::StartAutomatic : Ps3Action::OffReset;
+            if (m_psFacade->requestAction(action) == 0) {
+                syncPsaFromFacade();
+            }
+        });
+
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The keying rows' wiring, for any instance of them.
+//
+// The applet owns the rows, and a container may hold an independent copy of
+// them (createKeyingSection).  Both are wired here, so both show and set the
+// same model state, and both follow the same permission gates.
+// ---------------------------------------------------------------------------
+void TxApplet::wireKeyingSection(TxKeyingSection* s)
+{
+    if (!s || !m_model) {
+        return;
+    }
+    MoxController* mox = m_model->moxController();
+
+    // ── TUNE button → RadioModel::setTune(bool) ──────────────────────────────
+    // G.4 orchestrator: CW mode swap, tone setup, tune-power push.
+    // From Thetis console.cs:29978-30157 [v2.10.3.13] chkTUN_CheckedChanged.
+    // G8NJJ tell ARIES that tune is active  [original inline comment from console.cs:30153]
+    // MW0LGE_22b setupTuneDriveSlider  [original inline comment from console.cs:30155]
+    connect(s->tuneButton(), &QPushButton::toggled, this, [this, s](bool on) {
+        if (m_updatingFromModel) { return; }
+        if (!m_model) { return; }
+        // R-R3-21: the button's text and checked state are written only by
+        // the Tune state and refusal handlers below (manualMoxChanged,
+        // tuneRefused). Writing "TUNING..." here, after setTune returned,
+        // painted a refused press as tuning: the refusal had already reset
+        // the button inside this call.
+        if (m_desktopTuneRequest) {
+            const QPointer<TxApplet> self(this);
+            m_desktopTuneRequest(on);
+            if (self) { syncDesktopKeyState(); }
+        } else {
+            // TX rulings (item 1): a remote window's press keys after a
+            // release even while the Core's TUNE still reads on, and the
+            // button shows what it asked until the Core's state arrives.
+            const bool asked = m_model->tunePressAsksOn(on);
+            if (asked != on) {
+                QSignalBlocker b(s->tuneButton());
+                s->tuneButton()->setChecked(asked);
+            }
+            m_model->setTune(asked);
+        }
+    });
+
+    // Reverse: tuneRefused → uncheck TUN button + clear text.
+    // From Thetis console.cs:30076 [v2.10.3.13]: guard conditions before
+    // chkTUN.Checked = true (connection + power-on checks).
+    connect(m_model, &RadioModel::tuneRefused, this, [this, s](const QString& /*reason*/) {
+        if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
+        QSignalBlocker b(s->tuneButton());
+        m_updatingFromModel = true;
+        s->tuneButton()->setChecked(false);
+        s->tuneButton()->setText(QStringLiteral("TUNE"));
+        m_updatingFromModel = false;
+    });
+
+    // ── MOX button → RadioModel::setMoxFromButton(bool) ─────────────────────
+    // B.5 setter: drives state machine through RX→TX or TX→RX transitions.
+    // From Thetis console.cs:29311-29678 [v2.10.3.13] chkMOX_CheckedChanged2.
+    // //[2.10.1.0]MW0LGE changed  [original inline comment from console.cs:29355]
+    // //MW0LGE [2.9.0.7]  [original inline comment from console.cs:29400, 29561]
+    // //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29567-29568, 29659]
+    if (mox) {
+        // Receiver and transmit gaps plan, Task 7: the MOX button is a manual
+        // key (Thetis chkMOX_Click, console.cs:29730-29747 [v2.10.3.15]);
+        // RadioModel::setMoxFromButton also turns TUN and two-tone off on
+        // the way off, as chkMOX_Click does.
+        connect(s->moxButton(), &QPushButton::toggled, this, [this, s](bool on) {
+            if (m_updatingFromModel) { return; }
+            if (m_desktopMoxRequest) {
+                const QPointer<TxApplet> self(this);
+                m_desktopMoxRequest(on);
+                if (self) { syncDesktopKeyState(); }
+            } else {
+                // TX rulings (item 1): a remote window's press keys after a
+                // release even while the Core's confirmation is on its way,
+                // and the button shows what it asked until the Core's state
+                // arrives.
+                const bool asked = m_model->moxPressAsksOn(on);
+                if (asked != on) {
+                    QSignalBlocker b(s->moxButton());
+                    s->moxButton()->setChecked(asked);
+                }
+                m_model->setMoxFromButton(asked);
+            }
+        });
+
+        // Reverse: MoxController::moxStateChanged → button checked state.
+        // moxStateChanged fires at end of the timer walk (TX fully engaged
+        // or fully released), not at setMox() entry — so the button reflects
+        // the confirmed state, not the in-progress request.
+        connect(mox, &MoxController::moxStateChanged,
+                this, [this, s](bool on) {
+            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
+            QSignalBlocker b(s->moxButton());
+            m_updatingFromModel = true;
+            s->moxButton()->setChecked(on);
+            m_updatingFromModel = false;
+        });
+
+        // Reverse, the rejection half: MoxController::moxRejected → button
+        // follows the state that actually holds.
+        //
+        // setMox(true) returns on rejection without advancing anything, so
+        // moxStateChanged never fires -- and the connect immediately above
+        // was the ONLY thing that unchecked this button. The user's own
+        // press left it checked and red, reading "transmitting", with the
+        // radio in RX.
+        //
+        // Pre-existing locally, where rejections are occasional (band-plan
+        // and TX-interlock refusals). Remote-daemon R2 is what made it
+        // worth fixing: on a Role::Remote model EVERY press is refused, so
+        // the button was not occasionally wrong, it was permanently wrong.
+        //
+        // isMox() rather than a literal false: setMox() only ever rejects
+        // a TX-on request, but reading the controller keeps the button
+        // following the authority instead of an assumption about which
+        // requests can be refused.
+        connect(mox, &MoxController::moxRejected,
+                this, [this, s, mox](const QString& /*reason*/) {
+            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
+            QSignalBlocker b(s->moxButton());
+            m_updatingFromModel = true;
+            s->moxButton()->setChecked(mox->isMox());
+            m_updatingFromModel = false;
+        });
+
+        // TUNE button checked state driven by manualMoxChanged.
+        // manualMoxChanged fires when setTune() sets/clears m_manualMox.
+        connect(mox, &MoxController::manualMoxChanged,
+                this, [this, s](bool isManual) {
+            if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
+            QSignalBlocker b(s->tuneButton());
+            m_updatingFromModel = true;
+            s->tuneButton()->setChecked(isManual);
+            s->tuneButton()->setText(isManual
+                ? QStringLiteral("TUNING...")
+                : QStringLiteral("TUNE"));
+            m_updatingFromModel = false;
+        });
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// Push the state the applet holds into every row.
+//
+// A copy of a row is made after the applet has already pushed the model
+// state into its own row, so a copy made on its own would start blank.  The
+// applet calls this when it makes one, so the copy starts where the model
+// is and not where the applet was when it was built.
+// ---------------------------------------------------------------------------
+void TxApplet::syncSectionInstances()
+{
+    if (!m_model) { return; }
+
+    // The model state: the power sliders, the VOX row, MON and the monitor
+    // volume, the LEV / EQ / CFC buttons, the filter cutoffs and the
+    // TUNE / MOX buttons.
+    syncFromModel();
+
+    // The TX Profile combo's entries.
+    rebuildProfileCombo();
+
+    // Who holds transmit, and the offer to take it.
+    setTransmitHolderText(m_transmitHolderText);
+    setTakeTransmitOffered(m_takeTransmitOffered, m_holderOnAir);
+
+    // The full-duplex button.
+    setDisplayDuplexState(m_dupChecked, m_dupAvailable, m_dupTooltip);
+
+    // The 2-Tone button's own state.
+    if (m_twoToneCtrl) {
+        for (TxProcessingSection* s : allProcessingSections()) {
+            const QSignalBlocker blk(s->twoToneButton());
+            m_updatingFromModel = true;
+            s->twoToneButton()->setChecked(m_twoToneCtrl->isActive());
+            m_updatingFromModel = false;
+        }
+    }
+
+    // The PS-A button, which the PureSignal facade owns.
+    syncPsaFromFacade();
 }
 
 } // namespace NereusSDR
