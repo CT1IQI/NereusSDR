@@ -356,9 +356,6 @@ private slots:
         for (QWidget* copy : copies) {
             delete copy;
         }
-        // No timer a copy started outlives it.
-        QCOMPARE(applet.findChildren<QTimer*>().size(), timersBefore);
-
         // Every model signal the power, filter, chain and VOX rows follow.
         TransmitModel& tx = rm.transmitModel();
         tx.setPower(tx.power() == 37 ? 38 : 37);
@@ -378,6 +375,9 @@ private slots:
         auto* own = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
         QVERIFY(own);
         QCOMPARE(own->value(), tx.power());
+
+        // No timer a copy started outlives it.
+        QCOMPARE(applet.findChildren<QTimer*>().size(), timersBefore);
     }
 
     // ── 6. The transmit-permission gate reaches the copy ─────────────────
