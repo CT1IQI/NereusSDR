@@ -28,6 +28,7 @@
 #include <QApplication>
 #include <QLabel>
 #include <QLayout>
+#include <QListWidget>
 #include <QMargins>
 #include <QMenu>
 #include <QPushButton>
@@ -48,6 +49,7 @@
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerSettingsDialog.h"
+#include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/meters/MeterPoller.h"
 #include "models/RadioModel.h"
@@ -249,6 +251,80 @@ private slots:
         // one whose entries cannot be built.
         ContainerContentRegistry bare;
         QVERIFY(txMenuTitles(bare).isEmpty());
+    }
+
+    // ── 8b. The operator adds a row from the item list ──────────────────
+    // In the workspace, Container Settings hides the "+" popup and offers
+    // the registry's content in its item list instead.  Pick a TX row there,
+    // press "Add ->" and Apply, as the operator does, and the container
+    // holds a working copy of the row.
+    void theOperatorAddsARowFromTheItemList()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("settings"));
+        ContainerWorkspaceStore store(settings);
+        MeterPoller poller;
+        QWidget root;
+        QSplitter splitter(&root);
+        ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        manager.setPreviewPoller(&poller);
+        WorkspaceDocument document;
+        document.mainContainerId = QStringLiteral("A");
+        ContainerDocument container;
+        container.id = QStringLiteral("A");
+        container.layout = ContentLayout::VerticalStack;
+        document.containers = {container};
+        QCOMPARE(manager.commitWorkspace(document, 0).status, CommitStatus::Saved);
+
+        ContainerSettingsDialog dialog(manager.container("A"), nullptr, &manager);
+        dialog.show();
+        QCoreApplication::processEvents();
+
+        auto* available = dialog.findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
+        QVERIFY(available);
+        QStringList offered;
+        QListWidgetItem* keying = nullptr;
+        for (int i = 0; i < available->count(); ++i) {
+            QListWidgetItem* item = available->item(i);
+            if (item->data(Qt::UserRole).toString().startsWith(QStringLiteral("tx."))) {
+                offered << item->text();
+                QVERIFY(item->flags() & Qt::ItemIsEnabled);
+            }
+            if (item->data(Qt::UserRole).toString() == QStringLiteral("tx.keying")) {
+                keying = item;
+            }
+        }
+        QCOMPARE(offered.size(), 7);
+        QVERIFY(keying);
+        available->setCurrentItem(keying);
+
+        QPushButton* addButton = nullptr;
+        QPushButton* applyButton = nullptr;
+        for (QPushButton* button : dialog.findChildren<QPushButton*>()) {
+            if (button->toolTip() == QStringLiteral("Add the selected available item to the in-use list")) {
+                addButton = button;
+            }
+            if (button->text() == QStringLiteral("Apply")) {
+                applyButton = button;
+            }
+        }
+        QVERIFY(addButton && addButton->isVisible());
+        QVERIFY(applyButton);
+        addButton->click();
+        QCoreApplication::processEvents();
+        applyButton->click();
+        QCoreApplication::processEvents();
+
+        auto* copy = manager.container("A")->findChild<TxKeyingSection*>();
+        QVERIFY(copy);
+        QVERIFY(copy->tuneButton());
+        QVERIFY(copy->moxButton());
     }
 
     // ── 9. A copy gives itself the margins the applet's column gives ─────
