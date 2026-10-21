@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-20 to 2026-10-21
 **Author:** J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-**Status:** Decided, with one licence item open (section 11). Every ruling below was made by JJ on 2026-10-20 and 2026-10-21 against the mockups listed here. The smaller calls in section 13 were shown on the mockups and are listed for veto.
+**Status:** Decided. The licence item in section 11 was settled by JJ on 2026-10-21. Every ruling below was made by JJ on 2026-10-20 and 2026-10-21 against the mockups listed here. The smaller calls in section 13 were shown on the mockups and are listed for veto.
 **Base:** `origin/main` at `9a20b6b0c` (the phone app at 2026.10.1, PR 590). Every `file:line` below is on that tree.
 **Applies to:** the iPhone and iPad app under `ios/` and its Live Activity. The desktop does not change.
 **Mockups (approved):**
@@ -181,9 +181,11 @@ New requirements, numbered after `R-IOS-48` in `docs/architecture/2026-09-23-iph
 
 **Not covered here:** nothing in this work touches a command path, the link, audio or transmit behavior. A keyed PTT and UNKEY change color only; the plan's tests confirm no action or accessibility label changes.
 
-## 11. Licence (open: JJ's decision)
+## 11. Licence
 
-The phone's licence is the GPL with an App Store permission that "covers only code whose copyright holders have granted it" (`ios/LICENSE`, section 7 permission). The desktop's workspace tokens and treatments are cited to Longpath (OE5SOS, GPL-3; for example `WorkspacePalette.h:318-327`, `:348-369`, and the formulas in `WorkspaceComponents.cpp` marked "From Longpath src/gui/StyleConstants.h"). The 2026-10-09 audit of `ios/` treated a copied palette (the TubeMeter themes) as others' expression in the app. By the same reading, carrying this palette and its formulas into the phone needs OE5SOS's grant of the App Store permission, or another basis JJ chooses. The design does not depend on the answer, but the App Store build does: the plan's first task is this answer, and `scripts/verify-ios-provenance.py` learns Longpath's name so it flags the cites.
+The phone's licence is the GPL with an App Store permission that "covers only code whose copyright holders have granted it" (`ios/LICENSE:687`). The desktop's workspace tokens and treatments are cited to Longpath (OE5SOS, GPL-3; for example `WorkspacePalette.h:318-328`, `:348-369`, and the formulas in `WorkspaceComponents.cpp` marked "From Longpath src/gui/StyleConstants.h").
+
+**Ruled by JJ, 2026-10-21: "use them and carry on".** The phone carries the desktop's Longpath-derived tokens and treatments. `ios/Shared/WorkspacePalette.swift` keeps each value's Longpath cite exactly as `WorkspacePalette.h` has it, so where every value came from stays visible, and `scripts/verify-ios-provenance.py` learns Longpath's name so it reports those cites as known rather than unclassified.
 
 ## 12. Coordination
 
