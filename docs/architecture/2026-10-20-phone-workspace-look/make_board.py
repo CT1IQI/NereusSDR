@@ -33,6 +33,18 @@ REST_ORDER = ["First launch", "Pairing and connecting: the states in between", "
 # `python3 make_board.py lock` builds the third: the lock screen and the island, close up.
 LOCK_ORDER = ["The lock screen", "In another app"]
 
+# `python3 make_board.py more` builds the fourth: every other screen on the design board, in its order.
+MORE_ORDER = ["PTT overlay meter choices", "Diversity as a slice badge, new for review",
+              "The WIDE chip on the band, new for review",
+              "Receive level calibration and the preamp list, new for review",
+              "Taking control of a slice, new for review", "RADE on the VFO flag, new for review",
+              "The 3D spectrum view, new for review", "Settings backup and restore, new for review",
+              "Connection header and details preview", "Approved Connection and performance diagnostics layout",
+              "Moving the split, and the dBm scale's arrows", "Tuning on the band", "The Pan and Display buttons",
+              "Several devices: states and notices", "Several devices at once", "Transmit time-out",
+              "Long sessions", "A hardware PTT button", "Audio and data use", "FreeDV Reporter",
+              "iPad held upright", "The station's side"]
+
 # Old phone colour -> workspace colour. The first block is the desktop's own
 # legacy table (WorkspacePalette.cpp legacyRows); the rest are the phone's
 # extra values placed on the nearest role.
@@ -175,6 +187,9 @@ WS_EXTRA = """
   .tab[aria-current="page"] { color: #8fb4d9; }
   .af input[type="range"]::-webkit-slider-thumb { background: linear-gradient(180deg, #3a3a40, #222227); border: 1px solid #3d78b0; }
   .af input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, #3d78b0 var(--p), #1f1f23 var(--p)); }
+  /* Setup switches when on are the desktop's checked blue (JJ, 2026-10-20). */
+  .scr .stog.is-on, .win .dtog.is-on { background: linear-gradient(180deg, #2f5f92, #1e3d5f); border-color: #3d78b0; color: #dbe9f8; }
+  .bkp-btn--go { background: linear-gradient(180deg, #2f5f92, #1e3d5f); border-color: #3d78b0; color: #dbe9f8; }
 """
 
 LOOK_PICK = "<script>window.WS_LOOK = /look=today/.test(location.search) ? 'today' : 'workspace';</script>\n"
@@ -222,6 +237,8 @@ def main():
     global OUT, KEEP_ORDER, TITLE
     if sys.argv[1:] == ["rest"]:
         OUT, KEEP_ORDER, TITLE = HERE / "workspace-board-rest.html", REST_ORDER, "The workspace look, the rest of the app"
+    elif sys.argv[1:] == ["more"]:
+        OUT, KEEP_ORDER, TITLE = HERE / "workspace-board-more.html", MORE_ORDER, "The workspace look, every other screen"
     elif sys.argv[1:] == ["lock"]:
         OUT, KEEP_ORDER, TITLE = HERE / "workspace-board-lock.html", LOCK_ORDER, "The workspace look, lock screen and island"
     lines = SRC.read_text().split("\n")
@@ -279,6 +296,10 @@ def main():
                   "'rgba(15, 15, 26, 0.784)'": "rgba(8, 8, 10, 0.78)"}
     for old, new in canvas_map.items():
         script = script.replace(old, "(window.WS_LOOK === 'today' ? %s : '%s')" % (old, new))
+    # SVG built as strings carries its colours in attributes.
+    for old in ("#1a2a3a", "#2a3948", "#3b5467"):
+        script = script.replace('stroke="%s"' % old,
+                                "stroke=\"' + (window.WS_LOOK === 'today' ? '%s' : '%s') + '\"" % (old, canvas_map["'%s'" % old]))
     # A button the desktop also has takes the desktop's colour for it: the
     # desktop lights SPEAKERS green (JJ, 2026-10-20).
     script = script.replace("grid(2, 'is-blue', ['SPEAKERS', 'PHONES']",

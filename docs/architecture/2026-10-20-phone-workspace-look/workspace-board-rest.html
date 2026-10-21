@@ -17148,6 +17148,9 @@
   .tab[aria-current="page"] { color: #8fb4d9; }
   .af input[type="range"]::-webkit-slider-thumb { background: linear-gradient(180deg, #3a3a40, #222227); border: 1px solid #3d78b0; }
   .af input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, #3d78b0 var(--p), #1f1f23 var(--p)); }
+  /* Setup switches when on are the desktop's checked blue (JJ, 2026-10-20). */
+  .scr .stog.is-on, .win .dtog.is-on { background: linear-gradient(180deg, #2f5f92, #1e3d5f); border-color: #3d78b0; color: #dbe9f8; }
+  .bkp-btn--go { background: linear-gradient(180deg, #2f5f92, #1e3d5f); border-color: #3d78b0; color: #dbe9f8; }
 </style><script>document.querySelectorAll('style[data-look]').forEach(function (st) {st.disabled = st.dataset.look !== window.WS_LOOK; });</script>
 
 
@@ -28044,7 +28047,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       var values = latency ? [40,41,39,43,45,42,41,44,48,46,42,43,40,41,42] : [17,18,17,19,22,20,18,17,19,21,20,18,17,19,18];
       var ceiling = latency ? 80 : 40;
       var points = values.map(function (v, i) { return (32 + i * 21).toFixed(1) + ',' + (88 - v / ceiling * 70).toFixed(1); }).join(' ');
-      host.innerHTML = '<svg viewBox="0 0 346 118" xmlns="http://www.w3.org/2000/svg"><path d="M32 18H326M32 53H326M32 88H326" fill="none" stroke="#2a3948"/><text x="0" y="22">' + ceiling + (latency ? ' ms' : '%') + '</text><text x="12" y="92">0</text><polyline points="' + points + '" fill="none" stroke="#57bfd6" stroke-width="2"/><text x="32" y="108">60 seconds ago</text><text x="326" y="108" text-anchor="end">Now</text></svg>';
+      host.innerHTML = '<svg viewBox="0 0 346 118" xmlns="http://www.w3.org/2000/svg"><path d="M32 18H326M32 53H326M32 88H326" fill="none" stroke="' + (window.WS_LOOK === 'today' ? '#2a3948' : '#2c2c31') + '"/><text x="0" y="22">' + ceiling + (latency ? ' ms' : '%') + '</text><text x="12" y="92">0</text><polyline points="' + points + '" fill="none" stroke="#57bfd6" stroke-width="2"/><text x="32" y="108">60 seconds ago</text><text x="326" y="108" text-anchor="end">Now</text></svg>';
     });
     p.place();
   });
@@ -28100,7 +28103,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     var display=displayUnit(chart),factor=display.factor;
     var displayMax=Math.ceil(maximum/factor),axisTop=displayMax*factor;
     var axisLabel=display.unit==='% real time'?displayMax+'%':displayMax+' '+display.unit;
-    var out='<svg class="diag-svg" viewBox="0 0 330 104" role="img" aria-label="Example '+safe(chart.title)+' history chart over '+safe(range||'1 min')+' with a visible data gap"><path d="M37 10H320M37 48H320M37 86H320" fill="none" stroke="#3b5467"/><text x="1" y="13">'+axisLabel+'</text><text x="5" y="90">0</text><text x="37" y="101">'+safe(range||'1 min')+' ago</text><text x="320" y="101" text-anchor="end">Now</text>';
+    var out='<svg class="diag-svg" viewBox="0 0 330 104" role="img" aria-label="Example '+safe(chart.title)+' history chart over '+safe(range||'1 min')+' with a visible data gap"><path d="M37 10H320M37 48H320M37 86H320" fill="none" stroke="' + (window.WS_LOOK === 'today' ? '#3b5467' : '#3d3d41') + '"/><text x="1" y="13">'+axisLabel+'</text><text x="5" y="90">0</text><text x="37" y="101">'+safe(range||'1 min')+' ago</text><text x="320" y="101" text-anchor="end">Now</text>';
     if(chart.reference){var ry=86-76*chart.reference/axisTop;out+='<path d="M37 '+ry+'H320" stroke="#f6bf73" stroke-dasharray="3 3"/><text x="316" y="'+(ry+13)+'" text-anchor="end">100% Cannot keep up</text>';}
     plotted.forEach(function(s){var v=s.value;var points=[];for(var n=0;n<15;n++){var wobble=1+(Math.sin(n*0.9+s.i)*0.1);points.push((38+n*20)+','+(86-76*v*wobble/axisTop).toFixed(1));}var color=colors[s.i%colors.length];out+='<polyline points="'+points.slice(0,7).join(' ')+'" fill="none" stroke="'+color+'" stroke-width="2"/>'+(stale&&fromCore(chart,s.name)?'':'<polyline points="'+points.slice(9).join(' ')+'" fill="none" stroke="'+color+'" stroke-width="2"/>');});
     out+='<text x="163" y="79" text-anchor="middle">gap</text></svg>';
@@ -34994,7 +34997,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     function deskPan(state) {
       var live = 'B';
       var html = ['<div class="dvr-dwin"><div class="dvr-dtitle">Panadapter 1 · 40m</div><div class="dvr-dpan">',
-        '<svg class="dvr-dspec" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"><g stroke="#1a2a3a" stroke-width="1">' +
+        '<svg class="dvr-dspec" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"><g stroke="' + (window.WS_LOOK === 'today' ? '#1a2a3a' : '#1a1a1e') + '" stroke-width="1">' +
         [60, 120, 180, 240].map(function (y) { return '<path d="M0 ' + y + 'H900"/>'; }).join('') +
         [150, 300, 450, 600, 750].map(function (x) { return '<path d="M' + x + ' 0V300"/>'; }).join('') +
         '</g><polyline points="' + SPEC + '" fill="none" stroke="#c8d8e8" stroke-width="1.2"/></svg>',
