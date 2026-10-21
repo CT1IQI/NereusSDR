@@ -13,6 +13,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain applet source explanations by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-20 - Integer and Color controls for declared content properties.
+//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 #include "ContentPropertyEditor.h"
 #include "ContainerSettingsDialog.h"
 #include "meter_property_editors/BaseItemEditor.h"
@@ -156,6 +158,34 @@ QWidget* ContentPropertyEditor::declaredControl(const ContentProperty& p, QWidge
             publish();
         });
         widget=edit;
+    } else if(p.kind==ContentProperty::Kind::Integer) {
+        auto* spin=new QSpinBox(parent);
+        const int low=p.minimum;
+        const int high=qMax(low, p.maximum);
+        spin->setRange(low, high);
+        spin->setValue(value.toInt(p.defaultValue.toInt(low)));
+        if(!p.suffix.isEmpty()) {spin->setSuffix(p.suffix);}
+        connect(spin,qOverload<int>(&QSpinBox::valueChanged),this,[this,key=p.key](int chosen){
+            m_entry.config[key]=chosen; publish();
+        });
+        widget=spin;
+    } else if(p.kind==ContentProperty::Kind::Color) {
+        auto* choose=new QPushButton(parent);
+        choose->setAutoDefault(false);
+        QString hex=value.toString();
+        if(hex.isEmpty()) {hex=p.defaultValue.toString();}
+        const QColor parsed(hex);
+        hex=parsed.isValid()?parsed.name(QColor::HexRgb):QStringLiteral("#d8a55f");
+        choose->setText(hex);
+        connect(choose,&QPushButton::clicked,this,[this,choose,key=p.key]{
+            const QColor picked=QColorDialog::getColor(QColor(choose->text()),this,tr("Font color"));
+            if(!picked.isValid()) {return;}
+            const QString chosen=picked.name(QColor::HexRgb);
+            choose->setText(chosen);
+            m_entry.config[key]=chosen;
+            publish();
+        });
+        widget=choose;
     } else {
         auto* combo=new QComboBox(parent);
         for(const auto& choice:p.choices) {
