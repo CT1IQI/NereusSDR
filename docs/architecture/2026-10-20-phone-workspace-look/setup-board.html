@@ -222,6 +222,7 @@ body.blue .ws .sw.on i{background:linear-gradient(#dbe9f8,#a9c4df)}
     <li>Section names in the desktop's group-title grey, like the titles on the desktop's Setup group boxes.</li>
     <li>A picked choice gets the desktop's blue glass selection, the same as a picked mode on the flag. The check mark stays, so the choice still reads without color.</li>
     <li>Switches when on: blue, the same as a ticked box in the desktop's Setup (JJ, 2026-10-20). Green stays for a DSP function that is running. A switch that can't be used right now stays in place, greyed, with the reason under it.</li>
+    <li>iPad: the Setup list sits on the left and the open page beside it, as in the desktop's Setup window (JJ, 2026-10-20). An iPhone, or an iPad sharing its screen narrowly, keeps the single list with pages that slide in.</li>
     <li>Numbers sit in the desktop's dark inset field. Tapping one still opens the number pad at the foot of the tab, as today.</li>
     <li>Kept as they are: the iPhone's back button and big page title, swipe back from the left edge, the Core / This phone / Both marks (restyled as chips), and every word on every page.</li>
   </ul>
@@ -350,7 +351,7 @@ for(const sc of SCREENS){
 }
 
 // The iPad: today Setup is the same single list as the phone, stretched to the
-// window. The third frame is an option: the list beside the page, as the
+// window. The third frame is the chosen layout: the list beside the page, as the
 // desktop's Setup window has its tree beside the page.
 const CATS=['Devices','General','Hardware','PA','Audio','DSP','Display','Transmit','Appearance','CAT & Network','Test','Diagnostics','About this app'];
 const CATTAG={'Devices':'Core','General':'Both','Hardware':'Core','PA':'Core','Audio':'Both','DSP':'Core','Display':'Both','Transmit':'Both','Appearance':'This phone','CAT & Network':'Both','Test':'Core','Diagnostics':'Both','About this app':'This phone'};
@@ -367,11 +368,11 @@ function ipad(look,split){
   }else{
     inner=`<div class="body wide">${pageHTML(agc,look)}<div style="height:24px"></div></div>`;
   }
-  return `<div class="col ${look}"><h3>${look==='today'?'Today':split?'Workspace, option: the list beside the page':'Workspace, as today: one list, pushed pages'}</h3><div class="ipad"><div class="scr"><div class="status"><span>9:41 Tue Oct 20</span><span>●●● ▮</span></div>${inner}${tabbar}<div class="homebar"></div></div></div></div>`;
+  return `<div class="col ${look}"><h3>${look==='today'?'Today':split?'Workspace, chosen: the list beside the page':'Workspace, as today: one list, pushed pages'}</h3><div class="ipad"><div class="scr"><div class="status"><span>9:41 Tue Oct 20</span><span>●●● ▮</span></div>${inner}${tabbar}<div class="homebar"></div></div></div></div>`;
 }
 {
   const d=document.createElement('section');d.className='screen';
-  d.innerHTML=`<h2>iPad, on its side</h2><p>Today the iPad shows Setup exactly as the phone does: one list, and a page slides in over it, stretched to the full width. The first two frames are that, today and in the workspace panels, with the page held to a readable width. The third is an option, not a decision: the categories stay on the left with the open category's pages under it, and the page sits beside them, as the desktop's Setup window has its tree beside the page. On a phone, and on an iPad sharing its screen narrowly, Setup stays one list either way.</p><div class="ipads">${ipad('today',0)}${ipad('ws',0)}${ipad('ws',1)}</div>`;
+  d.innerHTML=`<h2>iPad, on its side</h2><p>Today the iPad shows Setup exactly as the phone does: one list, and a page slides in over it, stretched to the full width. The first two frames are that, today and in the workspace panels, with the page held to a readable width. The third is the chosen layout (JJ, 2026-10-20): the categories stay on the left with the open category's pages under it, and the page sits beside them, as the desktop's Setup window has its tree beside the page. On a phone, and on an iPad sharing its screen narrowly, Setup stays one list either way.</p><div class="ipads">${ipad('today',0)}${ipad('ws',0)}${ipad('ws',1)}</div>`;
   root.appendChild(d);
 }
 document.addEventListener('click',e=>{
