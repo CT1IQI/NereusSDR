@@ -30,6 +30,9 @@ REST_ORDER = ["First launch", "Pairing and connecting: the states in between", "
               "Transmit stage meters, new for review", "Amps and tuner", "Spots",
               "When things aren't right"]
 
+# `python3 make_board.py lock` builds the third: the lock screen and the island, close up.
+LOCK_ORDER = ["The lock screen", "In another app"]
+
 # Old phone colour -> workspace colour. The first block is the desktop's own
 # legacy table (WorkspacePalette.cpp legacyRows); the rest are the phone's
 # extra values placed on the nearest role.
@@ -219,6 +222,8 @@ def main():
     global OUT, KEEP_ORDER, TITLE
     if sys.argv[1:] == ["rest"]:
         OUT, KEEP_ORDER, TITLE = HERE / "workspace-board-rest.html", REST_ORDER, "The workspace look, the rest of the app"
+    elif sys.argv[1:] == ["lock"]:
+        OUT, KEEP_ORDER, TITLE = HERE / "workspace-board-lock.html", LOCK_ORDER, "The workspace look, lock screen and island"
     lines = SRC.read_text().split("\n")
     text = "\n".join(lines)
     blocks = list(re.finditer(r"<style>(.*?)</style>", text, re.S))
