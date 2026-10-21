@@ -63,6 +63,43 @@ header p{margin:0 0 6px;color:var(--ink2);max-width:780px}
 .notes h2{color:var(--ink);font-size:18px;margin:0 0 8px}
 .notes li{margin:4px 0}
 
+/* number stepper, large type, iPad */
+.stepper{display:flex;flex:none}
+.stepper b{width:40px;height:30px;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:18px;cursor:pointer}
+.col .xl .big{font-size:36px}
+.col .xl .sec-h{font-size:19px}
+.col .xl .row .t{font-size:23px}
+.col .xl .row .d{font-size:18.5px}
+.col .xl .sec-f,.xl .helpline{font-size:17px}
+.col .xl .tag{font-size:13px}
+.col .xl .row.num,.xl .row.mrow{flex-wrap:wrap}
+.col .xl .row.num .txt,.xl .row.mrow .txt{flex:1 1 100%}
+.col .xl .row.num .field{flex:1;text-align:left;font-size:21px}
+.col .xl .row.mrow .menu{font-size:20px}
+.col .xl .stepper b{width:52px;height:40px;font-size:22px}
+.col .xl .row .v{font-size:21px}
+.col.ws .xl .row.num .field{padding:9px 12px}
+.ipads{display:flex;flex-direction:column;gap:30px}
+.ipad{width:1000px;max-width:100%;aspect-ratio:1180/820;border-radius:34px;padding:14px;background:#1b1b1f;box-shadow:0 0 0 1px #2c2c31,0 20px 50px rgba(0,0,0,.6)}
+.ipad .scr{border-radius:22px}
+.ipad .status{height:30px;align-items:center;font-size:13px;padding:0 22px}
+.ipad .tabbar{height:62px;justify-content:center;gap:56px}
+.ipad .homebar{width:180px}
+.split{flex:1;display:flex;min-height:0}
+.tree{width:300px;flex:none;overflow-y:auto;scrollbar-width:none}
+.tree .big{font-size:26px;padding:8px 16px 10px}
+.tree .row{padding:9px 12px;min-height:40px}
+.tree .row .t{font-size:15px}
+.tree .sub .row{padding-left:30px;min-height:36px}
+.tree .sub .row .t{font-size:14px;font-weight:400}
+.ws .tree{background:#0c0c0e;border-right:1px solid #1f1f23}
+.ws .tree .row.here{background:linear-gradient(#2f5f92,#1e3d5f);box-shadow:inset 0 0 0 1px #3d78b0;border-radius:7px;margin:0 6px}
+.ws .tree .row.here .t{color:#dbe9f8}
+.ws .tree .row.open .t{color:#dcdce1}
+.split .body{flex:1}
+.wide .sec,.wide .big,.wide .navbar{max-width:720px;margin-left:auto;margin-right:auto}
+.wide .sec{margin-bottom:20px}
+
 /* ---------- Today: stock iPhone grouped lists (as the captures show) ---------- */
 .today .scr{background:#000;color:#fff}
 .today .back{background:#1c1c1e;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
@@ -85,7 +122,10 @@ header p{margin:0 0 6px;color:var(--ink2);max-width:780px}
 .today .slider b{background:#0a84ff}
 .today .slider i{background:#fff}
 .today .helpline{color:#98989f}
-.today .field{color:#fff;background:#2c2c2e;border-radius:8px}
+.today .field{color:#4aa8d8;padding:6px 4px;min-width:0}
+.today .stepper{background:#2c2c2e;border-radius:9px;margin-left:6px}
+.today .stepper b{color:#fff}
+.today .stepper b+b{border-left:1px solid #48484a}
 .today .menu{color:#98989f}
 .today .chev{color:#5a5a5e}
 .today .v{color:#fff}
@@ -137,6 +177,8 @@ header p{margin:0 0 6px;color:var(--ink2);max-width:780px}
 .ws .field{color:#dcdce1;background:#050507;border:1px solid #232329;border-radius:7px}
 .ws .menu{color:#dcdce1;background:linear-gradient(#222227,#141417);border:1px solid #2c2c31;border-radius:7px}
 .ws .chev{color:#7e7e85}
+.ws .stepper{gap:6px;margin-left:6px}
+.ws .stepper b{background:linear-gradient(#222227,#141417);border:1px solid #2c2c31;border-radius:7px;color:#dcdce1}
 .ws .v{color:#dcdce1}
 .ws .tabbar{background:#0a0a0c;border-top:1px solid #1f1f23}
 .ws .tab{color:#7e7e85}
@@ -200,8 +242,8 @@ function rowHTML(r,look){
   case 'choice': return `<div class="row choice ${r.on?'picked':''}" data-group="${r.group}"><div class="txt"><div class="t" style="font-weight:600">${r.title}</div>${r.detail?`<div class="d">${r.detail}</div>`:''}</div><span class="check">${r.on?'✓':''}</span></div>`;
   case 'sw': return `<div class="row ${r.dis?'dim':''}"><div class="txt"><div class="t">${r.title}</div>${r.detail?`<div class="d">${r.detail}</div>`:''}</div><span class="sw ${r.on?'on':''} ${r.dis?'dis':''}"><i></i></span></div>`;
   case 'read': return `<div class="row"><div class="txt"><div class="t" style="opacity:.8">${r.title}</div></div><span class="v" style="font-weight:600">${r.value}</span></div>`;
-  case 'num': return `<div class="row"><div class="txt"><div class="t">${r.title}</div></div><span class="field">${r.value}</span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
-  case 'menu': return `<div class="row"><div class="txt"><div class="t">${r.title}</div></div><span class="menu">${r.value} <span class="chev">⌃⌄</span></span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
+  case 'num': return `<div class="row num"><div class="txt"><div class="t">${r.title}</div></div><span class="field">${r.value}</span><span class="stepper"><b>−</b><b>+</b></span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
+  case 'menu': return `<div class="row mrow"><div class="txt"><div class="t">${r.title}</div></div><span class="menu">${r.value} <span class="chev">⌃⌄</span></span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
   case 'slider': return `<div class="row" style="flex-wrap:wrap"><div class="txt" style="flex:1 1 100%;display:flex;justify-content:space-between"><span class="t">${r.title}</span><span class="v">${r.value}</span></div><div class="slider" data-min="${r.min}" data-max="${r.max}" data-unit="${r.unit||''}" style="margin:12px 6px 6px"><b style="width:${r.pct}%"></b><i style="left:${r.pct}%"></i></div></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
   }
 }
@@ -215,8 +257,8 @@ function pageHTML(s,look){
   return h;
 }
 
-function phone(s,look){
-  return `<div class="col ${look}"><h3>${look==='today'?'Today':'Workspace'}</h3><div class="phone"><div class="scr ${s.navy&&look==='today'?'navyscr':''}"><div class="island"></div><div class="status"><span>9:41</span><span>●●● ▮</span></div><div class="body ${s.navy?'navy':''}">${pageHTML(s,look)}<div style="height:24px"></div></div><div class="tabbar">${TABS.map(([n,svg])=>`<div class="tab ${n==='Setup'?'sel':''}"><svg viewBox="0 0 26 22">${svg}</svg>${n}</div>`).join('')}</div><div class="homebar"></div></div></div></div>`;
+function phone(s,look,xl){
+  return `<div class="col ${look}"><h3>${look==='today'?(xl?'Today (approximate)':'Today'):'Workspace'}</h3><div class="phone"><div class="scr ${xl?'xl':''} ${s.navy&&look==='today'?'navyscr':''}"><div class="island"></div><div class="status"><span>9:41</span><span>●●● ▮</span></div><div class="body ${s.navy?'navy':''}">${pageHTML(s,look)}<div style="height:24px"></div></div><div class="tabbar">${TABS.map(([n,svg])=>`<div class="tab ${n==='Setup'?'sel':''}"><svg viewBox="0 0 26 22">${svg}</svg>${n}</div>`).join('')}</div><div class="homebar"></div></div></div></div>`;
 }
 
 const CORE_NOTE="Core settings are shared by every device paired with the Core, KG4VCF/shack. Settings marked This phone stay on this phone.";
@@ -295,11 +337,41 @@ const SCREENS=[
  {h:"Devices",p:"Devices is already in the navy chrome today, so it is a recolor like the rest of the app rather than a move.",
   s:{title:"Devices",back:1,tag:'Core',navy:1,custom:devices}},
 ];
+SCREENS.splice(5,0,
+ {h:"Navigation, large type",xl:1,p:"The largest accessibility text size. Titles and their lines wrap; a switch keeps its place on the right; the page scrolls. The left phone is drawn from how standard iPhone lists grow, not captured.",s:null},
+ {h:"AGC/ALC, large type",xl:1,p:"At this size a number's value and its minus and plus move under its label, and a menu's value under its name, so nothing is squeezed or cut off. Tapping the value still opens the number pad.",s:null});
+SCREENS[5].s=SCREENS.find(x=>x.h==='Navigation').s; SCREENS[6].s=SCREENS.find(x=>x.h==='A Core page: DSP, AGC/ALC').s;
 
 const root=document.getElementById('screens');
 for(const sc of SCREENS){
   const d=document.createElement('section');d.className='screen';
-  d.innerHTML=`<h2>${sc.h}</h2><p>${sc.p}</p><div class="pair">${phone(sc.s,'today')}${phone(sc.s,'ws')}</div>`;
+  d.innerHTML=`<h2>${sc.h}</h2><p>${sc.p}</p><div class="pair">${phone(sc.s,'today',sc.xl)}${phone(sc.s,'ws',sc.xl)}</div>`;
+  root.appendChild(d);
+}
+
+// The iPad: today Setup is the same single list as the phone, stretched to the
+// window. The third frame is an option: the list beside the page, as the
+// desktop's Setup window has its tree beside the page.
+const CATS=['Devices','General','Hardware','PA','Audio','DSP','Display','Transmit','Appearance','CAT & Network','Test','Diagnostics','About this app'];
+const CATTAG={'Devices':'Core','General':'Both','Hardware':'Core','PA':'Core','Audio':'Both','DSP':'Core','Display':'Both','Transmit':'Both','Appearance':'This phone','CAT & Network':'Both','Test':'Core','Diagnostics':'Both','About this app':'This phone'};
+const DSPPAGES=['AGC/ALC','NR/ANF','NB/SNB','CW','AM/SAM','FM','CFC','TNF','Filter Presets','Options'];
+function ipad(look,split){
+  const agc=SCREENS.find(x=>x.h==='A Core page: DSP, AGC/ALC').s;
+  const tabbar=`<div class="tabbar">${TABS.map(([n,svg])=>`<div class="tab ${n==='Setup'?'sel':''}"><svg viewBox="0 0 26 22">${svg}</svg>${n}</div>`).join('')}</div>`;
+  let inner;
+  if(split){
+    const tree=`<div class="tree"><div class="big">Setup</div><div class="sec" style="margin:0 8px 14px"><div class="group" style="background:none;border:0">${CATS.map(c=>
+      c==='DSP'?`<div class="row open"><div class="txt"><div class="t" style="font-weight:600">DSP</div></div>${tag('Core')}<span class="chev">⌄</span></div><div class="sub">${DSPPAGES.map(pg=>`<div class="row ${pg==='AGC/ALC'?'here':''}"><div class="txt"><div class="t">${pg}</div></div></div>`).join('')}</div>`
+      :`<div class="row"><div class="txt"><div class="t" style="font-weight:600">${c}</div></div>${tag(CATTAG[c])}<span class="chev">›</span></div>`).join('')}</div></div></div>`;
+    inner=`<div class="split">${tree}<div class="body wide">${pageHTML({...agc,back:0},look)}<div style="height:24px"></div></div></div>`;
+  }else{
+    inner=`<div class="body wide">${pageHTML(agc,look)}<div style="height:24px"></div></div>`;
+  }
+  return `<div class="col ${look}"><h3>${look==='today'?'Today':split?'Workspace, option: the list beside the page':'Workspace, as today: one list, pushed pages'}</h3><div class="ipad"><div class="scr"><div class="status"><span>9:41 Tue Oct 20</span><span>●●● ▮</span></div>${inner}${tabbar}<div class="homebar"></div></div></div></div>`;
+}
+{
+  const d=document.createElement('section');d.className='screen';
+  d.innerHTML=`<h2>iPad, on its side</h2><p>Today the iPad shows Setup exactly as the phone does: one list, and a page slides in over it, stretched to the full width. The first two frames are that, today and in the workspace panels, with the page held to a readable width. The third is an option, not a decision: the categories stay on the left with the open category's pages under it, and the page sits beside them, as the desktop's Setup window has its tree beside the page. On a phone, and on an iPad sharing its screen narrowly, Setup stays one list either way.</p><div class="ipads">${ipad('today',0)}${ipad('ws',0)}${ipad('ws',1)}</div>`;
   root.appendChild(d);
 }
 document.addEventListener('click',e=>{
