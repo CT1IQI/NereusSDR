@@ -84,11 +84,18 @@ A treatment is a token set applied to one kind of control. The phone gets one Sw
 | Inset | A number field, a meter's trough | `kInsetBg`, edge `kInsetBorder` | `WorkspacePalette.h:209`, `:214` |
 | Disabled | Any control that can't be used now | the same control at 40 percent, in place, with its reason under it | the phone's existing rule |
 
-Lit green and lit amber are computed by `shiftL` and `raisedFillOf`. The plan computes them once from the desktop's own functions and writes the results into the phone's token file as literals, with the formula in a comment beside them. The mockups used a sample of a desktop screenshot (`#2f6146` to `#1f412f`, rim `#3e7e5c`, text `#bbe1c6`); the computed values replace it.
+Lit green and lit amber are computed by `shiftL` and `raisedFillOf`. Computed with Qt's own HSL arithmetic, as `shiftL` does it (`src/gui/styles/WorkspaceStyle.cpp:211`), and written into the phone's token file as literals with the formula beside them:
+
+- Raised fill: top `shiftL(base, +16)`, `base` at 55 percent, bottom `shiftL(base, -12)` (`WorkspaceComponents.cpp:1710-1726`).
+- Lit green: `#306247`, `#254d38` at 55 percent, `#1d3d2c`; text `#bbe1c6`; rim `#3e7e5c`, its top edge `#48946b`.
+- Lit amber: `#4c3b16`, `#33280f` at 55 percent, `#20190a`; text `#d8a55f`; rim `#6b5426`, its top edge `#83672f`.
+- Glass rim's top edge: `#4d89c1`.
+
+The mockups used a sample of a desktop screenshot (`#2f6146` to `#1f412f`); the computed values replace it.
 
 ## 6. Where the colors live
 
-Today the phone's colors live in role files: `ChromeColours` (`ios/NereusApp/Main/ChromeColours.swift`, 82 values), `BandColours`, `DialColours`, `ActivityColours` (`ios/Shared/Activity/ActivityColours.swift`), `SpotColours`, `FreeDVColours`, `ConnectChrome`, `ConfirmationSheetChrome`, and literals in about 25 other view files (33 files in all carry a color literal).
+Today the phone's colors live in role files: `ChromeColours` (`ios/NereusApp/Main/ChromeColours.swift`, 82 values), `BandColours`, `DialColours`, `ActivityColours` (`ios/Shared/Activity/ActivityColours.swift`), `SpotColours`, `FreeDVColours`, `ConnectChrome`, `ConfirmationSheetChrome`, and loose literals in 31 other view files (39 files under `ios/NereusApp` and `ios/Shared` carry a color literal).
 
 **Design:**
 
@@ -98,7 +105,7 @@ Today the phone's colors live in role files: `ChromeColours` (`ios/NereusApp/Mai
 4. **Loose literals in view files move to a role.** A literal that is a data color (a spot's mode, a FreeDV Reporter row tint, a slice color, a meter scale's zone) stays where it is and is listed in the plan as kept.
 5. **The kept colors of W2 do not move** and get a test that pins them (section 10).
 
-Nothing in `NereusKit` changes: `BandRenderer` draws the spectrum and waterfall from the palettes W2 keeps.
+In `NereusKit`, only the band's ground changes. The desktop's workspace look draws the spectrum, the waterfall and the 3D view on `kAppBg` (`WorkspacePreview::dataBackground(..., "app-bg")`, `src/gui/SpectrumWidget.cpp:7301`, `:6910`, `:15652`) and keeps its frequency-scale strip `#101520` and dBm labels `#80a0b0` (`SpectrumWidget.cpp:7854`, `:8040`). So `BandRenderer.background` becomes `#08080a`, and the scale strip, the labels, the spectrum and waterfall palettes and the Display background color setting (`BandDisplaySettings.backgroundColour`, the desktop's `DisplayBackgroundColor`, whose default stays `#0A0A14` on both) do not change.
 
 ## 7. Setup
 
@@ -168,10 +175,10 @@ New requirements, numbered after `R-IOS-48` in `docs/architecture/2026-09-23-iph
 
 | ID | Requirement | Evidence |
 | --- | --- | --- |
-| R-IOS-49 | The phone's chrome colors are the desktop's workspace tokens (W1), by the roles in appendix A; no old navy hex remains in a role file or a view outside the kept data colors. | Software: a test that each role equals its token. A check (added to `scripts/`, run in `.github/workflows/ios.yml`) that no Swift file under `ios/` outside the listed kept files contains a hex from the old navy set. |
+| R-IOS-49 | The phone's chrome colors are the desktop's workspace tokens (W1), by the roles in appendix A; no old navy hex remains in a role file or a view outside the kept data colors. | Software: a test that each role equals its token. A check (added to `scripts/`, run in the `compliance` job of `.github/workflows/ci.yml` beside the iOS provenance check, with its own test in `tests/compliance/`) that no Swift file under `ios/` outside the listed kept files contains a hex from the old navy set. |
 | R-IOS-50 | The treatments of section 5, with radii 7 and 10, and lit green and amber equal to the desktop's computed values. | Software: style values against the tokens. Integration: the shot tests below. |
 | R-IOS-51 | Setup in the workspace panels: blue switches, inset numbers with − and +, raised menus, chip tags, disabled controls greyed in place with their reason, and the large-type layout of W9. | Integration: new Setup shot tests at the default size and at accessibility XL, compared with setup-board.html; a UI test that VoiceOver order and swipe to delete on the rotor page are unchanged. Device: JJ's phone at his own text size. |
-| R-IOS-52 | On a regular-width iPad, the Setup list beside the page; on a compact width, one list with pushed pages; Setup links from elsewhere open the page in the right place. | Integration: a UI test on an iPad simulator in full screen and in a narrow Split View; `IPadShotTests` extended with Setup. |
+| R-IOS-52 | On a regular-width iPad, the Setup list beside the page; on a compact width, one list with pushed pages; Setup links from elsewhere open the page in the right place. | Integration: a UI test on an iPad simulator in full screen, and the compact layout checked through the size class (a UI test cannot open Split View); `IPadShotTests` extended with Setup. Device: a narrow Split View on a real iPad. |
 | R-IOS-53 | The Live Activity colors of section 8, including the keyed card and UNKEY. | Integration: `LiveActivityShotTests` updated and compared with lock-board.html. Device: JJ's phone on the lock screen, in StandBy and in the island, keyed and listening. |
 | R-IOS-54 | The kept colors of W2 do not change. | Software: a test pinning the spectrum and waterfall palettes, band plan colors, slice color parsing and the frequency cyan. |
 
@@ -185,14 +192,14 @@ New requirements, numbered after `R-IOS-48` in `docs/architecture/2026-09-23-iph
 
 The phone's licence is the GPL with an App Store permission that "covers only code whose copyright holders have granted it" (`ios/LICENSE:687`). The desktop's workspace tokens and treatments are cited to Longpath (OE5SOS, GPL-3; for example `WorkspacePalette.h:318-328`, `:348-369`, and the formulas in `WorkspaceComponents.cpp` marked "From Longpath src/gui/StyleConstants.h").
 
-**Ruled by JJ, 2026-10-21: "use them and carry on".** The phone carries the desktop's Longpath-derived tokens and treatments. `ios/Shared/WorkspacePalette.swift` keeps each value's Longpath cite exactly as `WorkspacePalette.h` has it, so where every value came from stays visible, and `scripts/verify-ios-provenance.py` learns Longpath's name so it reports those cites as known rather than unclassified.
+**Ruled by JJ, 2026-10-21: "use them and carry on".** The phone carries the desktop's Longpath-derived tokens and treatments. `ios/Shared/WorkspacePalette.swift` keeps each value's Longpath cite exactly as `WorkspacePalette.h` has it, so where every value came from stays visible, and `scripts/verify-ios-provenance.py` adds Longpath and OE5SOS to the upstream names it refuses, with one allowance: they may appear only in the two workspace files under `ios/Shared/` that carry the palette and its treatments, citing this ruling. A Longpath cite anywhere else in `ios/` still fails.
 
 ## 12. Coordination
 
 - **The phone-display session** draws new phone screens; it uses these tokens and treatments, not the navy. The shared notes for the session group record the rulings.
 - **The Roundtable design** follows this look for its phone screens.
 - **Merge order:** this work touches nearly every phone view file. The plan lands it in steps, each leaving every screen in one look (never half navy and half workspace on one screen), and open phone branches merge main after each step.
-- **Docs the plan updates:** the R-IOS table (section 10), the App Store screenshots taken by `ios/AppStore/release-checklist.md`, the manual's and the website's phone images, and `CHANGELOG.md`.
+- **Docs the plan updates:** the R-IOS table (section 10), the App Store screenshots taken by `ios/AppStore/release-checklist.md`, the manual's and the website's phone images, and the release notes of the release that ships it (`CHANGELOG.md` is written at release time).
 
 ## 13. Settled calls, listed for veto
 
@@ -207,6 +214,7 @@ These were drawn on the mockups and not asked one at a time.
 7. A control on both apps takes the desktop's color for it (W3), which settles each shared button one by one in the plan from the desktop's own style for it.
 8. The muted phone speaker on the lock screen lights amber, as today, in lit amber.
 9. Text sizes stay as they are; the desktop's 11 pixel floor is not applied to the phone, which keeps iOS's Dynamic Type.
+10. The band's ground follows the desktop's workspace ground, `#08080a`; the frequency-scale strip and the dBm labels keep the desktop's `#101520` and `#80a0b0`, because the desktop kept them. The generated boards lightened the labels and darkened the strip; the desktop wins (W1).
 
 ## 14. Out of scope
 
