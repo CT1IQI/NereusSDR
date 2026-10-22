@@ -1023,6 +1023,65 @@ struct ModesTabBindingTests {
         await model.disconnect()
     }
 
+    @Test("during TUNE only the slider TUNE's drive source names is live; Tune Pwr idles greyed unless a source is the tune slider",
+          arguments: [Int64(0), 1, 2])
+    func driveSourceGateDuringTune(_ source: Int64) async throws {
+        let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
+        let transmit = model.main.transmit
+        #expect(await settle { transmit.settingsEditable(2) })
+        // Idle, both sources the drive slider (the Core's default): RF Power
+        // live, Tune Pwr greyed because neither source uses it.
+        #expect(transmit.rfPowerSourceReason == nil)
+        #expect(transmit.tunePowerSourceReason == TransmitModel.neitherUsesTuneText)
+
+        await deliver(station, key: "transmit", property: "tuneDrivePowerSource", ordinal: 29,
+                      value: .enumeration(source))
+        #expect(await settle { transmit.tuneDrivePowerSource == source })
+        #expect(transmit.rfPowerSourceReason == nil)
+        #expect(transmit.tunePowerSourceReason
+                == (source == TransmitModel.tuneSliderSource ? nil : TransmitModel.neitherUsesTuneText))
+
+        await deliver(station, key: "transmit", property: "tune", ordinal: 1, value: .bool(true))
+        #expect(await settle { transmit.coreTune })
+        #expect(transmit.rfPowerSourceReason
+                == (source == TransmitModel.driveSliderSource ? nil : TransmitModel.tuneNotUsingText))
+        #expect(transmit.tunePowerSourceReason
+                == (source == TransmitModel.tuneSliderSource ? nil : TransmitModel.tuneNotUsingText))
+
+        await deliver(station, key: "transmit", property: "tune", ordinal: 1, value: .bool(false))
+        #expect(await settle { !transmit.coreTune })
+        #expect(transmit.rfPowerSourceReason == nil)
+        await model.disconnect()
+    }
+
+    @Test("during the two-tone test only the slider its drive source names is live, whatever TUNE's source",
+          arguments: [Int64(0), 1, 2])
+    func driveSourceGateDuringTwoTone(_ source: Int64) async throws {
+        let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
+        let transmit = model.main.transmit
+        #expect(await settle { transmit.settingsEditable(2) })
+        await deliver(station, key: "transmit", property: "twoToneDrivePowerSource", ordinal: 84,
+                      value: .enumeration(source))
+        #expect(await settle { transmit.twoToneDrivePowerSource == source })
+        // Idle: Tune Pwr is live while the two-tone source is the tune slider.
+        #expect(transmit.rfPowerSourceReason == nil)
+        #expect(transmit.tunePowerSourceReason
+                == (source == TransmitModel.tuneSliderSource ? nil : TransmitModel.neitherUsesTuneText))
+
+        // The fake's Core has its PureSignal object from the snapshot on.
+        await deliver(station, key: "pureSignal", property: "twoToneOn", ordinal: 2, value: .bool(true))
+        #expect(await settle { transmit.twoToneOn })
+        #expect(transmit.rfPowerSourceReason
+                == (source == TransmitModel.driveSliderSource ? nil : TransmitModel.twoToneNotUsingText))
+        #expect(transmit.tunePowerSourceReason
+                == (source == TransmitModel.tuneSliderSource ? nil : TransmitModel.twoToneNotUsingText))
+
+        await deliver(station, key: "pureSignal", property: "twoToneOn", ordinal: 2, value: .bool(false))
+        #expect(await settle { !transmit.twoToneOn })
+        #expect(transmit.rfPowerSourceReason == nil)
+        await model.disconnect()
+    }
+
     @Test("ATT, S-ATT and A-ATT, the Core's live range, a typed attenuation and RX1 preamp write stepAtt (I5, I6)")
     func attenuatorWays() async throws {
         let (model, station) = try await connected(catalogue: Self.hermesLite, frontEnd: true)
