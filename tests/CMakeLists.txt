@@ -6723,7 +6723,7 @@ if(Qt6WebSockets_FOUND)
 endif()
 
 # Longpath cf756d8b: receive audio and I/Q to an app that stops reading are
-# dropped once more than 256 kB wait for it, not queued without limit. A raw
+# dropped once 256 KiB or more waits for it, not queued without limit. A raw
 # socket does the handshake by hand and then reads nothing.
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_binary_backpressure)
