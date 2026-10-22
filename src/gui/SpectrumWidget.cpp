@@ -15436,7 +15436,7 @@ float SpectrumWidget::fftTraceShiftDb() const
 }
 
 // The trace and fill vertices renderGpuFrame() uploads, moved out of it
-// (Display pill plan Task 5). Since then the two colours below follow the
+// (Display pill plan Task 5). Since then the two colors below follow the
 // trace and fill colours, and the dBm floor and shift are the grid's
 // (Longpath PR 100): yFloor is fftTraceFloorNdc() of the spectrum area,
 // computed once per frame by the caller and shared with the peak hold.
@@ -15448,8 +15448,6 @@ void SpectrumWidget::buildFftTraceVertices(int n, float yFloor, bool buildFill,
     const float range  = m_dynamicRange;
     const float yBot = -1.0f;
     const float yTop = 1.0f;
-    // From Longpath src/gui/SpectrumWidget.cpp:11660 [@383f058]: the floor
-    // (yFloor) is the top of the band plan strip; the fill still reaches yBot.
 
     const float fa = m_fillAlpha;
     // From Longpath src/gui/SpectrumWidget.cpp:11665 [@383f058]
@@ -16328,6 +16326,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         QVector<float> fillVerts;
         // The trace's dBm floor, once per frame for the trace and the peak
         // hold (it measures the band plan strip's font).
+        // From Longpath src/gui/SpectrumWidget.cpp:11660 [@383f058]: the floor
+        // (yFloor) is the top of the band plan strip; the fill still reaches yBot.
         const float traceFloorNdc = fftTraceFloorNdc(specRect);
         buildFftTraceVertices(n, traceFloorNdc, buildFill, lineVerts, fillVerts);
 

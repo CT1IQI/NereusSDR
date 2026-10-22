@@ -1,10 +1,10 @@
 // Modification history (NereusSDR):
 //   2026-10-22  fftTraceFloorNdc(), fftTraceShiftDb() and
 //                 buildFftPeakVertices(), with their test seams, so the GPU
-//                 trace sits on its grid. Ported from Longpath (Martin
-//                 Fischer, OE5SOS; PR 100, c3ce95bf [@383f058]) by J.J.
-//                 Boyd (KG4VCF), with AI-assisted transformation via
-//                 Claude Code.
+//                 trace sits on its grid. After Longpath (Martin Fischer,
+//                 OE5SOS; PR 100, c3ce95bf [@383f058]) by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Claude
+//                 Code.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
