@@ -420,6 +420,12 @@ public slots:
     int txSampleRate() const override { return m_tx[0].samplingRate * 1000; }
 
 public:
+    // The connect watchdog's budget and the established stream's silence
+    // timeout: the values setSilenceTimeoutsForTest() replaces. Every build
+    // sees them, as the member initializers below use them.
+    static constexpr int kConnectTimeoutMs = 2000;
+    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
+
     // R-IOS-13, R-R3-42: the send path's counters since the last key.
     TxSendStats txSendStats() const override;
     // Radio codec: the ring's counters plus the port 1028 stream's.
@@ -682,8 +688,8 @@ private:
     bool m_linkLossLatched{false};
 
     // Connect watchdog budget — 2 s matches P1.
-    // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, by
-    // setSilenceTimeoutsForTest().)
+    // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, in the
+    // public section after txSampleRate().)
     int m_connectTimeoutMs{kConnectTimeoutMs};
     int m_establishedSilenceTimeoutMs{kEstablishedSilenceTimeoutMs};
 
@@ -1407,11 +1413,6 @@ public:
         m_baseOutboundPort = static_cast<int>(outboundBase);
         m_p2CustomPortBase = static_cast<int>(inputRoleBase);
     }
-
-    // The connect watchdog's budget and the established stream's silence
-    // timeout: the values setSilenceTimeoutsForTest() replaces.
-    static constexpr int kConnectTimeoutMs = 2000;
-    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
 
     // Compress only timer budgets; packet parsing and socket paths remain the
     // production implementations. Values are clamped away from zero so a
