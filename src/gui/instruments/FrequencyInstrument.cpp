@@ -103,7 +103,7 @@
 //   2026-10-20 - Display controls for Frequency (Custom): digit size,
 //                 colour, centering, and each slice line on its own.
 //                 Defaults leave the ported instrument unchanged.
-//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -125,6 +125,7 @@
 #include <QtMath>
 
 #include <cmath>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -215,7 +216,7 @@ constexpr double kGroupGapOfCell = 0.35;
 
 } // namespace
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:105 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:105 [@551576e3] [modified in NereusSDR]
 FrequencyInstrument::FrequencyInstrument(QWidget* parent)
     : QWidget(parent)
 {
@@ -301,7 +302,7 @@ FrequencyInstrument::FrequencyInstrument(QWidget* parent)
     refreshVfoRow();
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:194 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:194 [@551576e3] [modified in NereusSDR]
 QSize FrequencyInstrument::minimumSizeHint() const
 {
     // War {240, 74}, geraten statt gerechnet -- bei Style::kFontDisplay
@@ -381,7 +382,7 @@ QSize FrequencyInstrument::sizeHint() const
 
 // ── Die Ziffern ──────────────────────────────────────────────────────
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:257 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:257 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::buildDigits()
 {
     // Zweiter Aufruf (aus resizeEvent(), neue Schriftstufe): die alte
@@ -510,7 +511,7 @@ int FrequencyInstrument::digitRowWidthAt(int px)
     return w;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:378 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:378 [@551576e3] [modified in NereusSDR]
 int FrequencyInstrument::fittingDigitFontPx(int availableWidth) const
 {
     const int ceiling = m_fontCeiling > 0 ? m_fontCeiling : kMaxDigitFontPx;
@@ -521,7 +522,7 @@ int FrequencyInstrument::fittingDigitFontPx(int availableWidth) const
     return floor;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:386 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:386 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::resizeEvent(QResizeEvent* ev)
 {
     QWidget::resizeEvent(ev);
@@ -540,7 +541,7 @@ void FrequencyInstrument::resizeEvent(QResizeEvent* ev)
     refreshDigits();
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:401 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:401 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::refreshDigits()
 {
     const qint64 hz = static_cast<qint64>(std::llround(m_hz));
@@ -590,7 +591,7 @@ QString FrequencyInstrument::groupedText() const
     return out;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:449 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:449 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::refreshVfoRow()
 {
     // Beide Scheiben, die aktive hervorgehoben — Split ist damit ohne
@@ -910,7 +911,7 @@ void FrequencyInstrument::setContentCentered(bool on)
         if (on) {
             root->insertStretch(0, 1);
         } else if (root->count() > 0 && root->itemAt(0)->spacerItem() != nullptr) {
-            delete root->takeAt(0);
+            const std::unique_ptr<QLayoutItem> stretch(root->takeAt(0));
         }
     }
     if (m_vfoRow) {

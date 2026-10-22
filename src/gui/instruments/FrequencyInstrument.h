@@ -83,7 +83,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Display controls for Frequency (Custom): digit size,
 //                 colour, centering, and each slice line on its own.
-//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 // =================================================================
 
 #pragma once
@@ -211,9 +211,10 @@ private:
     /// zu bauen. Fuer resizeEvent() (welche Stufe passt?) und
     /// minimumSizeHint() (was braucht die kleinste Stufe wirklich?).
     static int digitRowWidthAt(int px);
-    /// Die groesste Stufe, die noch in availableWidth passt. The ceiling
-    /// is kMaxDigitFontPx, or the operator size when that size may still
-    /// shrink to the width.
+    /// Die groesste Stufe zwischen kMinDigitFontPx und kMaxDigitFontPx,
+    /// die noch in availableWidth passt.
+    // NereusSDR: Frequency (Custom). The ceiling is kMaxDigitFontPx, or the
+    // operator size when that size may still shrink to the width.
     int fittingDigitFontPx(int availableWidth) const;
     QString digitBrightColor() const;
     QString digitDimColor() const;

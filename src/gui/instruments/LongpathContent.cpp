@@ -66,7 +66,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Frequency (Custom) registers beside Frequency (Longpath)
 //                 and applies font size, colour, centering and the slice
-//                 lines from the entry config. J.J. Boyd (KG4VCF),
+//                 lines from the entry config. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 // =================================================================
 

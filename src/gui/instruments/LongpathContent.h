@@ -32,7 +32,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - longpath.frequencyCustom: a second frequency object with
 //                 font size, colour, centering, and each slice line.
-//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 // =================================================================
 
 #pragma once

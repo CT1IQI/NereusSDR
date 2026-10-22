@@ -29,7 +29,7 @@
 //   2026-10-11 - barFormsShowTheSameTextForNoReading. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Frequency (Custom) font, colour, centering and slice lines.
-//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>

@@ -16,7 +16,7 @@
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-20 - Integer and Color property kinds for Frequency (Custom).
-//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
