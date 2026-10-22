@@ -17,6 +17,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - TCI agc_gain sets and reads the AGC-T (SliceModel::rfGain,
+//                WDSP AGC top), as Thetis's handleAgcGain does through
+//                SetAgcT / GetAgcT (TCIServer.cs:5011-5026, console.cs:
+//                51803-51833 [v2.10.3.15]), instead of the AGC threshold
+//                point. After Longpath f1d0c181 (Martin Fischer, OE5SOS).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
 //                checkbox sum) are named by the XVTR label, and a slice's
 //                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
@@ -30085,14 +30092,25 @@ QString RadioModel::agcMode(int rx) const
     return QStringLiteral("MED");
 }
 
-// ── AGC gain (threshold) ────────────────────────────────────────────────────
+// ── AGC gain (TCI agc_gain = Thetis AGC-T = WDSP AGC top) ──────────────────
+//
+// From Thetis TCIServer.cs:5011-5026 [v2.10.3.15]: handleAgcGain clamps the
+// value to -20..120 and calls consoleThreadSafe.SetAgcT(rx + 1, gain); the
+// query answers GetAgcT(rx + 1). SetAgcT / GetAgcT (console.cs:51803-51833
+// [v2.10.3.15]) set and read the RF property, the ptbRF slider (AGC-T,
+// -20..120, console.designer.cs:3708-3709 [v2.10.3.15]) whose value goes to
+// WDSP SetRXAAGCTop. Here that value is SliceModel::rfGain, which the
+// rfGainChanged handler hands to RxChannel::setAgcTop. It is not
+// agcThreshold, the -160..+2 threshold point SetRXAAGCThresh takes; this
+// shim wrote that until 2026-10-22. Found by Longpath f1d0c181 (Martin
+// Fischer, OE5SOS).
 void RadioModel::setAgcGain(int rx, int gain)
 {
-    if (auto* s = sliceById(rx)) { s->setAgcThreshold(gain); }
+    if (auto* s = sliceById(rx)) { s->setRfGain(gain); }
 }
 int RadioModel::agcGain(int rx) const
 {
-    if (const auto* s = sliceById(rx)) { return s->agcThreshold(); }
+    if (const auto* s = sliceById(rx)) { return s->rfGain(); }
     return 0;
 }
 

@@ -15,10 +15,10 @@ License section below.
 |---|---|
 | Project | Longpath |
 | Repository | https://github.com/oe5sos/Longpath |
-| Revision | 551576e30c42731c6d51ce005c5f23ec38be391c (v0.6.7-1) |
+| Revision | 383f058991e9f6a2f5fdc8575a6476b530ab6081 (v0.8.0) |
 | Lineage | a fork of NereusSDR, renamed; rotor work since 2026-08-07 |
 | Primary author | Martin Fischer (OE5SOS) |
-| Local reference clone | `../Longpath/`, pinned at `551576e`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
+| Local reference clone | `../Longpath/`, pinned at `383f0589`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
 | Language | C++20 / Qt6 |
 | License | GPLv3 at project level (the project's LICENSE file) |
 
@@ -123,6 +123,12 @@ Derivation type:
 | `src/core/RadioDiscovery.cpp` | `src/core/RadioDiscovery.cpp` | 656-697 (`quietPollAttempt()`) at `@988fa77e` and `@2e967e3f`; 733-1018 (`scanAllNics()` to `finishScan()`) at `@279ab925` | `reference` | The NIC walk runs from the event loop instead of blocking in waitForReadyRead (Longpath PR 251, `279ab925`); the quiet-poll counter no longer resets on a readable poll, as Thetis (PR 10, `2e967e3f`); an attempt has a hard deadline (PR 9, `988fa77e`). Written for NereusSDR's structure: a poll window restarts on each readable event (Thetis's next Poll), the deadline has its own timer at 2 quiet budgets (Longpath: one extra poll window, checked per tick), a start during a walk joins it, test NIC and timing seams. Longpath's MainWindow change (PR 9) not taken. Date: 2026-10-22. |
 | `src/core/RadioDiscovery.h` | `src/core/RadioDiscovery.h` | 349-442 (the walk's state) at `@279ab925` | `reference` | Walk state members and the step functions; `ScanNic` and `ScanStats` are NereusSDR's. Date: 2026-10-22. |
 | `tests/tst_radio_discovery_probe.cpp` | `tests/tst_radio_discovery_scan_bound.cpp`; `tests/tst_suche_blockiert_den_start.cpp` | scan_bound 1-378 at `@1ca46ba2`; suche_blockiert 1-166 at `@279ab925` | `reference` | The flood, the frozen counter and the not-blocking cases, checked by counts rather than milliseconds (PR 267, `1ca46ba2`). NereusSDR's tests drive the real walk over a loopback fake radio; Longpath's drove the extracted loop. Date: 2026-10-22. |
+| `src/core/TciServer.cpp` | `src/core/TciServer.cpp` | 90-108, 154-158 (`rueckstauFrei()`), 597-604 (receive audio send), 4597-4600 (I/Q send), 1123-1135 (agc_gain broadcast) at `@383f058` | `port` | Receive audio and I/Q frames to an app with 256 kB or more already waiting are dropped (Longpath `cf756d8b`). `rueckstauFrei()` becomes `binaryBackpressureClear()` with its German comment verbatim and an English summary; applied at the at-once and receive-lane audio sends and the I/Q send. Drops are counted in `m_localBinaryBackpressureDrops` (NereusSDR) instead of `framesDropped`, which the text drain overwrites here. Longpath's spectrum send is not in NereusSDR. The agc_gain broadcast follows `rfGainChanged` (Longpath `f1d0c181`), checked against Thetis console.cs:28797 [v2.10.3.15]. Date: 2026-10-22. |
+| `src/models/RadioModel.cpp` | `src/models/RadioModel.cpp` | 15074-15096 (`setAgcGain()`, `agcGain()`) at `@383f058` | `reference` | TCI agc_gain routes to `rfGain`, the AGC-T (Longpath `f1d0c181`). Written from Thetis TCIServer.cs:5011-5026 and console.cs:51803-51833 [v2.10.3.15], which agree with Longpath. Date: 2026-10-22. |
+| `src/models/RadioModel.h` | `src/models/RadioModel.h` | 2315-2318 at `@383f058` | `reference` | The `setAgcGain` comment, reworded with the Thetis cites. Date: 2026-10-22. |
+| `src/models/SliceModel.cpp` | `src/models/SliceModel.cpp` | 1169-1183 (`setRfGain()`) at `@383f058` | `reference` | `setRfGain` clamps to -20..120, Thetis ptbRF (console.designer.cs:3708-3709 [v2.10.3.15]), as named constants. Date: 2026-10-22. |
+| `src/models/SliceModel.h` | `src/models/SliceModel.h` | 1471 at `@383f058` | `reference` | The `m_rfGain` range comment. Date: 2026-10-22. |
+| `tests/tst_tci_radio_model_shims.cpp` | `tests/tst_tci_radio_model_shims.cpp` | 206-236 (`agc_gain_routes_to_agc_top`) at `@383f058` | `reference` | The case checks `rfGain`, the readback and both range ends, as Longpath's does, and also that the threshold is left alone. Date: 2026-10-22. |
 
 NereusSDR-original files that use the palette but port nothing
 (QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h,
