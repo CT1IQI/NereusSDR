@@ -7009,7 +7009,7 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
-# + band + modeGroup). Five tests:
+# + band + modeGroup). Six tests:
 #   parsesSampleAdif (10 QSO bundled fixture, first/last callsigns
 #   resolve, SSB -> PHONE / CW -> CW group normalisation),
 #   emitsFinishedSignal (QSignalSpy waits parseFileAsync ->
@@ -7017,6 +7017,8 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 #   skipsHeaderSection (no <adif_ver> / <programid> leakage),
 #   handlesCaseInsensitiveTags (mixed-case <CALL> / <Call> /
 #   <call> + <EOR> / <eor> / <Eor> all parse),
+#   handlesTypeIndicatorTags (<CALL:6:S> / <FREQ:6:N> typed tags
+#   parse like plain ones; Longpath tests/tst_adif_parser.cpp [@383f058]),
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
