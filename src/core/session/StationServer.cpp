@@ -10,6 +10,10 @@
 //               meterReadingNs only to a peer that declared rxMeterStamps 1
 //               (fitPeerOnlyProperties; before coreBuildInfo). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21: TUNE's drive source: transmit's tuneDrivePowerSource is
+//               taken only from a peer that declared tuneDriveSource 1, so
+//               an older client's power slider no longer moves it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta for a
 //               minor-11 peer that declared firmwareBeta 1
 //               (RadioModel::firmwareBetaVersion). J.J. Boyd (KG4VCF),
@@ -1860,6 +1864,15 @@ constexpr const char* kRadioSpeakerWriteReason =
 // speaker properties is refused from a peer that is not sent them.
 constexpr const char* kCoreSpeakerWriteReason =
     "Update this app to change the Core speaker on this Core.";
+
+// PR 588 (JJ's decision, 2026-10-21): only Setup > Transmit > Power
+// changes TUNE's drive source, as in Thetis. A client from before that
+// rule sets transmit's tuneDrivePowerSource from its power sliders, so a
+// change of it is taken only from a peer that declared tuneDriveSource 1;
+// a write of the value the Core already has changes nothing and is taken.
+constexpr const char* kTuneDriveSourceFeature = "tuneDriveSource";
+constexpr const char* kTuneDriveSourceWriteReason =
+    "Update this app to change TUNE's drive source on this Core.";
 
 bool isCoreSpeakerProperty(const QByteArray& name)
 {
@@ -8298,6 +8311,19 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
         }
         if (radioWrite && isCoreSpeakerProperty(update.name) && !peerGetsCoreSpeaker(transport)) {
             refusals.insert(update.name, QString::fromLatin1(kCoreSpeakerWriteReason));
+            continue;
+        }
+        if (transmitObjectWrite && update.name == "tuneDrivePowerSource"
+            && !peerDeclares(transport, QByteArray(kTuneDriveSourceFeature), 1)
+            && !sameSettledValue(known->value, update.value)) {
+            refusals.insert(update.name, QString::fromLatin1(kTuneDriveSourceWriteReason));
+            // Once per session: a dragged slider writes it many times.
+            const auto peer = m_peers.find(peerKey(transport));
+            if (peer != m_peers.end() && !peer->tuneDriveSourceRefusalLogged) {
+                peer->tuneDriveSourceRefusalLogged = true;
+                qCInfo(lcStation) << "Refused tuneDrivePowerSource from" << peer->description
+                                  << ": its hello did not declare tuneDriveSource 1";
+            }
             continue;
         }
         if (!negotiated && (message.objectKey == "pureSignalSettings"
