@@ -25,6 +25,7 @@
 //  11. A copy made while receive only is locked like the applet's row.
 //  12. A remote window's 2-TONE copies follow the Core.
 //  13. A copy's Take transmit asks as the applet's own does.
+//  14. A preview of a row is inert.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -724,6 +725,63 @@ private slots:
         QCOMPARE(asked.count(), 2);
     }
 
+    // ── 14. A preview of a row is inert ──────────────────────────────────
+    // Container Settings builds previews of the rows it shows.  A preview
+    // must not key, take focus, follow the model or join the applet's rows.
+    void aPreviewOfARowIsInert()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QSignalSpy moxChanges(rm.moxController(), &MoxController::moxStateChanged);
+        QSignalSpy manualChanges(rm.moxController(), &MoxController::manualMoxChanged);
+        QSignalSpy asked(&applet, &TxApplet::takeTransmitRequested);
+
+        QWidget host;
+        auto* keying = qobject_cast<TxKeyingSection*>(
+            registry.createPreview(registry.makeEntry("tx.keying"), &host));
+        QVERIFY(keying && keying->moxButton() && keying->tuneButton());
+        for (QWidget* child : keying->findChildren<QWidget*>()) {
+            QVERIFY2(child->focusPolicy() == Qt::NoFocus, qPrintable(child->objectName()));
+            QVERIFY2(!child->isEnabled(), qPrintable(child->objectName()));
+        }
+
+        // Neither a click nor the keyboard toggles MOX or TUNE.
+        for (QPushButton* key : {keying->moxButton(), keying->tuneButton(),
+                                 keying->takeTransmitButton()}) {
+            key->click();
+            QVERIFY(!key->isChecked());
+            QTest::keyClick(key, Qt::Key_Space);
+            QVERIFY(!key->isChecked());
+        }
+        QCOMPARE(moxChanges.count(), 0);
+        QCOMPARE(manualChanges.count(), 0);
+        QCOMPARE(asked.count(), 0);
+        QVERIFY(!rm.moxController()->isMox());
+
+        // The preview is not one of the applet's rows: the gates and the
+        // model pushes pass it by.
+        const QString tip = keying->moxButton()->toolTip();
+        applet.setTransmitPermitted(false, QStringLiteral("Gated"));
+        QCOMPARE(keying->moxButton()->toolTip(), tip);
+        applet.setTransmitPermitted(true);
+        {
+            const QSignalBlocker block(keying->moxButton());
+            keying->moxButton()->setChecked(true);
+        }
+        applet.syncFromModel();
+        QVERIFY(keying->moxButton()->isChecked());
+
+        // A model change does not reach a preview.
+        auto* chain = qobject_cast<TxChainSection*>(
+            registry.createPreview(registry.makeEntry("tx.chain"), &host));
+        QVERIFY(chain && chain->levButton());
+        const bool shown = chain->levButton()->isChecked();
+        rm.transmitModel().setTxLevelerOn(!rm.transmitModel().txLevelerOn());
+        QCOMPARE(chain->levButton()->isChecked(), shown);
+    }
 private:
     // The titles the add-item menu's TX submenu offers, for a workspace over
     // this registry.  Empty when the workspace offers no TX rows.

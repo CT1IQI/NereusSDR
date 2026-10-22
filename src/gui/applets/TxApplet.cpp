@@ -468,6 +468,18 @@ void gateTransmitControl(QWidget* control, bool permitted, const QString& reason
     }
 }
 
+// A preview of a row (ContentRenderMode::Preview): it shows the row but can
+// change nothing.  Disabled, so neither a click nor a key toggles it, and
+// every control takes no focus, so the keyboard never reaches one.
+void makeRowInert(QWidget* row)
+{
+    row->setEnabled(false);
+    row->setFocusPolicy(Qt::NoFocus);
+    for (QWidget* child : row->findChildren<QWidget*>()) {
+        child->setFocusPolicy(Qt::NoFocus);
+    }
+}
+
 } // namespace
 
 TxApplet::TxApplet(RadioModel* model, QWidget* parent)
@@ -2301,9 +2313,13 @@ QMargins TxApplet::txCopyMargins() const
 // An independent copy of the MON row, for a container that holds the monitor
 // controls on their own. The applet wires it and keeps it, so the
 // transmit-permission gates reach it like they reach the applet's own.
-TxMonitorSection* TxApplet::createMonitorSection(QWidget* parent)
+TxMonitorSection* TxApplet::createMonitorSection(QWidget* parent, bool preview)
 {
     auto* s = new TxMonitorSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireMonitorSection(s);
     m_extraMonitorSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2765,11 +2781,15 @@ void TxApplet::wireChainSection(TxChainSection* s)
 // hold them on their own.  The applet makes each copy and wires it, so the
 // copy shows and sets the same state as the applet's own row.
 // ---------------------------------------------------------------------------
-TxPowerSection* TxApplet::createPowerSection(QWidget* parent)
+TxPowerSection* TxApplet::createPowerSection(QWidget* parent, bool preview)
 {
     auto* s = new TxPowerSection(parent, txRowSpacing(),
                                m_model ? m_model->mainPowerMeter() : nullptr,
                                txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wirePowerSection(s);
     m_extraPowerSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2787,9 +2807,13 @@ TxPowerSection* TxApplet::createPowerSection(QWidget* parent)
     return s;
 }
 
-TxFilterSection* TxApplet::createFilterSection(QWidget* parent)
+TxFilterSection* TxApplet::createFilterSection(QWidget* parent, bool preview)
 {
     auto* s = new TxFilterSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireFilterSection(s);
     m_extraFilterSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2807,9 +2831,13 @@ TxFilterSection* TxApplet::createFilterSection(QWidget* parent)
     return s;
 }
 
-TxChainSection* TxApplet::createChainSection(QWidget* parent)
+TxChainSection* TxApplet::createChainSection(QWidget* parent, bool preview)
 {
     auto* s = new TxChainSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireChainSection(s);
     m_extraChainSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2827,9 +2855,13 @@ TxChainSection* TxApplet::createChainSection(QWidget* parent)
     return s;
 }
 
-TxVoxSection* TxApplet::createVoxSection(QWidget* parent)
+TxVoxSection* TxApplet::createVoxSection(QWidget* parent, bool preview)
 {
     auto* s = new TxVoxSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireVoxSection(s);
     m_extraVoxSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2847,9 +2879,13 @@ TxVoxSection* TxApplet::createVoxSection(QWidget* parent)
     return s;
 }
 
-TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent)
+TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent, bool preview)
 {
     auto* s = new TxProcessingSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireProcessingSection(s);
     m_extraProcessingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
@@ -2867,9 +2903,13 @@ TxProcessingSection* TxApplet::createProcessingSection(QWidget* parent)
     return s;
 }
 
-TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent)
+TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent, bool preview)
 {
     auto* s = new TxKeyingSection(parent, txRowSpacing(), txCopyMargins());
+    if (preview) {
+        makeRowInert(s);
+        return s;
+    }
     wireKeyingSection(s);
     // The Take-transmit press is this applet's own signal, as the applet's
     // own row's is (buildUI).

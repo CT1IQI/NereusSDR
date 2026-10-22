@@ -417,13 +417,17 @@ public slots:
     // A second, independent copy of the MON row, for a container that holds
     // the monitor controls on their own. The applet wires it exactly as it
     // wires its own, so both show and set the same state.
-    TxMonitorSection* createMonitorSection(QWidget* parent);
-    TxPowerSection* createPowerSection(QWidget* parent);
-    TxFilterSection* createFilterSection(QWidget* parent);
-    TxChainSection* createChainSection(QWidget* parent);
-    TxVoxSection* createVoxSection(QWidget* parent);
-    TxProcessingSection* createProcessingSection(QWidget* parent);
-    TxKeyingSection* createKeyingSection(QWidget* parent);
+    //
+    // With `preview` (a container's ContentRenderMode::Preview) the copy is
+    // inert: built as the row is, but not wired, not one of the applet's
+    // rows, disabled and taking no focus, so it can change nothing.
+    TxMonitorSection* createMonitorSection(QWidget* parent, bool preview = false);
+    TxPowerSection* createPowerSection(QWidget* parent, bool preview = false);
+    TxFilterSection* createFilterSection(QWidget* parent, bool preview = false);
+    TxChainSection* createChainSection(QWidget* parent, bool preview = false);
+    TxVoxSection* createVoxSection(QWidget* parent, bool preview = false);
+    TxProcessingSection* createProcessingSection(QWidget* parent, bool preview = false);
+    TxKeyingSection* createKeyingSection(QWidget* parent, bool preview = false);
     // R-R3-49 (group A fix wave, M3): whether an RF Power move also writes
     // the tune drive source (tuneDrivePowerSource on the link), which a Core
     // takes from transmitSettingsVersion 5. MainWindow supplies false for an

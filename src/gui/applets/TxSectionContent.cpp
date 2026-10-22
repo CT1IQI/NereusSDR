@@ -12,6 +12,8 @@
 //                 container can hold the monitor controls (or any other row)
 //                 on their own.  The applet stays the wiring authority.
 //                 Brian Sutton, AI-assisted via OpenCode.
+//   2026-10-21 - A preview of a row (ContentRenderMode::Preview) is inert.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TxSectionContent.h"
@@ -39,6 +41,14 @@ inline constexpr auto kVoxType = "tx.vox";
 inline constexpr auto kProcessingType = "tx.processing";
 inline constexpr auto kKeyingType = "tx.keying";
 
+// Any mode but Live builds an inert row (ContainerContentRegistry.h:
+// "In ContentRenderMode::Preview the widget is inert"): it is not wired to
+// the model and is not one of the applet's rows.
+bool isPreview(ContentRenderMode mode)
+{
+    return mode != ContentRenderMode::Live;
+}
+
 } // namespace
 
 void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txApplet)
@@ -54,8 +64,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kMonitorType),
         {QLatin1String(kMonitorType), QStringLiteral("TX Monitor"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createMonitorSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createMonitorSection(parent, isPreview(mode)));
         });
 
     // The power rows: the forward-power and SWR gauges, the RF Power row and
@@ -63,8 +73,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kPowerType),
         {QLatin1String(kPowerType), QStringLiteral("TX Power"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createPowerSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createPowerSection(parent, isPreview(mode)));
         });
 
     // The TX bandpass filter rows: the low and high cutoff spinboxes and the
@@ -72,8 +82,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kFilterType),
         {QLatin1String(kFilterType), QStringLiteral("TX Filter"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createFilterSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createFilterSection(parent, isPreview(mode)));
         });
 
     // The TX chain rows: the LEV, EQ and CFC buttons and the TX Profile
@@ -81,8 +91,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kChainType),
         {QLatin1String(kChainType), QStringLiteral("TX Chain"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createChainSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createChainSection(parent, isPreview(mode)));
         });
 
     // The VOX rows: the [VOX] toggle, the threshold and hold sliders, their
@@ -90,8 +100,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kVoxType),
         {QLatin1String(kVoxType), QStringLiteral("TX VOX"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createVoxSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createVoxSection(parent, isPreview(mode)));
         });
 
     // The processing rows: the 2-TONE, PS-A and DUP buttons and the SWR
@@ -99,8 +109,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kProcessingType),
         {QLatin1String(kProcessingType), QStringLiteral("TX Processing"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createProcessingSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createProcessingSection(parent, isPreview(mode)));
         });
 
     // The keying rows: the TUNE and MOX buttons, the transmit-slice row, the
@@ -108,8 +118,8 @@ void registerTxSectionContent(ContainerContentRegistry& registry, TxApplet* txAp
     registry.registerWidgetFactory(
         QLatin1String(kKeyingType),
         {QLatin1String(kKeyingType), QStringLiteral("TX Keying"), false, true, {}},
-        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
-            return static_cast<QWidget*>(txApplet->createKeyingSection(parent));
+        [txApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return static_cast<QWidget*>(txApplet->createKeyingSection(parent, isPreview(mode)));
         });
 }
 
