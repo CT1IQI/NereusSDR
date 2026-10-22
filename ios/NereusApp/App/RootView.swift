@@ -59,6 +59,8 @@ struct RootView: View {
                 }
             }
         }
+        // Every switch in the app draws in the desktop's workspace look (W7).
+        .toggleStyle(WorkspaceSwitchStyle())
     }
 
     private var tabs: some View {

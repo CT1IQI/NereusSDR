@@ -777,13 +777,13 @@ struct ConnectionFlowShotTests {
         guard minY < bottom else {
             return nil
         }
-        // The strip's panel, rgb(0x0D, 0x1B, 0x28), opaque: the first row
+        // The strip's panel, `ConnectChrome.rowFill` #141418, opaque: the first row
         // with 400 pixels of it in a row (the band never draws that).
         for y in minY..<bottom {
             var run = 0
             for x in minX...maxX {
                 let (r, g, b) = pixels.at(x, y)
-                run = abs(Int(r) - 0x0D) <= 3 && abs(Int(g) - 0x1B) <= 3 && abs(Int(b) - 0x28) <= 3 ? run + 1 : 0
+                run = abs(Int(r) - 0x14) <= 3 && abs(Int(g) - 0x14) <= 3 && abs(Int(b) - 0x18) <= 3 ? run + 1 : 0
                 if run >= 400 {
                     return Pixels.Block(minX: max(0, minX - 6), maxX: min(pixels.width, maxX + 7),
                                         minY: max(0, minY - 6), maxY: y - 6)

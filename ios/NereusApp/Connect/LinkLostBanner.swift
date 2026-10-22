@@ -115,7 +115,7 @@ struct LinkLostBanner: View {
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(height: 50)
-        .background(ConnectChrome.rgb(0x0D, 0x1B, 0x28), in: RoundedRectangle(cornerRadius: 4))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.barBorder, lineWidth: 1))
         .frame(maxWidth: 360)
     }
@@ -145,13 +145,13 @@ struct LinkLostBanner: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(go ? Color.white : ConnectChrome.rgb(0xC8, 0xA8, 0xA8))
+                .foregroundStyle(go ? Color.white : ChromeColours.revokeText)
                 .padding(.horizontal, 14)
                 .frame(height: 38)
-                .background(go ? ChromeColours.buttonOnBlue : ConnectChrome.rgb(0x4A, 0x20, 0x20),
+                .background(go ? ChromeColours.buttonOnBlue : ChromeColours.revoke,
                             in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(go ? ChromeColours.buttonOnBlueBorder : ConnectChrome.rgb(0x6A, 0x30, 0x30),
+                    .strokeBorder(go ? ChromeColours.buttonOnBlueBorder : ChromeColours.revokeBorder,
                                   lineWidth: 1))
         }
         .buttonStyle(.plain)

@@ -117,7 +117,7 @@ struct FifthDeviceSheet: View {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 48)
-            .background(red ? ConnectChrome.rgb(0xD8, 0x38, 0x38) : ChromeColours.buttonOnBlue,
+            .background(red ? ConnectChrome.WideButton.stopFill : ChromeColours.buttonOnBlue,
                         in: RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)

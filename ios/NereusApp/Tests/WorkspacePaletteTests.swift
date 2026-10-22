@@ -101,6 +101,186 @@ struct WorkspacePaletteTests {
         }
     }
 
+    // MARK: The role files (R-IOS-49, appendix A)
+
+    /// The roles the plan names, each the token itself.
+    @Test func rolesPointAtTheTokens() {
+        typealias P = WorkspacePalette
+        let expected: [(String, Color, Color)] = [
+            ("ChromeColours.bar", ChromeColours.bar, P.statusBarBg),
+            ("ChromeColours.page", ChromeColours.page, P.appBg),
+            ("ChromeColours.text", ChromeColours.text, P.textPrimary),
+            ("ChromeColours.textDim", ChromeColours.textDim, P.textSecondary),
+            ("ChromeColours.accent", ChromeColours.accent, P.accentFill),
+            ("ChromeColours.linkLost", ChromeColours.linkLost, P.redBorder),
+            ("ChromeColours.gaugeRed", ChromeColours.gaugeRed, P.gaugeDanger),
+            ("ChromeColours.pttEdge", ChromeColours.pttEdge, P.txRed),
+            ("ChromeColours.noticeInfo", ChromeColours.noticeInfo, P.accentText),
+            ("BandColours.txAntenna", BandColours.txAntenna, P.txRed),
+            ("BandColours.levelHigh", BandColours.levelHigh, P.liveGreen),
+            ("DialColours.index", DialColours.index, P.accentFill),
+            ("ConnectChrome.pillOn", ConnectChrome.pillOn, P.liveGreen),
+            ("ConnectChrome.pillStale", ConnectChrome.pillStale, P.noticeWarn),
+            ("ConnectChrome.pillOff", ConnectChrome.pillOff, P.redBorder),
+            ("ConnectChrome.pillUnknown", ConnectChrome.pillUnknown, P.borderMuted),
+            // A treatment's role holds its flat middle color.
+            ("ChromeColours.buttonOnBlue", ChromeColours.buttonOnBlue, P.glassSelBot),
+            ("ChromeColours.iconOpenBackground", ChromeColours.iconOpenBackground, P.glassSelBot),
+            ("ChromeColours.sliceChosen", ChromeColours.sliceChosen, P.glassSelBot),
+            ("ChromeColours.buttonOnGreen", ChromeColours.buttonOnGreen, P.litGreenMid),
+            ("ChromeColours.buttonOnAmber", ChromeColours.buttonOnAmber, P.litAmberMid),
+            ("ChromeColours.button", ChromeColours.button, P.glassBtnBot),
+            ("ChromeColours.txRed", ChromeColours.txRed, P.txRed),
+        ]
+        for (name, role, token) in expected {
+            #expect(role == token, "\(name)")
+        }
+    }
+
+    /// Every role appendix A gives, at the appendix's workspace value (or a
+    /// treatment's flat middle color).
+    @Test func rolesHoldTheAppendixValues() {
+        let expected: [(String, Color, UInt32)] = [
+            ("ChromeColours.bar", ChromeColours.bar, 0x0A0A0C),
+            ("ChromeColours.barBorder", ChromeColours.barBorder, 0x1F1F23),
+            ("ChromeColours.text", ChromeColours.text, 0xDCDCE1),
+            ("ChromeColours.textBright", ChromeColours.textBright, 0xECECF0),
+            ("ChromeColours.textDim", ChromeColours.textDim, 0xA6A6AC),
+            ("ChromeColours.textFaint", ChromeColours.textFaint, 0x7E7E85),
+            ("ChromeColours.accent", ChromeColours.accent, 0x4A7BA8),
+            ("ChromeColours.icon", ChromeColours.icon, 0xC4C4CA),
+            ("ChromeColours.iconMuted", ChromeColours.iconMuted, 0x58585E),
+            ("ChromeColours.chip", ChromeColours.chip, 0x050507),
+            ("ChromeColours.linkUp", ChromeColours.linkUp, 0x4CAF6A),
+            ("ChromeColours.linkUpPulse", ChromeColours.linkUpPulse, 0x4CAF6A),
+            ("ChromeColours.linkUpText", ChromeColours.linkUpText, 0x6FA384),
+            ("ChromeColours.linkLost", ChromeColours.linkLost, 0xA86B6D),
+            ("ChromeColours.linkOffDot", ChromeColours.linkOffDot, 0x3D3D41),
+            ("ChromeColours.stationBorder", ChromeColours.stationBorder, 0x4A7BA8),
+            ("ChromeColours.page", ChromeColours.page, 0x08080A),
+            ("ChromeColours.revoke", ChromeColours.revoke, 0x3F2224),
+            ("ChromeColours.revokeBorder", ChromeColours.revokeBorder, 0x7A2C2E),
+            ("ChromeColours.revokeText", ChromeColours.revokeText, 0xF0DCDC),
+            ("ChromeColours.panelEdge", ChromeColours.panelEdge, 0x2C2C31),
+            ("ChromeColours.titleTop", ChromeColours.titleTop, 0x26262B),
+            ("ChromeColours.titleMiddle", ChromeColours.titleMiddle, 0x26262B),
+            ("ChromeColours.titleBottom", ChromeColours.titleBottom, 0x141417),
+            ("ChromeColours.titleBorder", ChromeColours.titleBorder, 0x0D0D0F),
+            ("ChromeColours.caption", ChromeColours.caption, 0x909096),
+            ("ChromeColours.button", ChromeColours.button, 0x141417),
+            ("ChromeColours.buttonBorder", ChromeColours.buttonBorder, 0x2C2C31),
+            ("ChromeColours.buttonOnBlue", ChromeColours.buttonOnBlue, 0x1E3D5F),
+            ("ChromeColours.buttonOnBlueBorder", ChromeColours.buttonOnBlueBorder, 0x3D78B0),
+            ("ChromeColours.buttonOnGreen", ChromeColours.buttonOnGreen, 0x254D38),
+            ("ChromeColours.buttonOnGreenBorder", ChromeColours.buttonOnGreenBorder, 0x3E7E5C),
+            ("ChromeColours.buttonOnGreenText", ChromeColours.buttonOnGreenText, 0xBBE1C6),
+            ("ChromeColours.buttonOnAmber", ChromeColours.buttonOnAmber, 0x33280F),
+            ("ChromeColours.buttonOnAmberBorder", ChromeColours.buttonOnAmberBorder, 0x6B5426),
+            ("ChromeColours.buttonOnAmberText", ChromeColours.buttonOnAmberText, 0xD8A55F),
+            ("ChromeColours.buttonOff", ChromeColours.buttonOff, 0x141417),
+            ("ChromeColours.buttonOffBorder", ChromeColours.buttonOffBorder, 0x232327),
+            ("ChromeColours.buttonOffText", ChromeColours.buttonOffText, 0x4E4E53),
+            ("ChromeColours.sliderTrack", ChromeColours.sliderTrack, 0x1F1F23),
+            ("ChromeColours.inset", ChromeColours.inset, 0x050507),
+            ("ChromeColours.insetBorder", ChromeColours.insetBorder, 0x232329),
+            ("ChromeColours.modesHead", ChromeColours.modesHead, 0x141418),
+            ("ChromeColours.sectionSubtitle", ChromeColours.sectionSubtitle, 0x7E7E85),
+            ("ChromeColours.notice", ChromeColours.notice, 0x08080A),
+            ("ChromeColours.noticeWarn", ChromeColours.noticeWarn, 0xA8853F),
+            ("ChromeColours.noticeInfo", ChromeColours.noticeInfo, 0x5E8DB8),
+            ("ChromeColours.sheet", ChromeColours.sheet, 0x121215),
+            ("ChromeColours.sheetBorder", ChromeColours.sheetBorder, 0x1F1F23),
+            ("ChromeColours.pttGround", ChromeColours.pttGround, 0x3F2224),
+            ("ChromeColours.pttEdge", ChromeColours.pttEdge, 0xC25A5C),
+            ("ChromeColours.pttText", ChromeColours.pttText, 0xE0A3A4),
+            ("ChromeColours.pttSub", ChromeColours.pttSub, 0xA86B6D),
+            ("ChromeColours.txRed", ChromeColours.txRed, 0xC25A5C),
+            ("ChromeColours.pttElsewhereGround", ChromeColours.pttElsewhereGround, 0x18181B),
+            ("ChromeColours.pttElsewhereEdge", ChromeColours.pttElsewhereEdge, 0x5A3A3C),
+            ("ChromeColours.pttElsewhereText", ChromeColours.pttElsewhereText, 0xA86B6D),
+            ("ChromeColours.pttElsewhereSub", ChromeColours.pttElsewhereSub, 0xA6A6AC),
+            ("ChromeColours.pttElsewhereAirSub", ChromeColours.pttElsewhereAirSub, 0xE0A3A4),
+            ("ChromeColours.txFilterFill", ChromeColours.txFilterFill, 0xFF783C),
+            ("ChromeColours.txPill", ChromeColours.txPill, 0xC25A5C),
+            ("ChromeColours.txPillBorder", ChromeColours.txPillBorder, 0xC25A5C),
+            ("ChromeColours.txPillText", ChromeColours.txPillText, 0xC25A5C),
+            ("ChromeColours.txPillStop", ChromeColours.txPillStop, 0xF0DCDC),
+            ("ChromeColours.gaugeNormal", ChromeColours.gaugeNormal, 0x4A7BA8),
+            ("ChromeColours.gaugeWarn", ChromeColours.gaugeWarn, 0xA8853F),
+            ("ChromeColours.gaugeRed", ChromeColours.gaugeRed, 0xA86B6D),
+            ("ChromeColours.refusalText", ChromeColours.refusalText, 0xE0A3A4),
+            ("BandColours.flagBackground", BandColours.flagBackground, 0x0A0A0C),
+            ("BandColours.text", BandColours.text, 0xDCDCE1),
+            ("BandColours.txAntenna", BandColours.txAntenna, 0xC25A5C),
+            ("BandColours.tab", BandColours.tab, 0x828288),
+            ("BandColours.txBadgeOff", BandColours.txBadgeOff, 0x1A1A1E),
+            ("BandColours.txBadgeOffBorder", BandColours.txBadgeOffBorder, 0x2C2C31),
+            ("BandColours.txBadgeOffText", BandColours.txBadgeOffText, 0x828288),
+            ("BandColours.txBadgeOn", BandColours.txBadgeOn, 0x3F2224),
+            ("BandColours.txBadgeOnBorder", BandColours.txBadgeOnBorder, 0xC25A5C),
+            ("BandColours.txBadgeOnText", BandColours.txBadgeOnText, 0xE0A3A4),
+            ("BandColours.buttonBorder", BandColours.buttonBorder, 0x69696D),
+            ("BandColours.levelTicks", BandColours.levelTicks, 0x828288),
+            ("BandColours.levelBackground", BandColours.levelBackground, 0x050507),
+            ("BandColours.levelBorder", BandColours.levelBorder, 0x2C2C31),
+            ("BandColours.levelLow", BandColours.levelLow, 0x4A7BA8),
+            ("BandColours.levelHigh", BandColours.levelHigh, 0x4CAF6A),
+            ("BandColours.zoomBackground", BandColours.zoomBackground, 0x202024),
+            ("BandColours.radeRow", BandColours.radeRow, 0x4A7BA8),
+            ("BandColours.radeGood", BandColours.radeGood, 0x6FA384),
+            ("BandColours.radeOff", BandColours.radeOff, 0x828288),
+            ("BandColours.radeMarginal", BandColours.radeMarginal, 0xE0E040),
+            ("BandColours.radeMode", BandColours.radeMode, 0xA78BFA),
+            ("BandColours.readoutBackground", BandColours.readoutBackground, 0x18181C),
+            ("BandColours.cursorBackground", BandColours.cursorBackground, 0x18181C),
+            ("BandColours.awayMarkBackground", BandColours.awayMarkBackground, 0x0A0A0C),
+            ("BandColours.awayMarkEdge", BandColours.awayMarkEdge, 0x58585E),
+            ("BandColours.awayMarkText", BandColours.awayMarkText, 0xA6A6AC),
+            ("DialColours.knob", DialColours.knob, 0x0A0A0C),
+            ("DialColours.gripLight", DialColours.gripLight, 0x46464A),
+            ("DialColours.gripMiddle", DialColours.gripMiddle, 0x2A2A2E),
+            ("DialColours.gripDark", DialColours.gripDark, 0x1C1C20),
+            ("DialColours.index", DialColours.index, 0x4A7BA8),
+            ("DialColours.buttonOn", DialColours.buttonOn, 0x1E3D5F),
+            ("DialColours.stepBackground", DialColours.stepBackground, 0x050507),
+            ("DialColours.sheet", DialColours.sheet, 0x0C0C0E),
+            // W5 wins over the board's table for a red that is not transmit.
+            ("ConnectChrome.bad", ConnectChrome.bad, 0xA86B6D),
+            ("ConnectChrome.badBorder", ConnectChrome.badBorder, 0xA86B6D),
+            ("ConnectChrome.badText", ConnectChrome.badText, 0xF0DCDC),
+            ("ConnectChrome.WideButton.stopFill", ConnectChrome.WideButton.stopFill, 0x7A2C2E),
+            ("ConnectChrome.WideButton.stopBorder", ConnectChrome.WideButton.stopBorder, 0xA86B6D),
+            ("ConnectChrome.rowFill", ConnectChrome.rowFill, 0x141418),
+        ]
+        for (name, color, value) in expected {
+            #expect(Self.shown(Self.hex(color)) == Self.shown(value), "\(name)")
+        }
+    }
+
+    /// No role outside the transmit set is the transmit red (W5).
+    @Test func onlyTransmitRolesAreTheTransmitRed() {
+        let transmit: Set<String> = ["ChromeColours.pttEdge", "ChromeColours.txRed", "ChromeColours.txPill",
+                                     "ChromeColours.txPillBorder", "ChromeColours.txPillText",
+                                     "BandColours.txAntenna", "BandColours.txBadgeOnBorder"]
+        let roles: [(String, Color)] = [
+            ("ChromeColours.pttEdge", ChromeColours.pttEdge), ("ChromeColours.txRed", ChromeColours.txRed),
+            ("ChromeColours.txPill", ChromeColours.txPill), ("ChromeColours.txPillBorder", ChromeColours.txPillBorder),
+            ("ChromeColours.txPillText", ChromeColours.txPillText), ("BandColours.txAntenna", BandColours.txAntenna),
+            ("BandColours.txBadgeOnBorder", BandColours.txBadgeOnBorder),
+            ("ChromeColours.linkLost", ChromeColours.linkLost), ("ChromeColours.gaugeRed", ChromeColours.gaugeRed),
+            ("ChromeColours.refusalText", ChromeColours.refusalText), ("ChromeColours.revoke", ChromeColours.revoke),
+            ("ConnectChrome.bad", ConnectChrome.bad), ("ConnectChrome.badBorder", ConnectChrome.badBorder),
+            ("ConnectChrome.badText", ConnectChrome.badText), ("ConnectChrome.pillOff", ConnectChrome.pillOff),
+            ("ConnectChrome.WideButton.stopFill", ConnectChrome.WideButton.stopFill),
+            ("ConnectChrome.WideButton.stopBorder", ConnectChrome.WideButton.stopBorder),
+            ("ConfirmationSheetChrome.refused", ConfirmationSheetChrome.refused),
+        ]
+        let red = Self.hex(WorkspacePalette.txRed)
+        for (name, color) in roles {
+            #expect((Self.hex(color) == red) == transmit.contains(name), "\(name)")
+        }
+    }
+
     /// Each slice letter's color as the Core sends it today (ControlRanges
     /// kSliceColours, src/core/ControlRanges.h:1041-1050), and the neutral
     /// grey for a slice the catalogue has no color for.
