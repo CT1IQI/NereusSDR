@@ -63,9 +63,11 @@ struct FifthDeviceSheet: View {
         .padding(.top, 8)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                        topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                   topTrailingRadius: WorkspacePalette.panelRadius)
                 .stroke(ConnectChrome.sheetEdge, lineWidth: 1)
         }
         .accessibilityIdentifier("fifthDeviceSheet")

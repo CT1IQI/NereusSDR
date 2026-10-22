@@ -22,9 +22,10 @@ enum FreeDVChrome {
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .padding(.bottom, 14)
-                .background(ChromeColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: 12,
-                                                                            topTrailingRadius: 12))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12)
+                .background(ChromeColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                            topTrailingRadius: WorkspacePalette.panelRadius))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                topTrailingRadius: WorkspacePalette.panelRadius)
                     .strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(identifier)

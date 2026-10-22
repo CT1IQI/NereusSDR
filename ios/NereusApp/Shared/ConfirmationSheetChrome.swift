@@ -47,7 +47,8 @@ enum ConfirmationSheetChrome {
             .padding(.horizontal, 18)
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+            .background(sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                              topTrailingRadius: WorkspacePalette.panelRadius))
             .overlay(alignment: .top) {
                 Rectangle().fill(sheetEdge).frame(height: 1)
             }

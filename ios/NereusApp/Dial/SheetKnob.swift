@@ -45,9 +45,11 @@ struct SheetKnob: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
-        .background(DialColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(DialColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                  topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                   topTrailingRadius: WorkspacePalette.panelRadius)
                 .strokeBorder(DialColours.sheetBorder, lineWidth: 1)
                 .mask(Rectangle().frame(height: 14).frame(maxHeight: .infinity, alignment: .top))
         }
