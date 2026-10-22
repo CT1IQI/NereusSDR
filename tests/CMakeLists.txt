@@ -10370,6 +10370,9 @@ nereus_add_test(tst_remote_fft_production)
 # Remote Daemon R3, Task 4: endpoint state, tier switching, frame reduction,
 # cadence, compression, and bounded DSS wide-row composition.
 nereus_add_test(tst_spectrum_endpoint)
+# Steady waterfall row times at the source: frames are stamped with the time
+# of their samples, and the engine's frame positions and 5 ms skips.
+nereus_add_test(tst_spectrum_sample_clock)
 nereus_add_test(tst_wideband_display_context)
 
 # Remote Daemon R3 GUI receive seam: decoded remote spectrum reaches the

@@ -1557,6 +1557,7 @@ set(CORE_SOURCES
     src/core/session/media/DisplayLoadGovernor.cpp
     src/core/session/media/DssWideRow.cpp
     src/core/session/media/SpectrumEndpoint.cpp
+    src/core/session/media/SpectrumSampleClock.cpp
     src/core/session/media/WidebandDisplayContext.cpp
     # R2 Task 20: where a GUI process gets its station address and token
     # from. A plain value struct plus one URL rule; deliberately carries no
