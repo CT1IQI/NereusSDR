@@ -106,8 +106,8 @@ struct JumpBar: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(colour).frame(width: 3)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Self.edge, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.edge, lineWidth: 1))
         .fixedSize(horizontal: true, vertical: false)
         .offset(x: sideways ? Self.sidewaysInset : Self.inset, y: Self.inset)
         .accessibilityElement(children: .contain)
