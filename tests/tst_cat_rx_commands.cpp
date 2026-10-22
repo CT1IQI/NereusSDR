@@ -6,6 +6,11 @@
 //            nonzero width, as the slice now constrains filters (Thetis
 //            ConstrainFilter). J.J. Boyd (KG4VCF), with AI-assisted
 //            transformation via Claude Code.
+// 2026-10-22 filterRepliesFollowTheConstraint: ZZSF/ZZFL replies after a
+//            clamp, the 10 Hz minimum width and a readback at the cap; two
+//            SH cases expect the 10 Hz minimum width (110, was 0).
+//            J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//            Claude Code.
 #include <QtTest>
 #define private public
 #include "core/MoxController.h"
@@ -254,7 +259,9 @@ private slots:
     CatGlobalConfig global=service.globalConfig(); global.rttyOffsetAEnabled=true; QVERIFY(service.applyGlobalConfig(global));
     QSignalSpy notification(&service,&CatService::globalConfigurationChanged);
     QCOMPARE(service.processFrame(id,"ZZRAV;"),QByteArray()); QVERIFY(service.globalConfig().rttyOffsetAEnabled); QCOMPARE(notification.count(),0);
-    QCOMPARE(service.processFrame(id,"SHV0;"),QByteArray()); QCOMPARE(model.sliceById(0)->filterHigh(),0);
+    // A USB high edge of 0 under the 100 Hz low edge is widened to 10 Hz
+    // (Thetis console.cs:7554 [v2.10.3.15]).
+    QCOMPARE(service.processFrame(id,"SHV0;"),QByteArray()); QCOMPARE(model.sliceById(0)->filterHigh(),110);
  }
  void modeCallbackDeletion_data() {
     QTest::addColumn<QByteArray>("command"); QTest::addColumn<bool>("wholeModel"); QTest::addColumn<int>("origin");
@@ -350,12 +357,31 @@ private slots:
         QCOMPARE(model.sliceById(0)->filterHigh(),value); QCOMPARE(model.sliceById(2)->filterHigh(),value);
     }
  }
+ void filterRepliesFollowTheConstraint() {
+    // A filter write the slice constrains still answers "": Thetis's ZZSF
+    // always does (CAT/CATCommands.cs:6247-6253 [v2.10.3.15]), and its
+    // UpdateRX1Filters widens and constrains the pair (console.cs:7544-7582).
+    RadioModel model; slices(model); const quint64 id=start(model); CatService& service=*model.catService();
+    SliceModel* slice=model.sliceById(0);
+    // Center 9000, width 4000 asks for 7000..11000; the slice keeps 7000..10000.
+    QCOMPARE(service.processFrame(id,"ZZSF90004000;"),QByteArray()); QCOMPARE(slice->filterLow(),7000); QCOMPARE(slice->filterHigh(),10000);
+    // A USB high edge at the cap does not fit four digits.
+    QCOMPARE(service.processFrame(id,"ZZFH;"),QByteArray("O;"));
+    // The low edge set to the high edge: widened to 10 Hz.
+    slice->setFilter(100,3000);
+    QCOMPARE(service.processFrame(id,"ZZFL+3000;"),QByteArray()); QCOMPARE(slice->filterLow(),3000); QCOMPARE(slice->filterHigh(),3010);
+    // Low edge past the cap with the high edge at it: refused, filter kept.
+    slice->setFilter(9000,10000);
+    QCOMPARE(service.processFrame(id,"ZZFL99999;"),QByteArray()); QCOMPARE(slice->filterLow(),9000); QCOMPARE(slice->filterHigh(),10000);
+ }
  void literalSourceModeAndNumericConversion() {
     RadioModel model; slices(model); const quint64 id=start(model); CatService& service=*model.catService();
     QCOMPARE(service.processFrame(id,"ZZME08;"),QByteArray("?;")); QCOMPARE(model.sliceById(2)->dspMode(),DSPMode::USB);
     for (const QByteArray& command : {QByteArray("ZZME+1;"),QByteArray("ZZME-0;"),QByteArray("ZZME99;"),QByteArray("ZZMD+1;")}) { QCOMPARE(service.processFrame(id,command),QByteArray()); }
     QCOMPARE(model.sliceById(0)->dspMode(),DSPMode::USB); QCOMPARE(model.sliceById(2)->dspMode(),DSPMode::USB);
-    QCOMPARE(service.processFrame(id,"SH+1;"),QByteArray()); QCOMPARE(model.sliceById(0)->filterHigh(),0);
+    // A USB high edge of 0 under the 100 Hz low edge is widened to 10 Hz
+    // (Thetis console.cs:7554 [v2.10.3.15]).
+    QCOMPARE(service.processFrame(id,"SH+1;"),QByteArray()); QCOMPARE(model.sliceById(0)->filterHigh(),110);
     for (const QByteArray& command : {QByteArray("ZZACV0;"),QByteArray("ZZADV0;"),QByteArray("ZZAU0v;"),QByteArray("ZZAEV0;")}) { QCOMPARE(service.processFrame(id,command),QByteArray("?;")); }
     QCOMPARE(model.sliceById(0)->frequency(),14074000.0); QCOMPARE(model.sliceById(0)->stepHz(),100);
  }

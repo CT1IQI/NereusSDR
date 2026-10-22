@@ -8,12 +8,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Thetis's 10 Hz minimum filter width (console.cs:7544-7567
+//                [v2.10.3.15]) before the constraint in setFilter,
+//                setDspMode and the layout restore; a constrained request
+//                whose stored pair did not move re-emits filterChanged so
+//                the views follow; filterForRequest for the CAT and Rigctl
+//                replies; a mode change or layout restore whose filter
+//                constrains to zero width keeps the previous filter (mode
+//                change) or takes the mode default (layout restore). J.J.
+//                Boyd (KG4VCF), with AI-assisted transformation via Claude
+//                Code.
 //   2026-10-22 - Filter edges constrained as Thetis's ConstrainFilter does
 //                (console.cs:35044-35131 [v2.10.3.15]) in setFilter,
 //                setFilterLow, setFilterHigh, setDspMode and the layout
 //                restore; setFilter refuses a zero-width filter
 //                (console.cs:7582); shiftFilter keeps the width. Placement
-//                in setFilter as Longpath does it (commit 6a5df5f1).
+//                in setFilter as Longpath does it (Longpath
+//                src/models/SliceModel.cpp:1110-1129 [@383f058]).
 //                Ported by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
 //   2026-10-22 - refreshAntennasFromAlex names RX-only 4 and 5 by the XVTR
@@ -237,6 +248,45 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From SliceModel.cpp (Longpath) ---
+// The constrained filter API (constrainFilter in setFilter) follows
+// Longpath src/models/SliceModel.cpp:511-630, 1110-1129 [@383f058]
+// (commit 6a5df5f1); the logic is ported from Thetis. Longpath's banner
+// for that file, byte for byte:
+// =================================================================
+// src/models/SliceModel.cpp  (Longpath)
+// =================================================================
+//
+// Ported from Thetis sources:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/display.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-09-27 — FM filter from the FM deviation: rx_fm_highcut from
+//                 radio.cs:1571 [@852bf0e]. Martin Fischer (OE5SOS),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-27 -- CW pitch follows live, by Martin Fischer (OE5SOS),
+//                 AI-assisted via Anthropic Claude, from Thetis
+//                 v2.10.3.15-5-g852bf0e: centreCwFilterOnPitch (loop body
+//                 of the console.cs CWPitch setter, image-limit slide),
+//                 followCwPitch, recentreStoredCwFilters, clampCwPitch;
+//                 CW pitch range 200..2250 (udCWPitch/udDSPCWPitch), one
+//                 read site instead of four.
+//   2026-09-28 -- Filter preset table Thetis-faithful, by Martin Fischer
+//                 (OE5SOS), AI-assisted via Anthropic Claude, from Thetis
+//                 v2.10.3.15-5-g852bf0e console.cs InitFilterPresets:
+//                 values and names (presetNamesForMode) for LSB/USB/DIGL/
+//                 DIGU/CWL/CWU/AM/SAM/DSB replace a table whose values no
+//                 Thetis release ever carried; DIGU/DIGL default F5 +-500
+//                 (was +-600 "1.2k", likewise never upstream); FM/SPEC/DRM
+//                 marked Longpath-own; unused commonPresetsForMode removed.
+// =================================================================
+
 #include <QPointer>
 #include "SliceModel.h"
 
@@ -260,6 +310,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace NereusSDR {
 
@@ -669,9 +720,18 @@ void SliceModel::setDspMode(DSPMode mode)
         high = m_filterHigh;
     }
     // A mode change reaches UpdateRX1Filters through SetRX1Mode's filter
-    // selection, so its filter is constrained for the new mode too
-    // (console.cs:7580 [v2.10.3.15]).
+    // selection, so its filter gets the minimum width and is constrained
+    // for the new mode too (console.cs:7544-7582 [v2.10.3.15]).
+    applyMinimumFilterWidth(low, high, mode);
     constrainFilter(low, high, mode, false, m_limitFiltersToSidebands);
+    // Thetis returns before the DSP when the result has no width, so the
+    // receiver keeps the filter it had (console.cs:7582 [v2.10.3.15]).
+    // [original inline comment from console.cs:7582]
+    // not a good idea to have a 0hz width filter
+    if (low == high) {
+        low = m_filterLow;
+        high = m_filterHigh;
+    }
     bool filterChanged = (m_filterLow != low || m_filterHigh != high);
     m_filterLow = low;
     m_filterHigh = high;
@@ -738,21 +798,81 @@ void SliceModel::setFilterHigh(int high)
 
 void SliceModel::setFilter(int low, int high)
 {
-    // From Thetis console.cs:7579-7582 [v2.10.3.15] (UpdateRX1Filters; the
-    // same at 7699-7702 in UpdateRX2Filters). Placement in setFilter, the
-    // path every slice filter change takes, as Longpath does it
-    // (src/models/SliceModel.cpp, commit 6a5df5f1).
+    // From Thetis console.cs:7544-7567 and 7579-7582 [v2.10.3.15]
+    // (UpdateRX1Filters; the same in UpdateRX2Filters from 7666), through
+    // filterForRequest.
+    // The FM case between them (7568-7574, its halfBw line tagged
+    // //[2.10.3.4]MW0LGE) is not ported; see applyMinimumFilterWidth.
+    // Placement in setFilter, the path every slice filter change takes:
+    // From Longpath src/models/SliceModel.cpp:1110-1129 [@383f058].
+    const auto [newLow, newHigh] = filterForRequest(low, high);
+    const bool requestChanged = (newLow != low || newHigh != high);
+
+    if (holdsListenerWrite(std::pair(m_filterLow, m_filterHigh), std::pair(newLow, newHigh))) { return; }
+    if (m_filterLow != newLow || m_filterHigh != newHigh) {
+        m_filterLow = newLow;
+        m_filterHigh = newHigh;
+        ++m_modeFilterRevision;
+        emit filterChanged(m_filterLow, m_filterHigh);
+    } else if (requestChanged) {
+        // The request was constrained or refused and the stored pair did
+        // not move. A view that drew the request (a drag past the cap)
+        // gets the stored pair back: Thetis's display only ever takes the
+        // constrained values (console.cs:7589-7590 [v2.10.3.15]).
+        emit filterChanged(m_filterLow, m_filterHigh);
+    }
+}
+
+std::pair<int, int> SliceModel::filterForRequest(int low, int high) const
+{
+    // From Thetis console.cs:7544-7567 and 7579-7582 [v2.10.3.15]
+    // (UpdateRX1Filters): the minimum width, then ConstrainFilter, then the
+    // zero-width refusal.
+    // The FM case between them (7568-7574, its halfBw line tagged
+    // //[2.10.3.4]MW0LGE) is not ported; see applyMinimumFilterWidth.
+    applyMinimumFilterWidth(low, high, m_dspMode);
+
     //MW0LGE_21k9
     constrainFilter(low, high, m_dspMode, false, m_limitFiltersToSidebands);
 
-    if (low == high) { return; } // not a good idea to have a 0hz width filter
+    if (low == high) { return {m_filterLow, m_filterHigh}; } // not a good idea to have a 0hz width filter
 
-    if (holdsListenerWrite(std::pair(m_filterLow, m_filterHigh), std::pair(low, high))) { return; }
-    if (m_filterLow != low || m_filterHigh != high) {
-        m_filterLow = low;
-        m_filterHigh = high;
-        ++m_modeFilterRevision;
-        emit filterChanged(m_filterLow, m_filterHigh);
+    return {low, high};
+}
+
+// From Thetis console.cs:7544-7567 [v2.10.3.15] (UpdateRX1Filters). The
+// receiver's mode is a parameter here. The FM case (7568-7574) sets the
+// edges from the FM deviation and high cut and is not ported (see the
+// declaration); FM and modes the switch does not name are left alone.
+// Its halfBw line carries //[2.10.3.4]MW0LGE [original inline comment from
+// console.cs:7569].
+void SliceModel::applyMinimumFilterWidth(int& low, int& high, DSPMode mode)
+{
+    switch (mode) {
+    case DSPMode::LSB:
+    case DSPMode::DIGL:
+    case DSPMode::CWL:
+        if (low > high - kMinFilterWidthHz) { low = high - kMinFilterWidthHz; }
+        break;
+    case DSPMode::USB:
+    case DSPMode::DIGU:
+    case DSPMode::CWU:
+        if (high < low + kMinFilterWidthHz) { high = low + kMinFilterWidthHz; }
+        break;
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
+    case DSPMode::SPEC: //MW0LGE_21k9
+        if (high < low + kMinFilterWidthHz) {
+            if (std::abs(high) < std::abs(low)) {
+                high = low + kMinFilterWidthHz;
+            } else {
+                low = high - kMinFilterWidthHz;
+            }
+        }
+        break;
+    default:
+        break;
     }
 }
 
@@ -2995,9 +3115,18 @@ bool SliceModel::restoreReceiveState(double frequencyHz, DSPMode mode)
             m_filterLow = filter.first;
             m_filterHigh = filter.second;
         }
-        // Constrained as every other filter change is (console.cs:7580
-        // [v2.10.3.15]).
+        // The minimum width and the constraint, as every other filter
+        // change gets them (console.cs:7544-7580 [v2.10.3.15]).
+        applyMinimumFilterWidth(m_filterLow, m_filterHigh, mode);
         constrainFilter(m_filterLow, m_filterHigh, mode, false, m_limitFiltersToSidebands);
+        // Thetis refuses a zero-width result and keeps the filter it had
+        // (console.cs:7582 [v2.10.3.15]). A layout restore has no earlier
+        // filter for this mode, so it takes the mode's default.
+        if (m_filterLow == m_filterHigh) {
+            const auto filter = defaultFilterForMode(mode);
+            m_filterLow = filter.first;
+            m_filterHigh = filter.second;
+        }
     }
     return true;
 }

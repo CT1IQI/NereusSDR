@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - The passband widget's centre drag moves the filter with
+//                SliceModel::shiftFilter, as Thetis's filter shift and
+//                width sliders do (console.cs:35202, 35420 [v2.10.3.15]).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-22 - RX-only 4 and 5 are named by the XVTR label. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
@@ -1076,6 +1081,14 @@ void RxApplet::buildUi()
         connect(m_filterPassband, &FilterPassbandWidget::filterChanged,
                 this, [this](int lo, int hi) {
             if (m_slice && !isListening()) { m_slice->setFilter(lo, hi); }
+        });
+        // The centre drag moves the whole passband and changes its width:
+        // filterShift true, as Thetis's filter shift slider (console.cs:35202
+        // [v2.10.3.15]) and filter width slider (console.cs:35420) call
+        // ConstrainFilter before UpdateRX1Filters.
+        connect(m_filterPassband, &FilterPassbandWidget::passbandShifted,
+                this, [this](int lo, int hi) {
+            if (m_slice && !isListening()) { m_slice->shiftFilter(lo, hi); }
         });
         leftCol->addWidget(m_filterPassband);
     }

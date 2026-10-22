@@ -8183,6 +8183,10 @@ nereus_add_test(tst_vfo_flag_fold)
 # wheel accumulator); NereusSDR-original (flag drag, grab order).
 nereus_add_test(tst_wheel_step_accumulator)
 nereus_add_test(tst_spectrum_receiver_grab)
+# A dragged filter view shows what the slice kept after the 10 kHz cap,
+# and the RX applet's centre drag keeps the width (Thetis console.cs:7589,
+# 35202 [v2.10.3.15]). NereusSDR-original.
+nereus_add_test(tst_filter_view_resync)
 nereus_add_test(tst_vfo_flag_drag)
 # The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
 # buttons and floating buttons carry the pass's sheets with the look on and
