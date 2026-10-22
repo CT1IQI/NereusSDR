@@ -24,7 +24,7 @@ struct DiversityPage: View {
                             Button("Use" + (model.activeTargetLetter.map { " " + $0 } ?? "")) { model.useActiveSlice() }
                                 .font(.system(size: 14, weight: .bold))
                                 .frame(minWidth: 60, minHeight: 44)
-                                .buttonStyle(.bordered)
+                                .buttonStyle(SetupButtonStyle())
                                 .disabled(!model.canUse)
                                 .accessibilityIdentifier("diversity.use")
                         }

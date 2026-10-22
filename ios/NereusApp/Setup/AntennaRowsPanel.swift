@@ -97,7 +97,7 @@ struct AntennaRowsPanel: View {
         } label: {
             Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                 .font(.title3)
-                .foregroundStyle(blocked ? Color.secondary.opacity(0.4) : selected ? Color.accentColor : Color.secondary)
+                .foregroundStyle(blocked ? Color.secondary.opacity(0.4) : selected ? WorkspacePalette.accentFill : Color.secondary)
                 .frame(width: Self.cellWidth, height: 36)
         }
         .buttonStyle(.plain)

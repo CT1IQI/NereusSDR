@@ -37,7 +37,7 @@ struct TxProfileControl: View {
                 .disabled(!state.editable || flow.busy)
             } else {
                 Button(control.label) { flow.beginSave(control, in: category, owner: owner) }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(SetupButtonStyle())
                     .disabled(!state.editable || flow.busy)
                     .accessibilityIdentifier(control.id)
             }

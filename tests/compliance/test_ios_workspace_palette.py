@@ -213,6 +213,79 @@ class WorkspaceColoursCheckTest(unittest.TestCase):
                 "FAIL " + self.VIEW + ":5: #00ff88",
             ])
 
+    def test_decimal_fractions_are_read(self) -> None:
+        # 0x0f / 255 = 0.0588, 0x1a / 255 = 0.102: written as fractions of 1.
+        text = ("let a = Color(red: 0.059, green: 0.059, blue: 0.102)\n"
+                "let b = Color(.sRGB, red: .059, green: .059, blue: .102, opacity: 1)\n"
+                "let c = Color(red: 0.06, green: 0.06, blue: 0.5)\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL " + self.VIEW + ":1: #0f0f1a",
+                "FAIL " + self.VIEW + ":2: #0f0f1a",
+            ])
+
+    def test_uicolor_is_read(self) -> None:
+        text = ("let a = UIColor(red: 0x1A / 255, green: 0x2A / 255, blue: 0x3A / 255, alpha: 1)\n"
+                "let b = UIColor(red: 0, green: 0.706, blue: 0.847, alpha: 1)\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL " + self.VIEW + ":1: #1a2a3a",
+                "FAIL " + self.VIEW + ":2: #00b4d8",
+            ])
+
+    def test_hex_strings_without_a_hash_are_read(self) -> None:
+        text = ("let a = Color(hex: \"0F0F1A\")\n"
+                "let b = Color(hex: \"0C0C0E\")\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), ["FAIL " + self.VIEW + ":1: #0f0f1a"])
+
+    def test_system_accent_fails(self) -> None:
+        text = ("Circle().fill(Color.accentColor)\n"
+                "let accentColorName = \"Accent\"\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}),
+                             ["FAIL " + self.VIEW + ":1: Color.accentColor"])
+
+    def test_bordered_button_fails(self) -> None:
+        text = ("Button(\"Edit\") {}.buttonStyle(.bordered)\n"
+                "Button(\"Edit\") {}.buttonStyle(.borderless)\n"
+                "Button(\"Edit\") {}.buttonStyle(BorderedButtonStyle())\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL " + self.VIEW + ":1: .buttonStyle(.bordered)",
+                "FAIL " + self.VIEW + ":3: BorderedButtonStyle()",
+            ])
+
+    def test_bordered_prominent_button_fails(self) -> None:
+        text = ("Button(\"Save\") {}.buttonStyle( .borderedProminent )\n"
+                "Button(\"Save\") {}.buttonStyle(BorderedProminentButtonStyle())\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL " + self.VIEW + ":1: .buttonStyle(.borderedProminent)",
+                "FAIL " + self.VIEW + ":2: BorderedProminentButtonStyle()",
+            ])
+
+    def test_system_blue_fails_in_the_shared_files_and_the_widget(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {
+                "ios/Shared/Activity/Some.swift": "Circle().fill(Color.accentColor)\n",
+                "ios/NereusActivity/SomeWidget.swift": "Button(\"Unkey\") {}.buttonStyle(.borderedProminent)\n",
+                "ios/NereusApp/Tests/SomeTests.swift": "Circle().fill(Color.accentColor)\n",
+            })
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL ios/Shared/Activity/Some.swift:1: Color.accentColor",
+                "FAIL ios/NereusActivity/SomeWidget.swift:1: .buttonStyle(.borderedProminent)",
+            ])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+
     def test_kept_file_and_value_passes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = self.tree(folder, {self.VIEW: "let zone = rgb(0x1A, 0x2A, 0x3A)\n",

@@ -8,12 +8,20 @@ desktop's workspace tokens. This check scans the .swift files under
 ios/NereusApp, ios/Shared and ios/NereusActivity (never Tests, UITests or
 NereusKit) for hex colors written as
 
-    rgb(0xRR, 0xGG, 0xBB)    0xRRGGBB    "#RRGGBB"
+    rgb(0xRR, 0xGG, 0xBB)    0xRRGGBB    "#RRGGBB"    "RRGGBB"
 
 and as SwiftUI's Color(red: 0xRR / 255, green: 0xGG / 255, blue: 0xBB / 255)
-(each part in hex or decimal, over 255 or 255.0, or a bare 0 or 1), and fails, printing one "FAIL <file>:<line>: <hex>" line per finding, on any
-value in NAVY (the old navy chrome) unless KEPT lists that file and value
-with a reason. Data colors (band plan, slice colors, spectrum and
+or UIKit's UIColor(red:green:blue:alpha:) (each part in hex or decimal, over
+255 or 255.0, a bare 0 or 1, or a fraction such as 0.12), and fails,
+printing one "FAIL <file>:<line>: <hex>" line per finding, on any value in
+NAVY (the old navy chrome) unless KEPT lists that file and value with a
+reason.
+
+It also refuses what draws the system blue in a workspace screen (W6):
+Color.accentColor, and the stock bordered button styles
+(.buttonStyle(.bordered), .buttonStyle(.borderedProminent) and their
+BorderedButtonStyle() and BorderedProminentButtonStyle() forms), printing
+"FAIL <file>:<line>: <what>" for each. Data colors (band plan, slice colors, spectrum and
 waterfall, meter zones, the cyan frequency readout and the rest of spec W2)
 are kept; the ones that happen to share a value with the old chrome are
 listed in KEPT.
@@ -103,21 +111,37 @@ KEPT: Dict[Tuple[str, str], str] = {
 HEX_RE = re.compile(
     r"rgb\(\s*0x([0-9A-Fa-f]{2})\s*,\s*0x([0-9A-Fa-f]{2})\s*,\s*0x([0-9A-Fa-f]{2})\s*\)"
     r"|\b0x([0-9A-Fa-f]{6})\b"
-    r'|"#([0-9A-Fa-f]{6})"'
+    r'|"#?([0-9A-Fa-f]{6})"'
 )
 
-_PART = r"(0x[0-9A-Fa-f]{1,2}|\d{1,3}(?:\.0)?)(\s*/\s*255(?:\.0)?)?"
+_PART = r"(0x[0-9A-Fa-f]{1,2}|\d{1,3}(?:\.\d+)?|\.\d+)(\s*/\s*255(?:\.0)?)?"
 COLOR_RE = re.compile(
-    r"Color\(\s*(?:\.sRGB\s*,\s*)?red:\s*" + _PART
+    r"\b(?:UI)?Color\(\s*(?:\.sRGB\s*,\s*)?red:\s*" + _PART
     + r"\s*,\s*green:\s*" + _PART + r"\s*,\s*blue:\s*" + _PART + r"\s*[,)]"
+)
+
+# What draws the system blue (W6): the system accent and the stock bordered buttons.
+SYSTEM_RE = re.compile(
+    r"\bColor\.accentColor\b"
+    r"|\.buttonStyle\(\s*\.(?:bordered|borderedProminent)\s*\)"
+    r"|\bBordered(?:Prominent)?ButtonStyle\(\s*\)"
 )
 
 
 def _part(number: str, over: str) -> int:
-    """One Color(red:green:blue:) part as 0 to 255, or -1 when it is not one."""
-    value = int(number, 16) if number.lower().startswith("0x") else int(float(number))
-    if not over:
-        value = {0: 0, 1: 255}.get(value, -1)
+    """One Color(red:green:blue:) part as 0 to 255, or -1 when it is not one.
+
+    Over 255 the number is the channel; alone it is a fraction of 1 (0, 1,
+    0.12), rounded to the nearest channel as the color would draw it."""
+    if number.lower().startswith("0x"):
+        value = int(number, 16)
+        if not over:
+            value = {0: 0, 1: 255}.get(value, -1)
+    elif over:
+        value = int(float(number)) if float(number).is_integer() else -1
+    else:
+        fraction = float(number)
+        value = int(fraction * 255 + 0.5) if 0 <= fraction <= 1 else -1
     return value if 0 <= value <= 255 else -1
 
 
@@ -137,6 +161,11 @@ def colours(line: str) -> List[str]:
     return found
 
 
+def system_blue(line: str) -> List[str]:
+    """What on a line draws the system blue: Color.accentColor or a bordered button style."""
+    return [re.sub(r"\s+", "", match.group(0)) for match in SYSTEM_RE.finditer(line)]
+
+
 def scanned_files(root: Path) -> List[Path]:
     files: List[Path] = []
     for folder in SCANNED:
@@ -154,7 +183,8 @@ def scanned_files(root: Path) -> List[Path]:
 
 
 def check(root: Path, kept: Dict[Tuple[str, str], str] = KEPT) -> List[str]:
-    """One "FAIL <file>:<line>: <hex>" line per navy chrome color."""
+    """One "FAIL <file>:<line>: <hex>" line per navy chrome color, and one
+    "FAIL <file>:<line>: <what>" line per use of the system blue."""
     findings: List[str] = []
     for path in scanned_files(root):
         shown = path.relative_to(root).as_posix()
@@ -163,6 +193,8 @@ def check(root: Path, kept: Dict[Tuple[str, str], str] = KEPT) -> List[str]:
             for value in colours(line):
                 if value in NAVY and (shown, value) not in kept:
                     findings.append("FAIL " + shown + ":" + str(number) + ": " + value)
+            for what in system_blue(line):
+                findings.append("FAIL " + shown + ":" + str(number) + ": " + what)
     return findings
 
 
@@ -176,8 +208,9 @@ def main() -> int:
         print(finding)
     if findings:
         print("verify-ios-workspace-colours: " + str(len(findings))
-              + " navy chrome color(s); move each to a role or token, or list a data"
-              " color in KEPT with its reason")
+              + " finding(s); move a navy color to a role or token, or list a data"
+              " color in KEPT with its reason; draw a button in a workspace style and"
+              " a mark in a WorkspacePalette token, never the system blue")
         return 1
     print("ios/ chrome is in the workspace look")
     return 0

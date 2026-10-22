@@ -113,7 +113,7 @@ struct SettingsHygienePanel: View {
                         perform: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Button(label, role: role, action: perform)
-                .buttonStyle(.bordered)
+                .buttonStyle(SetupButtonStyle(role == .destructive ? .danger : .raised))
                 .disabled(reason != nil)
                 .accessibilityIdentifier("\(control.id).\(id)")
             if let reason {

@@ -86,11 +86,7 @@ enum LevelCalSection {
             .disabled(!enabled)
             .accessibilityHint(enabled ? hint : "")
             .accessibilityIdentifier(id)
-            if prominent {
-                base.buttonStyle(.borderedProminent)
-            } else {
-                base.buttonStyle(.bordered)
-            }
+            base.buttonStyle(SetupButtonStyle(prominent ? .glass : .raised, fill: true))
         }
     }
 

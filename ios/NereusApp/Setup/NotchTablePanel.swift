@@ -113,11 +113,11 @@ struct NotchTablePanel: View {
                         draft.admission.revoke()
                         editing = nil
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(SetupButtonStyle())
                     .accessibilityIdentifier("notch.\(notch.id).cancel")
                     Spacer()
                     Button(Self.saveText) { if let editing { save(editing) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(SetupButtonStyle(.glass))
                         .accessibilityIdentifier("notch.\(notch.id).save")
                 }
             } else {
@@ -137,12 +137,12 @@ struct NotchTablePanel: View {
                     .accessibilityIdentifier("notch.\(notch.id).active")
                 HStack {
                     Button(Self.editText) { beginEdit(notch) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SetupButtonStyle())
                         .disabled(!editable || editing != nil)
                         .accessibilityIdentifier("notch.\(notch.id).edit")
                     Spacer()
                     Button(column("delete")?.label ?? "", role: .destructive) { change(notch.id, .delete) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SetupButtonStyle(.danger))
                         .disabled(!editable)
                         .accessibilityIdentifier("notch.\(notch.id).delete")
                 }

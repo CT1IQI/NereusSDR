@@ -306,7 +306,7 @@ private struct PaProfileActionButton: View {
                 if binding.prompt != nil { askingName = interaction.beginPrompt() }
                 else { askingQuestion = interaction.beginQuestion() }
             }
-            .buttonStyle(.bordered).frame(minHeight: 44).fixedSize(horizontal: true, vertical: false)
+            .buttonStyle(SetupButtonStyle()).frame(minHeight: 44).fixedSize(horizontal: true, vertical: false)
             .disabled(reason != nil).accessibilityIdentifier(control.id)
             .help(control.tooltip).accessibilityHint(control.tooltip)
             PaControlNotes(id: control.id, help: "", reason: reason, problem: interaction.problem)
@@ -531,7 +531,7 @@ private struct PaProfileCell: View {
                 .foregroundStyle(editable ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(minHeight: 44)
         }
-        .buttonStyle(.borderless).disabled(!editable || pads == nil)
+        .buttonStyle(.borderless).tint(WorkspacePalette.accentText).disabled(!editable || pads == nil)
         .accessibilityLabel("\(row.label) \(column.label)")
         .accessibilityValue(SetupNumberRow.text(number, decimals: decimals, unit: ""))
         .accessibilityIdentifier("\(id).value")

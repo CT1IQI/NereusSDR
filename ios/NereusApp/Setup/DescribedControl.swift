@@ -462,7 +462,7 @@ struct DescribedControl: View {
         switch lamp {
         case .inUse:
             Circle()
-                .fill(Color.accentColor)
+                .fill(WorkspacePalette.accentFill)
                 .frame(width: lowPassMarkSize, height: lowPassMarkSize)
                 .accessibilityElement()
                 .accessibilityLabel(SetupControlDispatcher.lowPassInUseText)

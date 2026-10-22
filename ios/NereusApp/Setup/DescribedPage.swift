@@ -219,7 +219,7 @@ private struct DisplayV29Control: View {
     var body: some View {
         HStack(spacing: 8) {
             if own {
-                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                Circle().fill(WorkspacePalette.accentFill).frame(width: 5, height: 5)
                     .accessibilityLabel("Pan 1's own value")
                     .accessibilityIdentifier(control.id + ".own")
             }
@@ -352,7 +352,7 @@ private struct DisplayGradientEditor: View {
                                 stops.remove(at: stops.count - 2)
                             }
                         }.disabled(stops.count <= 2)
-                    }.buttonStyle(.borderless)
+                    }.buttonStyle(.borderless).tint(WorkspacePalette.accentText)
                 } footer: { Text("Custom gradient, kept on this device.") }
             }
             .navigationTitle(editor == .receive ? "Receive gradient" : "Transmit gradient")
