@@ -230,12 +230,14 @@ private slots:
                      "an AGC-T change must broadcast agc_gain with its value; "
                      "got: %1").arg(frames.join(QStringLiteral(" ")))));
 
-        // The threshold point alone is not agc_gain.
+        // The threshold point alone is not agc_gain. With no WDSP engine
+        // there is no AGC-T readback, so no agc_gain frame at all follows.
         sa->setAgcThreshold(-50);
         const QStringList thresholdFrames = drainTick(proto);
-        QVERIFY2(!framesWithPrefix(thresholdFrames, QStringLiteral("agc_gain:"))
-                      .contains(QStringLiteral("agc_gain:%1,-50;").arg(a)),
-                 "the AGC threshold point must not go out as agc_gain");
+        QVERIFY2(framesWithPrefix(thresholdFrames, QStringLiteral("agc_gain:")).isEmpty(),
+                 qPrintable(QStringLiteral(
+                     "the AGC threshold point must not go out as agc_gain; "
+                     "got: %1").arg(thresholdFrames.join(QStringLiteral(" ")))));
     }
 
     // Task 12 (R-R3-49): an app's if follows a tune inside the pan. Thetis's

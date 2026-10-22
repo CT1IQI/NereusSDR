@@ -6,7 +6,12 @@
 // A TCI app that stops reading (a phone the OS froze in a pocket, a hung
 // program) keeps its connection open. Qt buffers every binary frame the
 // server sends it, without limit. Receive audio and I/Q to such an app are
-// now dropped once more than 256 kB wait for it.
+// now dropped once 256 KiB or more wait for it.
+//
+// Both ways a block reaches the app are covered: sent at once (a server with
+// no model, so no receive lane), and sent once the receive lane has
+// resampled it (a local RadioModel's lane, which an app asking for a rate
+// other than 48 kHz uses).
 //
 // The stalled app is a raw TCP socket that does the WebSocket handshake by
 // hand and then stops reading (a small read buffer, never read), so the
@@ -26,6 +31,7 @@
 
 #include "core/AppSettings.h"
 #include "core/TciServer.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -45,9 +51,10 @@ QByteArray maskedTextFrame(const QByteArray& payload)
     return frame;
 }
 
-// Connects, completes the handshake and subscribes to receive audio and I/Q
-// for receiver 0. Afterwards the socket reads nothing more.
-bool openStalledClient(QTcpSocket& socket, TciServer& server)
+// Connects, completes the handshake, sends `setup` and subscribes to receive
+// audio and I/Q for receiver 0. Afterwards the socket reads nothing more.
+bool openStalledClient(QTcpSocket& socket, TciServer& server,
+                       const QList<QByteArray>& setup = {})
 {
     socket.connectToHost(QStringLiteral("127.0.0.1"), server.port());
     if (!QTest::qWaitFor([&]() {
@@ -71,39 +78,25 @@ bool openStalledClient(QTcpSocket& socket, TciServer& server)
     // From here on the app reads nothing: Qt holds at most this much, and
     // the kernel's buffers fill behind it.
     socket.setReadBufferSize(4096);
+    for (const QByteArray& line : setup) {
+        socket.write(maskedTextFrame(line));
+    }
     socket.write(maskedTextFrame("audio_start:0;"));
     socket.write(maskedTextFrame("iq_start:0;"));
     return QTest::qWaitFor([&]() {
         return server.activeIqSubscriberCount(0) == 1; }, 3000);
 }
 
-} // namespace
-
-class TestTciBinaryBackpressure : public QObject {
-    Q_OBJECT
-private slots:
-    void initTestCase();
-    void stalled_app_gets_bounded_iq_and_audio();
-};
-
-void TestTciBinaryBackpressure::initTestCase()
+// Fills the stalled app's buffers with I/Q, then checks that I/Q and four
+// receive audio blocks to it are dropped. `model` is the server's model, or
+// nullptr; with a model, waits for its receive lane to go idle at the end.
+void checkBoundedIqAndAudio(TciServer& server, QTcpSocket& app, RadioModel* model)
 {
-    AppSettings::instance().setValue(QStringLiteral("TciIqSwap"), QStringLiteral("True"));
-    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"),
-                                     QStringLiteral("False"));
-}
-
-void TestTciBinaryBackpressure::stalled_app_gets_bounded_iq_and_audio()
-{
-    TciServer server(nullptr);
-    QVERIFY(server.start(0));
-    QTcpSocket app;
-    QVERIFY(openStalledClient(app, server));
     QCOMPARE(server.localBinaryBackpressureDrops(), quint64(0));
 
     // I/Q: 128 kB frames, letting the event loop run after each, until 50
     // frames in a row are dropped (the kernel's buffers are full and the
-    // server holds its 256 kB), or 96 MB, far past anything the kernel
+    // server holds its 256 KiB), or 96 MB, far past anything the kernel
     // buffers on loopback. Without the bound every frame is queued in Qt
     // and none is dropped.
     QVector<float> iq(32768, 0.25f);
@@ -140,6 +133,48 @@ void TestTciBinaryBackpressure::stalled_app_gets_bounded_iq_and_audio()
 
     app.abort();
     server.stop();
+    if (model != nullptr) {
+        QVERIFY(model->waitForReceiveLaneForTest(5000));
+    }
+}
+
+} // namespace
+
+class TestTciBinaryBackpressure : public QObject {
+    Q_OBJECT
+private slots:
+    void initTestCase();
+    void stalled_app_gets_bounded_iq_and_audio();
+    void stalled_app_gets_bounded_audio_from_the_receive_lane();
+};
+
+void TestTciBinaryBackpressure::initTestCase()
+{
+    AppSettings::instance().setValue(QStringLiteral("TciIqSwap"), QStringLiteral("True"));
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"),
+                                     QStringLiteral("False"));
+}
+
+void TestTciBinaryBackpressure::stalled_app_gets_bounded_iq_and_audio()
+{
+    TciServer server(nullptr);
+    QVERIFY(server.start(0));
+    QTcpSocket app;
+    QVERIFY(openStalledClient(app, server));
+    checkBoundedIqAndAudio(server, app, nullptr);
+}
+
+// A 12 kHz stream is resampled on a local model's receive lane and sent
+// when the lane hands the block back; that send is gated too.
+void TestTciBinaryBackpressure::stalled_app_gets_bounded_audio_from_the_receive_lane()
+{
+    RadioModel model;
+    QVERIFY2(model.receiveLane() != nullptr, "a local model has a receive lane");
+    TciServer server(&model);
+    QVERIFY(server.start(0));
+    QTcpSocket app;
+    QVERIFY(openStalledClient(app, server, {QByteArrayLiteral("audio_samplerate:12000;")}));
+    checkBoundedIqAndAudio(server, app, &model);
 }
 
 QTEST_MAIN(TestTciBinaryBackpressure)

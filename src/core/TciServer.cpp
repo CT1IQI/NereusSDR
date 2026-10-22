@@ -205,7 +205,7 @@ mw0lge@grange-lane.co.uk
 //   2026-10-22 - Ported from Longpath src/core/TciServer.cpp [@383f058]
 //                (cf756d8b, Martin Fischer OE5SOS) by J.J. Boyd (KG4VCF),
 //                with AI-assisted transformation via Claude Code: receive
-//                audio and I/Q frames to an app with more than 256 kB
+//                audio and I/Q frames to an app with 256 KiB or more
 //                already waiting are dropped, not queued without limit
 //                (binaryBackpressureClear). The agc_gain broadcast follows
 //                rfGainChanged, the AGC-T, as Thetis's ptbRF_Scroll raises
@@ -332,9 +332,9 @@ namespace {
 //
 // In English: Qt buffers every binary frame an app does not collect. An app
 // that stops reading (a phone the OS froze, a hung program) keeps its
-// connection open, so the buffer grows without limit. Past 256 kB pending,
-// receive audio and I/Q frames are dropped: both are only worth something
-// now, and an app that comes back wants the present, not the backlog.
+// connection open, so the buffer grows without limit. At 256 KiB or more
+// pending, receive audio and I/Q frames are dropped: both are only worth
+// something now, and an app that comes back wants the present, not the backlog.
 bool binaryBackpressureClear(QWebSocket* ws)
 {
     // From Longpath src/core/TciServer.cpp:156 [@383f058]

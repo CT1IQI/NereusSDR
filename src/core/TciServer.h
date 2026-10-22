@@ -340,7 +340,7 @@ public:
     std::optional<RemoteTciAudioStage::Diagnostics> remoteAudioDiagnostics(int rx) const;
     quint64 remoteAudioSocketBackpressureDrops() const { return m_socketBackpressureDrops; }
     // Receive audio and I/Q frames this computer's own receivers did not
-    // send to an app because more than 256 kB already waited for it.
+    // send to an app because 256 KiB or more already waited for it.
     quint64 localBinaryBackpressureDrops() const { return m_localBinaryBackpressureDrops; }
 
     // IReceiverPcmSink (remote window). The receive worker signals arrival

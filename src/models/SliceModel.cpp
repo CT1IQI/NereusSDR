@@ -825,7 +825,7 @@ void SliceModel::setRfGain(int gain)
     // rfGain is the AGC-T, the WDSP AGC top (RadioModel hands it to
     // RxChannel::setAgcTop). From Thetis console.designer.cs:3708-3709
     // [v2.10.3.15]: ptbRF.Maximum = 120, ptbRF.Minimum = -20, the range
-    // TCIServer.cs:5023 [v2.10.3.15] clamps agc_gain to and that
+    // TCIServer.cs:5024 [v2.10.3.15] clamps agc_gain to and that
     // RxChannel::readBackAgcTop applies. The 0..100 clamp here before
     // 2026-10-22 was not from Thetis and folded both ends.
     constexpr int kAgcTopMinDb = -20;
