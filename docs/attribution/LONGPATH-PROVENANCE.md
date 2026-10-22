@@ -15,10 +15,10 @@ License section below.
 |---|---|
 | Project | Longpath |
 | Repository | https://github.com/oe5sos/Longpath |
-| Revision | 551576e30c42731c6d51ce005c5f23ec38be391c (v0.6.7-1) |
+| Revision | 383f058991e9f6a2f5fdc8575a6476b530ab6081 (v0.8.0) |
 | Lineage | a fork of NereusSDR, renamed; rotor work since 2026-08-07 |
 | Primary author | Martin Fischer (OE5SOS) |
-| Local reference clone | `../Longpath/`, pinned at `551576e`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
+| Local reference clone | `../Longpath/`, pinned at `383f0589`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
 | Language | C++20 / Qt6 |
 | License | GPLv3 at project level (the project's LICENSE file) |
 
@@ -120,6 +120,9 @@ Derivation type:
 | `tests/tst_rotctld_process.cpp` | `tests/tst_rotctld_process.cpp` | 1-9, 30-72, 130-178 | `port` | The command-line and stderr-reason cases, comments verbatim (German kept); the model-list cases not taken (`tst_rotor_route` covers `RotorModels.h`). NereusSDR adds binary lookup and start, stop, restart and held-port cases against a stand-in script. Rotor control plan, Task 3b. Date: 2026-10-08. |
 | `src/gui/widgets/RotorDialWidget.h` | `src/gui/widgets/RotorDialWidget.h` | 34-55, 84, 101-117, 188-198, 235-236, 249 (`State`, `Shape`, the tape span, the beam width, the shared geometry note) | `port` | The dial reads the Core's rotor object instead of being told each value; drag aims and letting go sends one turn (the desktop touch rule); Longpath's click-to-aim and double-click-to-turn, the simulated needle, the transparent image and the landscape layout not taken. Tape span 200 degrees as the rotor mockup draws it. German comments kept verbatim. Rotor control plan, Task 6. Date: 2026-10-08. |
 | `src/gui/widgets/RotorDialWidget.cpp` | `src/gui/widgets/RotorDialWidget.cpp` | 36-81 (palette), 119-181 (shape, menu, sizes, bearing), 373-386 (`bearingAt`), 438-606 (`setShape`, `paintTape`, `bearingAtTape`), 624-951 (`paintFace`) | `port` | The face geometry: rings, three-step ticks, degree labels and cardinals on one ring, travel pie (the Core's predicted route, none while it is unknown), beam wedge, tapered needle with counterweight and halo, dashed target with halo, rim triangle, gradient hub, lamp. NereusSDR adds the end stop on the rim, the elevation quarter gauge on az/el rotors, a muted stale needle and no needle when the heading is unknown; the readout lives in the Rotor applet. Mockup colours replace Longpath's palette; menu words in English. Rotor control plan, Task 6. Date: 2026-10-08. |
+| `src/core/WdspEngine.cpp` | `src/core/WdspEngine.cpp` | 1779 (call site), 1782-1809 (`maxBinHoldNextDbm()`) | `Port (helper)` | The MaxBin hold step from Longpath PR 215 (commit `695a3511`, unchanged at `383f058`): the Thetis fall `held -= fabs((1 - decay) * held)` (wdsp/analyzer.c:818 [v2.10.3.15]) gets a 20 dB minimum reference, so a hold above 0 dBm falls again (Thetis #2681); identical below -20 dBm. German comments kept verbatim. Longpath's file banner is NereusSDR's own WdspEngine header renamed and is not copied. Date: 2026-10-22. |
+| `src/core/WdspEngine.h` | `src/core/WdspEngine.h` | 631-654 | `Port (helper)` | The `maxBinHoldNextDbm()` declaration and its German rationale verbatim, with an English summary; placed under `public:` rather than Longpath's `public slots:`. Date: 2026-10-22. |
+| `tests/tst_maxbin_hold_decay.cpp` | `tests/tst_maxbin_hold_decay.cpp` | 1-119 | `port` | The five step cases, comments verbatim (German kept), messages in English, qInfo lines left out. NereusSDR adds a case through a real WdspEngine detector that fails on the code before the fix. Date: 2026-10-22. |
 
 NereusSDR-original files that use the palette but port nothing
 (QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h,
