@@ -53,8 +53,9 @@
 //   - the overload reads at least kOverloadMinLoad in every interval in
 //     which the worker never waited a block period for input (a fed
 //     interval), never reads under its CPU share, and steps back by the end
-//     of its first kFedRunForStepBack fed intervals in a row (the
-//     governor's averaging window and one more). It needs kMinFed fed
+//     of its first kRunForStepBack intervals in a row that each read at
+//     least the governor's line (its averaging window and one more). It
+//     needs kMinFed fed
 //     intervals, not corroborated ones: its claims hold whatever share of a
 //     core the worker gets (see the case).
 //
@@ -110,7 +111,7 @@
 #include <mach/mach.h>
 #include <mach/thread_act.h>
 #include <pthread/qos.h>
-#else
+#elif defined(Q_OS_LINUX)
 #include <fcntl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -165,8 +166,13 @@ constexpr int kMaxTicks = 60;
 // 0.15 to 0.65), so the state poller shows them there instead.
 constexpr int kMinCorroborated = 2;
 // How often the state poller reads the worker's state, and the polls inside
-// blocks an interval needs before what they found counts.
-constexpr std::chrono::microseconds kPollInterval{100};
+// blocks an interval needs before what they found counts. Every 500 us, not
+// 100: in ten runs at load averages of 47 to 81 on an 18-core Mac every
+// interval had at least 216 polls inside blocks (medians 435 to 735),
+// against at least 890 (median 2003) in a run at 100 us at load 48. That is
+// still twice kMinPollsInBlock, for a fifth of the reads (each an open and
+// a read of /proc on Linux).
+constexpr std::chrono::microseconds kPollInterval{500};
 constexpr std::uint64_t kMinPollsInBlock = 100;
 // The most of an interval the poller may find the worker blocked inside
 // blocks for the interval to show the edges right. With the edges right the
@@ -179,10 +185,15 @@ constexpr std::uint64_t kMinPollsInBlock = 100;
 constexpr double kBlockedInBlockTolerance = 0.10;
 // Fed intervals the overload case needs before its floor counts.
 constexpr int kMinFed = 2;
-// Fed intervals in a row by whose end the overload must have stepped back:
-// NnrLoadGovernor averages the load over kNnrStepDownHoldMs, so one interval
-// more than that window, every one of them at kOverloadMinLoad or more.
-constexpr int kFedRunForStepBack =
+// Intervals in a row, each reading at least NnrLoadGovernor's line
+// (kNnrStepDownLoad), by whose end the overload must have stepped back: the
+// governor averages the load over kNnrStepDownHoldMs, so one interval more
+// than that window. A fed interval reads kOverloadMinLoad or more, over the
+// line; an interval in which a busy machine kept the feeder from the worker
+// can still read over it, and counts too. Runs of fed intervals alone were
+// too rare at a load average of 49 on an 18-core Mac: none of five in 60
+// intervals, with the governor stepping back at 2.0 s and 7.5 s.
+constexpr int kRunForStepBack =
     int(NnrLoadGovernor::kNnrStepDownHoldMs / ReceiverDspLoadSampler::kSampleIntervalMs) + 1;
 // Time for the worker to settle after a delay changes.
 constexpr std::chrono::milliseconds kSettle{1000};
@@ -222,7 +233,7 @@ QMutex g_workerMutex;
 bool g_haveWorker = false;
 int g_workerStarts = 0;
 pthread_t g_worker{};
-#ifndef Q_OS_MAC
+#if defined(Q_OS_LINUX)
 pid_t g_workerTid = 0;
 #endif
 
@@ -235,7 +246,7 @@ void onWdspThreadStart(int kind, int channel)
     QMutexLocker lock(&g_workerMutex);
     if (kind == kWdspThreadRxMain) {
         g_worker = pthread_self();
-#ifndef Q_OS_MAC
+#if defined(Q_OS_LINUX)
         g_workerTid = static_cast<pid_t>(syscall(SYS_gettid));
 #endif
         g_haveWorker = true;
@@ -385,7 +396,7 @@ std::optional<bool> workerBlocked()
         return std::nullopt;
     }
     return info.run_state != TH_STATE_RUNNING;
-#else
+#elif defined(Q_OS_LINUX)
     // /proc/<pid>/task/<tid>/stat: "tid (comm) state ...", R for a thread on
     // a core or a run queue.
     char path[64];
@@ -406,6 +417,10 @@ std::optional<bool> workerBlocked()
         return std::nullopt;
     }
     return paren[2] != 'R';
+#else
+    // No reader for this platform: the poller finds nothing, and only the
+    // CPU share shows the edges.
+    return std::nullopt;
 #endif
 }
 
@@ -901,13 +916,21 @@ private slots:
         // Fed: the worker never waited a whole block period for input, so
         // the interval was the overload the case sets up.
         const auto fed = [](const Sample& s) { return s.longestWaitNs < kBlockPeriodNs; };
-        // Samples until the worker has been fed for kFedRunForStepBack
-        // intervals in a row (the governor's whole averaging window), and
-        // at least kTicks.
-        int fedInARow = 0;
-        const Run run = sampleFor(kTicks, [&fed, &fedInARow](const Sample& s) {
-            fedInARow = fed(s) ? fedInARow + 1 : 0;
-            return fedInARow == kFedRunForStepBack;
+        // At or over the governor's line, as the governor reads it.
+        const auto atLine = [](const Sample& s) {
+            return s.load >= NnrLoadGovernor::kNnrStepDownLoad;
+        };
+        // Samples until the load has read at the line for kRunForStepBack
+        // intervals in a row (the governor's whole averaging window) and
+        // the worker has been fed in kMinFed intervals, and at least kTicks.
+        int atLineInARow = 0;
+        bool hadRun = false;
+        int fedSoFar = 0;
+        const Run run = sampleFor(kTicks, [&](const Sample& s) {
+            atLineInARow = atLine(s) ? atLineInARow + 1 : 0;
+            hadRun = hadRun || atLineInARow >= kRunForStepBack;
+            fedSoFar += fed(s) ? 1 : 0;
+            return hadRun && fedSoFar >= kMinFed;
         }, 1);
         logRun("overload-2x", run);
         QVERIFY(run.samples.size() >= std::size_t(kTicks) - 2);
@@ -945,32 +968,32 @@ private slots:
         QVERIFY2(fedIntervals >= kMinFed,
                  qPrintable(QStringLiteral("%1 of %2 intervals had the worker fed throughout")
                                 .arg(fedIntervals).arg(run.samples.size())));
-        // By the end of the first kFedRunForStepBack fed intervals in a
-        // row, however long the machine kept the feeder from the worker
-        // before them. A busy machine can preempt the feeder (the radio's
-        // stand-in) until the worker waits for input and reads under the
-        // governor's line, correctly: at load averages of 30 to 78 on an
+        // By the end of the first kRunForStepBack intervals in a row at the
+        // governor's line, however long the machine kept the feeder from
+        // the worker before them. A busy machine can preempt the feeder (the
+        // radio's stand-in) until the worker waits for input and reads under
+        // the governor's line, correctly: at load averages of 30 to 78 on an
         // 18-core Mac the step-back missed the first kTicks that way.
         std::ptrdiff_t runEnd = -1;
         int inARow = 0;
         for (std::size_t i = 0; i < run.samples.size(); ++i) {
-            inARow = fed(run.samples[i]) ? inARow + 1 : 0;
-            if (inARow == kFedRunForStepBack) {
+            inARow = atLine(run.samples[i]) ? inARow + 1 : 0;
+            if (inARow == kRunForStepBack) {
                 runEnd = std::ptrdiff_t(i);
                 break;
             }
         }
         QVERIFY2(runEnd >= 0,
-                 qPrintable(QStringLiteral("no %1 fed intervals in a row in %2")
-                                .arg(kFedRunForStepBack).arg(run.samples.size())));
+                 qPrintable(QStringLiteral("no %1 intervals in a row at the governor's line in %2")
+                                .arg(kRunForStepBack).arg(run.samples.size())));
         const bool steppedInTime = std::any_of(
             run.samples.begin(), run.samples.begin() + runEnd + 1,
             [](const Sample& s) { return s.steppedBack; });
         QVERIFY2(steppedInTime,
                  qPrintable(QStringLiteral("a real overload must step back (by %1 s, the end of "
-                                           "%2 fed intervals in a row)")
+                                           "%2 intervals in a row at its line)")
                                 .arg(run.samples[std::size_t(runEnd)].atSeconds)
-                                .arg(kFedRunForStepBack)));
+                                .arg(kRunForStepBack)));
     }
 
     // A worker stuck inside one long block reads as fully busy.
