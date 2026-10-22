@@ -6686,7 +6686,9 @@ These command groups need a sentence beyond the table:
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core
   transmits on, which TUNE uses when Setup's tune drive source is the tune
-  slider. It leaves `tuneDrivePowerSource` alone. The Core reports the
+  slider. It leaves `tuneDrivePowerSource` alone; a Core from before this
+  change also set `tuneDrivePowerSource` to the tune slider on
+  `setTunePowerForTxBand`, so TUNE took that power. The Core reports the
   power on `transmit` (`tunePowerForTxBand`). It keys nothing, so a
   receive-only Core takes it. Below `transmitSettingsVersion` 13 it is
   refused while the radio is on the air ("The radio is on the air. Try
