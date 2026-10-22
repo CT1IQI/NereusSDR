@@ -46,7 +46,7 @@ public final class BandRenderer {
     /// (`WorkspacePreview::dataBackground(..., "app-bg")`,
     /// `src/gui/SpectrumWidget.cpp:7301`). The band's clear colour, the
     /// waterfall's dim and empty rows and the shader's uniform read it.
-    static let background = SIMD4<Float>(8.0 / 255, 8.0 / 255, 10.0 / 255, 1) // kAppBg, src/gui/styles/WorkspacePalette.h:105, From Longpath src/gui/StyleConstants.h:90 [@551576e3]
+    static let background = SIMD4<Float>(8.0 / 255, 8.0 / 255, 10.0 / 255, 1) // kAppBg #08080a, src/gui/styles/WorkspacePalette.h:105 (the phone's copy and its upstream cite: ios/Shared/WorkspacePalette.swift appBg)
     /// The desktop's frequency-scale row, `#101520` (value from
     /// `src/gui/SpectrumWidget.cpp:4657`).
     static let scaleBackground = SIMD4<Float>(16.0 / 255, 21.0 / 255, 32.0 / 255, 1)
