@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - A copy of a row made after the gates starts as gated as the
+//                applet's own; a preview of a row is inert. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - connectRow: a row's connection ends with the row or the
 //                applet, whichever goes first. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -724,6 +727,9 @@ private:
     QList<TxKeyingSection*> allKeyingSections() const;
     QList<QWidget*> rxOnlyLockedControls() const;
     void syncSectionInstances();
+    // Applies every gate again from the state the setters kept, so a copy
+    // made after the gates starts as gated as the applet's own row.
+    void reapplyGates();
     void syncPsaFromFacadeIn(TxProcessingSection* s);
     void refreshTransmitSliceChoicesIn(TxKeyingSection* s);
     void removePsaFacadeReasonIn(TxProcessingSection* s);
@@ -831,6 +837,7 @@ private:
     // after handshake/capability evaluation.
     bool m_transmitPermitted{true};
     bool m_transmitSettingsPermitted{true};
+    QString m_transmitSettingsReason;
     bool m_transmitChainSettingsPermitted{true};
     QString m_transmitChainSettingsReason;
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
@@ -844,9 +851,11 @@ private:
     QSlider* voxHoldSlider()       const;
     QLabel*  voxHoldLabel()        const;
     bool m_txProfilePermitted{true};
+    QString m_txProfileReason;
     bool m_txProcessingPermitted{true};   // R-R3-49 (parity Task 4)
     bool m_powerByBandPermitted{true};    // R-R3-49 (group A fix wave, M3)
     bool m_psArmingPermitted{true};       // R-R3-49 (parity Task 7)
+    QString m_psArmingReason;
     // Fix round 1 (minor 5): the board is not known (no radio, so the caps
     // fall back to Unknown) and does not say it has PureSignal: PS-A shows,
     // disabled, with PureSignalSessionFacade::needsRadioReason().

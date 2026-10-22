@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - Copies of a row carry the gates, follow the Core's 2-TONE
+//                and ask to take transmit; a preview of a row is inert.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A row's wiring ends with whichever goes first, the row or
 //                the applet (connectRow), so a container closing a copy no
 //                longer leaves the model writing to it; one power refresh
@@ -1870,8 +1873,10 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
         apply(s->moxButton());
     }
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
-    gateTransmitControl(voxButton(), permitted && m_voxPermitted,
-                        permitted ? m_voxReason : reason);
+    for (TxVoxSection* s : allVoxSections()) {
+        gateTransmitControl(s->button(), permitted && m_voxPermitted,
+                            permitted ? m_voxReason : reason);
+    }
     for (TxProcessingSection* s : allProcessingSections()) {
         apply(s->twoToneButton());
     }
@@ -1897,6 +1902,7 @@ void TxApplet::setPureSignalArmingPermitted(bool permitted, const QString& unava
     const QString reason = unavailableReason.isEmpty()
         ? tr("Remote transmit controls are not available from this Core.")
         : unavailableReason;
+    m_psArmingReason = reason;
     // Fix wave GUI-I7: the facade's reason off first, so this gate keeps
     // the button's own tooltip to put back.
     removePsaFacadeReason();
@@ -1916,6 +1922,7 @@ void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unava
     const QString reason = unavailableReason.isEmpty()
         ? IStationLink::transmitSettingsUnavailableReason()
         : unavailableReason;
+    m_transmitSettingsReason = reason;
     for (QWidget* control : transmitSettingsGatedControls()) {
         gateTransmitControl(control, permitted, reason);
     }
@@ -1978,11 +1985,11 @@ void TxApplet::applyMonitorOutputGate()
 void TxApplet::setTxProfilePermitted(bool permitted, const QString& unavailableReason)
 {
     m_txProfilePermitted = permitted;
+    m_txProfileReason = unavailableReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : unavailableReason;
     for (QWidget* control : profileGatedControls()) {
-        gateTransmitControl(control, permitted,
-                            unavailableReason.isEmpty()
-                                ? IStationLink::transmitSettingsUnavailableReason()
-                                : unavailableReason);
+        gateTransmitControl(control, permitted, m_txProfileReason);
     }
 }
 
@@ -3427,6 +3434,15 @@ void TxApplet::syncSectionInstances()
 {
     if (!m_model) { return; }
 
+    // The radio's scale for the power gauge and sliders, before their
+    // values: wirePowerSection rescales the rows the applet already lists,
+    // which a copy being wired is not yet one of.
+    {
+        const auto model = m_model->hardwareProfile().model;
+        rescaleFwdGaugeForModel(model);
+        rescalePowerSlidersForModel(model);
+    }
+
     // The model state: the power sliders, the VOX row, MON and the monitor
     // volume, the LEV / EQ / CFC buttons, the filter cutoffs and the
     // TUNE / MOX buttons.
@@ -3454,6 +3470,45 @@ void TxApplet::syncSectionInstances()
 
     // The PS-A button, which the PureSignal facade owns.
     syncPsaFromFacade();
+
+    // Every gate, last, so a copy starts as gated as the applet's own row.
+    reapplyGates();
+}
+
+// ---------------------------------------------------------------------------
+// Apply every gate again from the state its setter kept.
+//
+// The gates are applied when the window learns what it may do, usually before
+// the operator places a row in a container, so a copy made later has missed
+// them.  Each setter is idempotent on the controls it already holds, so this
+// changes nothing on the applet's own rows and gates a new copy the same way,
+// with the same reasons.
+// ---------------------------------------------------------------------------
+void TxApplet::reapplyGates()
+{
+    // The MOX tooltip for the transmit slice's mode, which the gates below
+    // keep to give back.
+    if (SliceModel* slice = transmitSlice()) {
+        onMoxModeChanged(slice->dspMode());
+    }
+    // PS-A shows or hides as the applet's own does (setBoardCapabilities).
+    if (m_processingSection && m_processingSection->psaButton()) {
+        const bool shown = !m_processingSection->psaButton()->isHidden();
+        for (TxProcessingSection* s : allProcessingSections()) {
+            if (s->psaButton()) {
+                s->psaButton()->setVisible(shown);
+            }
+        }
+    }
+    // MOX, TUNE, 2-TONE and VOX, with the receive-only lock on top.
+    setTransmitPermitted(m_transmitPermitted, m_transmitPermissionReason);
+    setVoxPermitted(m_voxPermitted, m_voxReason);
+    setTransmitSettingsPermitted(m_transmitSettingsPermitted, m_transmitSettingsReason);
+    // Also the MON output pair (applyMonitorOutputGate).
+    setTransmitChainSettingsPermitted(m_transmitChainSettingsPermitted,
+                                      m_transmitChainSettingsReason);
+    setTxProfilePermitted(m_txProfilePermitted, m_txProfileReason);
+    setPureSignalArmingPermitted(m_psArmingPermitted, m_psArmingReason);
 }
 
 } // namespace NereusSDR

@@ -21,11 +21,19 @@
 //   4. The copy's control sets the model, and the applet's own row follows.
 //   5. The applet's own panel still has every row.
 //   6. The transmit-permission gate reaches the copy.
+//  10. A copy made after the gates carries them, with their reasons.
+//  11. A copy made while receive only is locked like the applet's row.
 //
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-21 - Copies made after the gates, remote 2-TONE copies, a copy's
+//                Take transmit and inert previews. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QComboBox>
 #include <QLabel>
 #include <QLayout>
 #include <QListWidget>
@@ -33,17 +41,28 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTemporaryDir>
+#include <QSignalSpy>
 #include <QTimer>
 #include <QWidget>
 
+#include <type_traits>
+
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
+#include "core/MoxController.h"
 #include "core/RadioStatus.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxChainSection.h"
+#include "gui/applets/TxFilterSection.h"
 #include "gui/applets/TxKeyingSection.h"
 #include "gui/applets/TxMonitorSection.h"
+#include "gui/applets/TxPowerSection.h"
+#include "gui/applets/TxProcessingSection.h"
+#include "gui/applets/TxVoxSection.h"
 #include "gui/applets/TxSectionContent.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
@@ -489,6 +508,168 @@ private slots:
         QVERIFY(keying->moxButton()->isEnabled());
         QVERIFY(keying->tuneButton()->isEnabled());
     }
+
+    // ── 10. A copy made after the gates carries them ─────────────────────
+    // The gates are applied when the window learns what the Core allows,
+    // usually before the operator places a row in a container.  A copy
+    // made later must start exactly as gated as the applet's own row, with
+    // the same reasons, or its MOX and TUNE would look live.
+    void aCopyMadeAfterTheGatesCarriesThem_data()
+    {
+        QTest::addColumn<bool>("remote");
+        QTest::addColumn<bool>("chainPermitted");
+        QTest::newRow("local, every gate") << false << false;
+        QTest::newRow("remote, every gate") << true << false;
+        QTest::newRow("local, monitor output only") << false << true;
+        QTest::newRow("remote, monitor output only") << true << true;
+    }
+    void aCopyMadeAfterTheGatesCarriesThem()
+    {
+        QFETCH(bool, remote);
+        QFETCH(bool, chainPermitted);
+        RadioModel rm(remote ? RadioModel::Role::Remote : RadioModel::Role::Local);
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        const QString txReason = QStringLiteral("Transmit is not yours");
+        applet.setTransmitPermitted(false, txReason);
+        applet.setVoxPermitted(false, QStringLiteral("No microphone line"));
+        applet.setTransmitSettingsPermitted(false, QStringLiteral("Settings are the Core's"));
+        applet.setTransmitChainSettingsPermitted(chainPermitted,
+                                                 QStringLiteral("Chain is the Core's"));
+        applet.setTxProfilePermitted(false, QStringLiteral("Profiles are the Core's"));
+        applet.setMonitorOutputPermitted(false, QStringLiteral("The Core sends no MON"));
+        applet.setPureSignalArmingPermitted(false, QStringLiteral("PS-A is the Core's"));
+        BoardCapabilities caps{};
+        caps.board = HPSDRHW::Atlas;
+        caps.hasPureSignal = false;
+        applet.setBoardCapabilities(caps);
+
+        QWidget host;
+        QList<QWidget*> copies;
+        for (const char* type : kRowTypes) {
+            QWidget* copy = registry.createWidget(
+                registry.makeEntry(QString::fromLatin1(type)), &host);
+            QVERIFY2(copy, type);
+            copies << copy;
+        }
+        const auto copyOf = [&copies](auto* own) {
+            using Section = std::remove_pointer_t<decltype(own)>;
+            for (QWidget* copy : copies) {
+                if (auto* s = qobject_cast<Section*>(copy)) {
+                    return s;
+                }
+            }
+            return static_cast<Section*>(nullptr);
+        };
+
+        auto* ownKeying = applet.findChild<TxKeyingSection*>();
+        auto* ownVox = applet.findChild<TxVoxSection*>();
+        auto* ownPower = applet.findChild<TxPowerSection*>();
+        auto* ownFilter = applet.findChild<TxFilterSection*>();
+        auto* ownChain = applet.findChild<TxChainSection*>();
+        auto* ownMonitor = applet.findChild<TxMonitorSection*>();
+        auto* ownProcessing = applet.findChild<TxProcessingSection*>();
+        QVERIFY(ownKeying && ownVox && ownPower && ownFilter && ownChain && ownMonitor
+                && ownProcessing);
+        auto* keying = copyOf(ownKeying);
+        auto* vox = copyOf(ownVox);
+        auto* power = copyOf(ownPower);
+        auto* filter = copyOf(ownFilter);
+        auto* chain = copyOf(ownChain);
+        auto* monitor = copyOf(ownMonitor);
+        auto* processing = copyOf(ownProcessing);
+        QVERIFY(keying && vox && power && filter && chain && monitor && processing);
+
+        const QList<QPair<QWidget*, QWidget*>> pairs = {
+            {ownKeying->moxButton(), keying->moxButton()},
+            {ownKeying->tuneButton(), keying->tuneButton()},
+            {ownVox->button(), vox->button()},
+            {ownVox->thresholdSlider(), vox->thresholdSlider()},
+            {ownVox->holdSlider(), vox->holdSlider()},
+            {ownPower->rfPowerSlider(), power->rfPowerSlider()},
+            {ownPower->tunePowerSlider(), power->tunePowerSlider()},
+            {ownFilter->filterLowSpin(), filter->filterLowSpin()},
+            {ownFilter->filterHighSpin(), filter->filterHighSpin()},
+            {ownChain->levButton(), chain->levButton()},
+            {ownChain->eqButton(), chain->eqButton()},
+            {ownChain->cfcButton(), chain->cfcButton()},
+            {ownChain->profileCombo(), chain->profileCombo()},
+            {ownMonitor->monButton(), monitor->monButton()},
+            {ownMonitor->volumeSlider(), monitor->volumeSlider()},
+            {ownMonitor->speakersButton(), monitor->speakersButton()},
+            {ownMonitor->headphonesButton(), monitor->headphonesButton()},
+            {ownProcessing->twoToneButton(), processing->twoToneButton()},
+            {ownProcessing->psaButton(), processing->psaButton()},
+        };
+        for (const auto& pair : pairs) {
+            QVERIFY(pair.first && pair.second);
+            const QString name = pair.first->objectName();
+            QVERIFY2(pair.first->isEnabled() == pair.second->isEnabled(), qPrintable(name));
+            QVERIFY2(pair.first->toolTip() == pair.second->toolTip(),
+                     qPrintable(name + QStringLiteral(": ") + pair.first->toolTip()
+                                + QStringLiteral(" / ") + pair.second->toolTip()));
+            QVERIFY2(pair.first->isHidden() == pair.second->isHidden(), qPrintable(name));
+        }
+
+        // The keys themselves: disabled, with the transmit gate's reason.
+        for (QWidget* key : {static_cast<QWidget*>(keying->moxButton()),
+                             static_cast<QWidget*>(keying->tuneButton()),
+                             static_cast<QWidget*>(vox->button())}) {
+            QVERIFY(!key->isEnabled());
+            QCOMPARE(key->toolTip(), txReason);
+        }
+        QVERIFY(!power->rfPowerSlider()->isEnabled());
+        QVERIFY(!monitor->speakersButton()->isEnabled());
+        QCOMPARE(monitor->speakersButton()->toolTip(),
+                 chainPermitted ? QStringLiteral("The Core sends no MON")
+                                : QStringLiteral("Chain is the Core's"));
+        QCOMPARE(power->tunePowerSlider()->isEnabled(), chainPermitted);
+        QVERIFY(processing->psaButton()->isHidden());
+    }
+
+    // ── 11. A copy made while receive only is locked like the applet's ───
+    void aCopyMadeWhileReceiveOnlyIsLocked()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        rm.setRxOnly(true);
+        QVERIFY(rm.transmitButtonsLocked());
+        QVERIFY(!applet.tuneButton()->isEnabled());
+
+        QWidget host;
+        auto* keying = qobject_cast<TxKeyingSection*>(
+            registry.createWidget(registry.makeEntry("tx.keying"), &host));
+        auto* processing = qobject_cast<TxProcessingSection*>(
+            registry.createWidget(registry.makeEntry("tx.processing"), &host));
+        auto* vox = qobject_cast<TxVoxSection*>(
+            registry.createWidget(registry.makeEntry("tx.vox"), &host));
+        QVERIFY(keying && processing && vox);
+
+        const QList<QPair<QWidget*, QWidget*>> pairs = {
+            {applet.moxButton(), keying->moxButton()},
+            {applet.tuneButton(), keying->tuneButton()},
+            {applet.twoToneButton(), processing->twoToneButton()},
+            {applet.voxButton(), vox->button()},
+        };
+        for (const auto& pair : pairs) {
+            const QString name = pair.first->objectName();
+            QVERIFY2(pair.first->isEnabled() == pair.second->isEnabled(), qPrintable(name));
+            QVERIFY2(pair.first->toolTip() == pair.second->toolTip(), qPrintable(name));
+        }
+        QVERIFY(!keying->tuneButton()->isEnabled());
+        QCOMPARE(keying->tuneButton()->toolTip(), rm.rxOnlyReason());
+
+        // And the lock comes off the copy with the applet's.
+        rm.setRxOnly(false);
+        QVERIFY(keying->tuneButton()->isEnabled());
+        QVERIFY(keying->moxButton()->isEnabled());
+    }
+
 private:
     // The titles the add-item menu's TX submenu offers, for a workspace over
     // this registry.  Empty when the workspace offers no TX rows.
