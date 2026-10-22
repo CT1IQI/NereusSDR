@@ -190,7 +190,7 @@ struct SetupWorkspaceShotTests {
         return write.key == "transmit" && write.properties.contains { $0.name == "power" }
     }
 
-    /// Waits for one Max Gain write, then expects no second one; returns the write.
+    /// Waits for one transmit power write, then expects no second one; returns the write.
     @discardableResult
     static func expectOneWrite(_ rig: Described.Rig, _ what: String) async throws -> LinkMessage {
         let sent = try #require(await rig.station.waitForMessage(within: .seconds(10), matching: isSliderWrite),
