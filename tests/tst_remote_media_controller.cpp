@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  The same with the Core folding the
+//                                    higher receiver's slice down onto the
+//                                    lower one; the rejoin rows install a
+//                                    codec. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  The pan keeps its history across an A/B
 //                                    switch after the Core puts two slices
 //                                    back on one receiver (JJ's ruling
@@ -325,6 +330,8 @@
 #include "core/session/Ps3DisplayCodec.h"
 #include "core/FFTEngine.h"
 #include "core/P2RadioConnection.h"
+#include "core/ReceiverManager.h"
+#include "core/codec/P2CodecSaturn.h"
 #include "core/StepAttenuatorController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/PathRacer.h"
@@ -610,6 +617,11 @@ QJsonObject lastControl(const QSignalSpy& spy, const QString& op)
 constexpr int kStays = 0;
 constexpr int kLeaves = 1;
 constexpr int kLeavesCoreRefuses = 2;
+// selectingTheOtherSliceOnOneReceiverKeepsThePansHistory: how its two slices
+// come to share one receiver.
+constexpr int kOneReceiver = 0;       // they always did
+constexpr int kJoinedOnTheCore = 1;   // the higher one's slice joins
+constexpr int kFoldedOnTheCore = 2;   // the lower one retunes; the other folds
 // sliceMovedToAnotherReceiverAsksForTheViewOnThatReceiver: when the pan
 // follows its slice, and whether this window sees the slice move at all.
 constexpr int kFollowsWithTheUpdate = 0;
@@ -3346,26 +3358,37 @@ private slots:
     {
         QTest::addColumn<bool>("threeD");
         QTest::addColumn<bool>("budget");
-        QTest::addColumn<bool>("rejoined");
-        QTest::newRow("waterfall") << false << false << false;
-        QTest::newRow("3D stack") << true << false << false;
-        QTest::newRow("waterfall, display budget") << false << true << false;
-        QTest::newRow("3D stack, display budget") << true << true << false;
+        QTest::addColumn<int>("rejoin");
+        QTest::newRow("waterfall") << false << false << kOneReceiver;
+        QTest::newRow("3D stack") << true << false << kOneReceiver;
+        QTest::newRow("waterfall, display budget") << false << true << kOneReceiver;
+        QTest::newRow("3D stack, display budget") << true << true << kOneReceiver;
         // JJ's ruling 2026-10-22: the two slices start on receivers of their
-        // own, and the Core puts them back on one when the second is tuned
-        // into the first's range during the session.
-        QTest::newRow("waterfall, rejoined on the Core") << false << false << true;
+        // own, and the Core puts them back on one when one is tuned into the
+        // other's range during the session. Joined: the second slice, alone
+        // on the higher receiver, is tuned next to the first. Folded: the
+        // first, alone on the lower receiver, is tuned next to the second,
+        // which comes down onto it.
+        QTest::newRow("waterfall, rejoined on the Core") << false << false << kJoinedOnTheCore;
+        QTest::newRow("waterfall, folded on the Core") << false << false << kFoldedOnTheCore;
     }
     void selectingTheOtherSliceOnOneReceiverKeepsThePansHistory()
     {
         QFETCH(bool, threeD);
         QFETCH(bool, budget);
-        QFETCH(bool, rejoined);
+        QFETCH(int, rejoin);
+        const bool rejoined = rejoin != kOneReceiver;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        // The rejoin rows need a codec: a rejoin compares the ADC each
+        // receiver's DDC reads, which only the codec's assignment says.
+        P2CodecSaturn codec;
         RadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
+        if (rejoined) {
+            station.receiverManager()->setP2Codec(&codec);
+        }
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int firstId = station.addSlice();
         auto* firstSlice = station.sliceById(firstId);
@@ -3382,6 +3405,16 @@ private slots:
             // Out of the first receiver's window: a receiver of its own.
             secondSlice->setFrequency(centre + 3000000);
             QVERIFY(secondSlice->streamIndex() >= 0 && secondSlice->streamIndex() != stream);
+            QCOMPARE(station.streamAllocator().activeStreamCount(), 2);
+        }
+        if (rejoin == kFoldedOnTheCore) {
+            // The first slice alone on the lower receiver, away from the
+            // pan's view; the second alone on the higher one, back at its
+            // place next to where the first will be tuned.
+            firstSlice->setFrequency(centre - 3000000);
+            QCOMPARE(firstSlice->streamIndex(), stream);
+            secondSlice->setFrequency(centre + 20000);
+            QVERIFY(secondSlice->streamIndex() != stream);
             QCOMPARE(station.streamAllocator().activeStreamCount(), 2);
         }
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
@@ -3441,9 +3474,17 @@ private slots:
             QTRY_VERIFY(remote.sliceById(secondId)
                 && remote.sliceById(secondId)->streamIndex() >= 0
                 && remote.sliceById(secondId)->streamIndex() != stream);
-            // Tuned back into the first receiver's range: the Core puts the
-            // second slice back on it and frees its own receiver.
-            secondSlice->setFrequency(centre + 20000);
+            if (rejoin == kJoinedOnTheCore) {
+                // Tuned back into the first receiver's range: the Core puts
+                // the second slice back on it and frees its own receiver.
+                secondSlice->setFrequency(centre + 20000);
+            } else {
+                // The first slice's receiver retunes next to the second, and
+                // the second comes down onto it; the higher one is freed.
+                firstSlice->setFrequency(centre);
+                QCOMPARE(firstSlice->streamIndex(), stream);
+                QCOMPARE(station.streamCentreHz(stream), centre);
+            }
             QCOMPARE(secondSlice->streamIndex(), stream);
             QCOMPARE(station.streamAllocator().activeStreamCount(), 1);
         }

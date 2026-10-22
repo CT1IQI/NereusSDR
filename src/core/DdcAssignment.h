@@ -19,6 +19,9 @@
 //               Extension of existing PsDdcConfig (Phase 3M-4) to carry
 //               up to 5 user slices' DDC assignments per Phase 3F design
 //               docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §4.
+//   2026-10-22. p1AdcForDdc: the ADC a Protocol 1 frame slot reads, decoded
+//               from the bank-4 routing word the P1 codecs send. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -100,6 +103,21 @@ constexpr int adcForDdc(const DdcAssignment& a, int ddc)
     const int word  = (ddc < 4) ? a.adcCtrl1 : a.adcCtrl2;
     const int shift = ((ddc < 4) ? ddc : (ddc - 4)) * 2;
     return (word >> shift) & 0x3;
+}
+
+/// Protocol 1: which ADC a frame slot reads, from the bank-4 routing word the
+/// P1 codecs put on the wire (CodecContext::p1AdcCntrl). Not the assignment's
+/// adcCtrl bytes: on Protocol 1 those never reach the radio, the codecs send
+/// C1 = word & 0xFF and C2 = (word >> 8) & 0x3F instead
+/// (P1CodecStandard.cpp:279-280, P1CodecHl2.cpp:190-191; Thetis
+/// networkproto1.c:519-520 [v2.10.3.15]). Split the same way and decoded by
+/// adcForDdc, so the answer is the codec's own bytes read back.
+constexpr int p1AdcForDdc(int p1AdcCntrl, int ddc)
+{
+    DdcAssignment wire{};
+    wire.adcCtrl1 = p1AdcCntrl & 0xFF;
+    wire.adcCtrl2 = (p1AdcCntrl >> 8) & 0x3F;
+    return adcForDdc(wire, ddc);
 }
 
 } // namespace NereusSDR

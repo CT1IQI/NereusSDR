@@ -25,6 +25,12 @@
 //                onto it instead. Antennas compare on the label the slice
 //                will have on its new band. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - Second review round: a rejoin or fold needs both receivers'
+//                DDCs on the same ADC for the active protocol and routing
+//                word (receiveAdcForStream), the receivers' own C-Tune pins
+//                to match, and, for a fold, every moving slice to share the
+//                lone slice's noise-blanker state and device. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
 //                checkbox sum) are named by the XVTR label, and a slice's
 //                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
@@ -14561,8 +14567,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
 
 QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
                                                 int currentStream,
-                                                const QString& joinLabel,
-                                                bool pinned) const
+                                                const QString& joinLabel) const
 {
     QVector<int> candidates;
     if (slice == nullptr || currentStream < 0 || slice->diversityEnabled()) {
@@ -14573,7 +14578,12 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
         return s->panKey().isEmpty() ? QStringLiteral("pan-0") : s->panKey();
     };
     const QString pan = panOf(slice);
-    const bool stationLocked = m_receiverManager && m_receiverManager->ddcFrequencyLocked();
+    // The ADC this slice's receiver reads now. Unknown (no codec yet, or no
+    // DDC) is not a match: nothing moves.
+    const int currentAdc = receiveAdcForStream(currentStream);
+    if (currentAdc < 0) {
+        return candidates;
+    }
     const QByteArray subject = m_sliceOwnership != nullptr
         ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
     for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
@@ -14607,11 +14617,21 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
         if (!qualifies) {
             continue;
         }
+        // The same ADC. The label does not decide it on Protocol 1, where the
+        // bank-4 word routes each frame slot whatever the antenna (Thetis
+        // P1_adc_cntrl, networkproto1.c:519-520 [v2.10.3.15]): on a 2-ADC
+        // board with slot 2 on ADC1, slice B on stream 1 hears the RX2 input
+        // and stream 0 the Alex ports. Moving a slice between the two would
+        // move it to another input. Either way round (a join or a fold) the
+        // slices that move change DDCs, so the two DDCs must read one ADC.
+        if (receiveAdcForStream(st) != currentAdc) {
+            continue;
+        }
         // C-Tune: the slice keeps the pin it had, and the receiver's is not
-        // touched, so neither slice's C-Tune changes. Read as
-        // bindSliceToStream reads `pinned`: the receiver's own pin or the
-        // station-wide lock.
-        if ((streamCtunPinned(st) || stationLocked) != pinned) {
+        // touched, so neither slice's C-Tune changes. The receivers' own
+        // pins: the station-wide lock applies to both alike, and folding it
+        // in let two different pins compare equal.
+        if (streamCtunPinned(st) != streamCtunPinned(currentStream)) {
             continue;
         }
         // Several devices on one Core: a receiver anchored by another device
@@ -14622,6 +14642,34 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
         candidates.append(st);
     }
     return candidates;
+}
+
+int RadioModel::receiveAdcForStream(int stream) const
+{
+    const int ddc = ddcForStream(stream);
+    if (ddc < 0) {
+        return -1;
+    }
+    // The protocol, decided as computeDdcAssignmentForContext picks the
+    // codec: the connection's when there is one, else ReceiverManager's.
+    bool p1 = false;
+    if (qobject_cast<P2RadioConnection*>(m_connection) != nullptr) {
+        p1 = false;
+    } else if (qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr) {
+        p1 = true;
+    } else if (m_receiverManager != nullptr && m_receiverManager->p2Codec() != nullptr) {
+        p1 = false;
+    } else if (m_receiverManager != nullptr && m_receiverManager->p1Codec() != nullptr) {
+        p1 = true;
+    } else {
+        return -1;
+    }
+    if (p1) {
+        // ddcForStream is the frame slot on Protocol 1 (publishDdcAssignment),
+        // which is what the bank-4 word is indexed by.
+        return NereusSDR::p1AdcForDdc(currentCodecContext().p1AdcCntrl, ddc);
+    }
+    return adcForStream(stream);
 }
 
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
@@ -14753,7 +14801,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             kept ? slice->rxAntenna()
                  : SliceModel::rxAntennaLabelFor(m_alexController, newBand, &sku);
         const QVector<int> candidates =
-            rejoinCandidateStreams(slice, previousStream, joinLabel, ddcPinned);
+            rejoinCandidateStreams(slice, previousStream, joinLabel);
         if (const auto rejoin =
                 m_streamAllocator.rejoinStream(previousStream, frequencyHz, candidates)) {
             placement = *rejoin;
@@ -14761,14 +14809,42 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
         } else {
             const int top = m_streamAllocator.highestActiveStream();
             if (top > previousStream && candidates.contains(top)) {
+                // Every slice that would move must already agree with this
+                // one on what the fold would otherwise change for it:
+                // - the noise blanker. A slice joining an occupied receiver
+                //   adopts the blanker state there (the peer adoption below),
+                //   so a moving slice whose NB or NB2 differs would have it
+                //   changed although the operator never touched that slice.
+                // - the device. The candidate check compares the device
+                //   anchoring the receiver only; every slice that moves must
+                //   be this slice's device's, or another device's slice
+                //   would be moved by this one.
+                // Otherwise nothing folds, as before.
+                const QByteArray subject = m_sliceOwnership != nullptr
+                    ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
+                const auto sameBlanker = [slice](const SliceModel* other) {
+                    return other->nbMode() == slice->nbMode()
+                        && other->nb1Threshold() == slice->nb1Threshold()
+                        && other->nb1TransitionMs() == slice->nb1TransitionMs()
+                        && other->nb1LeadMs() == slice->nb1LeadMs()
+                        && other->nb1LagMs() == slice->nb1LagMs()
+                        && other->nb2Mode() == slice->nb2Mode();
+                };
+                bool movable = true;
                 QVector<double> frequencies;
                 for (int id : slicesOnStream(top)) {
-                    if (const SliceModel* other = sliceById(id)) {
-                        frequencies.append(other->frequency());
+                    const SliceModel* other = sliceById(id);
+                    if (other == nullptr || !sameBlanker(other)
+                        || (m_sliceOwnership != nullptr
+                            && m_sliceOwnership->mark(id).subject() != subject)) {
+                        movable = false;
+                        break;
                     }
+                    frequencies.append(other->frequency());
                 }
-                if (m_streamAllocator.canFoldDown(previousStream, frequencyHz, top,
-                                                  frequencies)) {
+                if (movable
+                    && m_streamAllocator.canFoldDown(previousStream, frequencyHz, top,
+                                                     frequencies)) {
                     foldFrom = top;
                 }
             }

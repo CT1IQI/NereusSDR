@@ -37,12 +37,24 @@
 //               band's antenna label, Diversity, the anchoring device and a
 //               required receiver. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22: second review round: the fixture has a codec (a rejoin
+//               needs the ADC each DDC reads); Protocol 1 2-ADC routing,
+//               the moving slices' blanker state and device, and the
+//               receivers' own C-Tune pins under the station-wide lock.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include "core/AppSettings.h"
+#include "core/ConnectionState.h"
+#include "core/RadioDiscovery.h"
+#include "core/ReceiverManager.h"
 #include "core/SliceOwnership.h"
 #include "core/SliceStreamAllocator.h"
+#include "core/WdspTypes.h"
+#include "core/codec/P1CodecStandard.h"
+#include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -57,6 +69,11 @@ private:
     {
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.configureStreamPool(/*userDdcCount*/ ddcs, /*maxSlices*/ 5, 192000);
+        // The G2's Protocol 2 codec, as a connection installs it: a rejoin
+        // compares the ADC each receiver's DDC reads, which only a codec's
+        // assignment says. Stateless, so one serves every model.
+        static P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
     }
 
 private slots:
@@ -696,6 +713,200 @@ private slots:
         QVERIFY(a->streamCtunPinned());
         QVERIFY(b->streamCtunPinned());
         QVERIFY(!model.streamAllocator().isStreamActive(1));
+    }
+
+    // Second review round. The ADC: on Protocol 1 the bank-4 word routes
+    // each frame slot to an ADC whatever the antenna label says. On a 7000D
+    // (Orion class, two ADCs) stream 0 reads slot 0 and stream 1 slot 2. The
+    // default word (4) puts both on ADC0; 0x10 puts slot 2 on ADC1, the RX2
+    // input. Then neither way round may move a slice between the two
+    // receivers: it would change the input it hears.
+    void a_receiver_on_another_adc_is_not_joined_data()
+    {
+        QTest::addColumn<bool>("fold");
+        QTest::addColumn<bool>("split");
+        QTest::newRow("P1 2-ADC, join, one ADC") << false << false;
+        QTest::newRow("P1 2-ADC, join, slot 2 on ADC1") << false << true;
+        QTest::newRow("P1 2-ADC, fold, one ADC") << true << false;
+        QTest::newRow("P1 2-ADC, fold, slot 2 on ADC1") << true << true;
+    }
+    void a_receiver_on_another_adc_is_not_joined()
+    {
+        QFETCH(bool, fold);
+        QFETCH(bool, split);
+        static P1CodecStandard codec;
+        const QString mac = QStringLiteral("00:1c:c0:a2:61:0a");
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 5, 192000);
+        model.receiverManager()->setP1Codec(&codec);
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol1;
+            info.macAddress = mac;
+            model.setLastRadioInfoForTest(info);
+        }
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        AppSettings::instance().clearHardwareValues(mac);
+        if (split) {
+            AppSettings::instance().setHardwareValue(mac, QStringLiteral("p1AdcCntrl"),
+                                                     QStringLiteral("0x10"));
+        }
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        // fold: A alone on the lower receiver retunes next to B (B would come
+        // down); join: A alone on the higher one tunes next to B.
+        QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
+                     : loneSliceOnTheHigherReceiver(model, a, b));
+        const int lower = 0;
+        QCOMPARE(model.ddcForStream(lower), 0);
+        QCOMPARE(model.ddcForStream(1), 2);
+        QCOMPARE(model.receiveAdcForStream(lower), 0);
+        QCOMPARE(model.receiveAdcForStream(1), split ? 1 : 0);
+
+        a->setFrequency(7268000.0);
+
+        AppSettings::instance().clearHardwareValues(mac);
+        if (split) {
+            QCOMPARE(a->streamIndex(), fold ? 0 : 1);
+            QCOMPARE(b->streamIndex(), fold ? 1 : 0);
+            QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+        } else {
+            QCOMPARE(a->streamIndex(), lower);
+            QCOMPARE(b->streamIndex(), lower);
+            QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+        }
+    }
+
+    // A fold moves the higher receiver's slices onto the lone slice's, where
+    // they would adopt its noise-blanker state. A slice whose blanker
+    // differs therefore stays where it is; once it matches, it folds.
+    void a_fold_needs_the_moving_slices_blanker_state_data()
+    {
+        QTest::addColumn<QString>("field");
+        QTest::newRow("NB mode") << QStringLiteral("nbMode");
+        QTest::newRow("NB1 threshold") << QStringLiteral("threshold");
+        QTest::newRow("NB1 transition") << QStringLiteral("transition");
+        QTest::newRow("NB1 lead") << QStringLiteral("lead");
+        QTest::newRow("NB1 lag") << QStringLiteral("lag");
+        QTest::newRow("NB2 mode") << QStringLiteral("nb2Mode");
+    }
+    void a_fold_needs_the_moving_slices_blanker_state()
+    {
+        QFETCH(QString, field);
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(twoReceiversOnOnePan(model, a, b));
+        const auto setOn = [&field](SliceModel* s, bool changed) {
+            if (field == QLatin1String("nbMode")) {
+                s->setNbMode(changed ? NbMode::NB2 : NbMode::Off);
+            } else if (field == QLatin1String("threshold")) {
+                s->setNb1Threshold(changed ? 45 : 30);
+            } else if (field == QLatin1String("transition")) {
+                s->setNb1TransitionMs(changed ? 0.05 : 0.01);
+            } else if (field == QLatin1String("lead")) {
+                s->setNb1LeadMs(changed ? 0.05 : 0.01);
+            } else if (field == QLatin1String("lag")) {
+                s->setNb1LagMs(changed ? 0.05 : 0.01);
+            } else {
+                s->setNb2Mode(changed ? 1 : 0);
+            }
+        };
+        setOn(b, true);
+        const NbMode bMode = b->nbMode();
+        const int bThreshold = b->nb1Threshold();
+        const double bTransition = b->nb1TransitionMs();
+        const double bLead = b->nb1LeadMs();
+        const double bLag = b->nb1LagMs();
+        const int bNb2 = b->nb2Mode();
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+        // B was not touched.
+        QCOMPARE(b->nbMode(), bMode);
+        QCOMPARE(b->nb1Threshold(), bThreshold);
+        QCOMPARE(b->nb1TransitionMs(), bTransition);
+        QCOMPARE(b->nb1LeadMs(), bLead);
+        QCOMPARE(b->nb1LagMs(), bLag);
+        QCOMPARE(b->nb2Mode(), bNb2);
+
+        // Once A's blanker matches B's, the same retune folds.
+        setOn(a, true);
+        a->setFrequency(7269000.0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+    }
+
+    // A fold moves every slice on the higher receiver, so each must be the
+    // lone slice's device's, not only the one anchoring that receiver.
+    void a_fold_does_not_move_another_devices_slice()
+    {
+        RadioModel model;
+        seed(model);
+        SliceOwnership* owners = model.sliceOwnership();
+        QVERIFY(owners);
+        const QByteArray phone("phone-device");
+        const QByteArray tablet("tablet-device");
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        SliceModel* c = nullptr;
+        {
+            SliceOwnership::CreatorScope creator(owners, tablet);
+            a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+            QVERIFY(a);
+            a->setFrequency(3870000.0);
+            b = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+            QVERIFY(b);
+            b->setFrequency(7262000.0);
+            c = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+            QVERIFY(c);
+            c->setFrequency(7264000.0);
+        }
+        // A new slice of another device gets a receiver of its own, so a
+        // receiver carries two devices' slices only after a hand-over.
+        owners->setOwner(c->sliceIndex(), phone);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QCOMPARE(c->streamIndex(), 1);
+        QCOMPARE(owners->anchorOf(1), tablet);
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QCOMPARE(c->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+
+        // With every slice there the tablet's, the same retune folds.
+        owners->setOwner(c->sliceIndex(), tablet);
+        a->setFrequency(7269000.0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(c->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+    }
+
+    // The station-wide C-Tune lock applies to every receiver alike, so it
+    // cannot make a pinned receiver and an unpinned one match: the slices
+    // that would move would change pin.
+    void the_station_wide_lock_does_not_make_two_pins_match()
+    {
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(twoReceiversOnOnePan(model, a, b));
+        QVERIFY(model.requestStreamCtunPinned(a->sliceIndex(), true));
+        model.receiverManager()->setDdcFrequencyLocked(true);
+
+        a->setFrequency(7268000.0);          // out of A's window; B unpinned
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QVERIFY(!b->streamCtunPinned());
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
     }
 
     // Restore: two slices of one pan inside one window share one receiver

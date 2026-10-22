@@ -13,6 +13,9 @@
 //                share with when it tunes into their range (JJ's ruling
 //                2026-10-22), compared on the slice's new-band label.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - receiveAdcForStream; rejoin candidates compare the ADC and
+//                the receivers' own C-Tune pins. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -7339,12 +7342,20 @@ public:
     /// and which receiver is freed). A receiver qualifies only when the
     /// move changes nothing for anyone already on it: every slice there is
     /// on the same pan, has the receive label `joinLabel` (the label `slice`
-    /// will have on its new band), and is not in Diversity; its C-Tune pin
-    /// (its own, or the station-wide lock) equals `pinned`; and, where
-    /// slices have owners, the receiver's anchoring device is the slice's
-    /// own.
+    /// will have on its new band), and is not in Diversity; its DDC reads
+    /// the same ADC as `currentStream`'s (receiveAdcForStream, both known);
+    /// its C-Tune pin equals `currentStream`'s; and, where slices have
+    /// owners, the receiver's anchoring device is the slice's own.
     QVector<int> rejoinCandidateStreams(const SliceModel* slice, int currentStream,
-                                        const QString& joinLabel, bool pinned) const;
+                                        const QString& joinLabel) const;
+
+    /// The ADC the radio has been told `stream`'s DDC reads, for the active
+    /// protocol: on Protocol 2 the codec's published assignment
+    /// (adcForStream); on Protocol 1 the bank-4 routing word the codec sends
+    /// (CodecContext::p1AdcCntrl, p1AdcForDdc), indexed by the stream's
+    /// frame slot. -1 when it is not known: no codec yet, or the stream has
+    /// no DDC.
+    int receiveAdcForStream(int stream) const;
 
     /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
     /// which is what decides whether that hardware DDC's samples are forwarded
