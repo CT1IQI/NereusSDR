@@ -1203,7 +1203,7 @@ table.
 | `miniDisplayVersion` | 1 |
 | `accessoryTxVersion` | 1 |
 | `remoteRotorControlVersion` | 1 |
-| `radioAntennaRowsVersion` | 1 |
+| `radioAntennaRowsVersion` | 2 |
 | `vaxVersion` | 1 |
 | `txEqCurveVersion` | 2 |
 | `band2mVersion` | 1 |
@@ -1399,14 +1399,18 @@ When a feature is off, its version is 0:
   slice's receiver input for this app. Updating the Core may help.".
 - `radioAntennaRowsVersion`: optional and appended after
   `accessoryTxVersion` only at agreed minor 11 for a peer that declared
-  `radioAntennaRows` exactly 1, while the Core has a connected radio with
+  `radioAntennaRows` 1 or later, while the Core has a connected radio with
   a canonical MAC and a bound Alex controller on an Alex-filter board,
   and its existing complete antenna path offers `radioHardwareVersion`
   6 or later. The Core applies that same readiness check to each new verb.
   Version 1 adds `setAlexRxAntennaForRadio` and
-  `setAlexTxAntennaForRadio` (section 9.1). Missing, malformed and unknown
-  versions are unusable. Older peers receive byte-for-byte the previous
-  capability shape and keep the existing one-band verbs.
+  `setAlexTxAntennaForRadio` (section 9.1). Version 2 widens a band's
+  RX-only value to Thetis's checkbox sum, 0 to 5 (section 9.1). The Core
+  offers the lower of the peer's declared version and 2, so a peer that
+  declared a later version is offered 2. A client reads 1 and 2; missing,
+  malformed and later versions are unusable. Older peers receive
+  byte-for-byte the previous capability shape and keep the existing
+  one-band verbs.
 - `vaxVersion` (iPhone app plan Task 25, R-IOS-18): optional and appended
   after `radioAntennaRowsVersion`, only at agreed minor 11 for a peer
   whose hello declared `vax` 1; any other peer receives the previous
@@ -4644,7 +4648,22 @@ window changes one band's TX antenna with the `setAlexTxAntenna` command
 instead (section 6.3), so its edit cannot put back another band the Core
 changed; the whole-list write stays for a window that sends it.
 
-For a peer offered `radioAntennaRowsVersion` 1, the two `ForRadio` verbs
+A band's RX-only value is Thetis's checkbox sum (setup.cs
+ProcessAlexAntCheckBox): 0 none, 1 and 2 the SKU's first and second
+receive-only inputs, which rule each other out, 3 XVTR, 4 XVTR with the
+first and 5 XVTR with the second. A peer whose hello declared
+`radioAntennaRows` 2 or later at agreed minor 11 reads and writes all six
+values in `rxOnlyAntennas` and in the `rxOnly` form of `setAlexRxAntenna`
+and `setAlexRxAntennaForRadio`. Any other peer reads 4 and 5 as 3 (XVTR,
+the box whose name Thetis shows) in every `rxOnlyAntennas` it is sent. A
+one-band write of 4 or 5 from such a peer changes nothing and is answered
+"Update this app to choose XVTR with another receive-only input on this
+Core."; its write of 0 to 3 replaces the band's value, as a single pick
+would. A whole `rxOnlyAntennas` list from such a peer keeps a band's 4 or
+5 where the peer sent back the 3 it was shown, and takes every other
+entry as written.
+
+For a peer offered `radioAntennaRowsVersion` 1 or later, the two `ForRadio` verbs
 carry the current radio's canonical MAC along with one band's existing
 antenna arguments. The Core checks the exact argument types and current
 connected MAC before it classifies a change, when a held confirmation

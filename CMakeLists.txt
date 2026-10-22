@@ -1590,6 +1590,9 @@ list(APPEND CORE_SOURCES
     # iPhone app Task 19 (R-IOS-06): the mirrored `catalog` object.
     src/core/session/StationCatalog.cpp
     src/core/session/BandLinkFit.cpp
+    # RX-only antenna values 4 and 5 (Thetis's checkbox sum) for a peer
+    # that reads 0 to 3 only.
+    src/core/session/RxOnlyLinkFit.cpp
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's

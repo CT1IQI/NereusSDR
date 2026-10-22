@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: radioAntennaRowsVersion 2 is read and sent (RX-only
+//               antennas 0..5). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta, after
 //               spectrumPictureVersion and before coreBuildInfo, for a peer
 //               that declared firmwareBeta. J.J. Boyd (KG4VCF), AI-assisted
@@ -437,7 +440,7 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
         if (remoteRotorControlVersion > 0) {
             updates.append(intEntry("remoteRotorControlVersion", remoteRotorControlVersion));
         }
-        if (radioAntennaRowsVersion == 1) {
+        if (radioAntennaRowsVersion >= 1) {
             updates.append(intEntry("radioAntennaRowsVersion", radioAntennaRowsVersion));
         }
         // iPhone app plan Task 25: the station computer's VAX, only for a
@@ -976,7 +979,9 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 } else if (u.name == "remoteRotorControlVersion") {
                     caps.remoteRotorControlVersion = version;
                 } else if (u.name == "radioAntennaRowsVersion") {
-                    caps.radioAntennaRowsVersion = version == 1 ? 1 : 0;
+                    // 1 or 2 (RX-only values 0..5); any other is unusable.
+                    caps.radioAntennaRowsVersion = version >= 1
+                        && version <= kRadioAntennaRowsVersion ? version : 0;
                 } else if (u.name == "vaxVersion") {
                     caps.vaxEntry = true;
                     caps.vaxVersion = version;

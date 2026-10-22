@@ -223,6 +223,9 @@
 //   2026-10-08: rotor control plan Task 4b: RotorModel joins the mirrored
 //               classes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: the capture declares radioAntennaRows 2, so the Core's
+//               RX-only checkbox sums (0..5) are captured unnarrowed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -688,7 +691,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"settingsHygiene", 2}, {"coreBuildInfo", 1},
                                   {"settingsBackup", 1},
                                   {"setupDescription", 1}, {"miniDisplay", 1},
-                                  {"radioAntennaRows", 1},
+                                  {"radioAntennaRows", 2},
                                   // iPhone app plan Task 25: the `vax` object.
                                   {"vax", 1}, {"txEqCurve", 2}, {"band2m", 1},
                                   // Phone wire batch: each slice's
@@ -803,7 +806,7 @@ QJsonArray captureCapabilities()
     caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
-    caps.radioAntennaRowsVersion = 1;
+    caps.radioAntennaRowsVersion = 2;
     // Rotor control plan Task 4b: sent by a Core that owns a rotor.
     caps.remoteRotorControlVersion = 1;
     // iPhone app plan Task 25: sent to a peer that declared vax.

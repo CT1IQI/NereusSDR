@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - RX-only 4 and 5 are named by the XVTR label. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
 //                 capability changes as well as remote changes. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
@@ -2557,10 +2559,11 @@ void RxApplet::populateAntennaButtons(Band band)
     // Match SliceModel::refreshAntennasFromAlex's RX-only resolution while
     // leaving TX intent below with the slice. An ANT-only echo would clear
     // the RX-only mux through RadioModel's rxAntennaChanged handler.
-    const int rxOnly = alex.rxOnlyAnt(band);
-    if (rxOnly >= 1 && rxOnly <= 3) {
+    // 4 and 5 (XVTR with an input) are named by the XVTR box.
+    const int rxOnlySlot = AlexController::rxOnlyLabelSlot(alex.rxOnlyAnt(band));
+    if (rxOnlySlot >= 0) {
         const SkuUiProfile sku = skuUiProfileFor(m_model->hardwareProfile().model);
-        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnlySlot)];
         if (!label.isEmpty()) {
             rxLabel = label;
         }
