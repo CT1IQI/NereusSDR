@@ -111,6 +111,11 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): the mode combo resets too before a
 //               RADE v2 mode is added or removed. AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -214,6 +219,7 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/TuneStepLabel.h"
 
@@ -830,7 +836,9 @@ void RxApplet::buildUi()
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
             if (isListening()) { return; }  // Task 15: another device controls it
             // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
-            QMenu menu(this);
+            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+            QMenu& menu = *menuOwner.get();
             // Dark popup palette — without this, Ubuntu's default theme renders
             // items as dark-on-dark (only visible on hover). Issue #98.
             menu.setStyleSheet(QStringLiteral(
@@ -852,6 +860,9 @@ void RxApplet::buildUi()
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_rxAntBtn->mapToGlobal(QPoint(0, m_rxAntBtn->height())));
+            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+            if (!menuOwner) { return; }
             if (sel && m_slice) {
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
@@ -885,7 +896,9 @@ void RxApplet::buildUi()
                              || (ant == QStringLiteral("ANT3") && alex->blockTxAnt3()));
             };
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
-            QMenu menu(this);
+            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+            QMenu& menu = *menuOwner.get();
             // Dark popup palette — see RX button above. Issue #98.
             menu.setStyleSheet(QStringLiteral(
                 "QMenu { background: #1a2a3a; color: #e0e8f0;"
@@ -911,6 +924,9 @@ void RxApplet::buildUi()
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_txAntBtn->mapToGlobal(QPoint(0, m_txAntBtn->height())));
+            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+            if (!menuOwner) { return; }
             if (sel && m_slice) {
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
@@ -1660,11 +1676,16 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
                 [this, slot, mode](const QPoint& pos) {
             if (!m_model || !m_model->filterPresetStore()) { return; }
             FilterPresetStore* store = m_model->filterPresetStore();
-            QMenu menu(this);
+            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+            QMenu& menu = *menuOwner.get();
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
             QAction* editAct = menu.addAction(QStringLiteral("Edit this preset…"));
             QAction* resetAct = menu.addAction(QStringLiteral("Reset this preset"));
             QAction* chosen = menu.exec(qobject_cast<QWidget*>(sender())->mapToGlobal(pos));
+            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+            if (!menuOwner) { return; }
             if (chosen == editAct) {
                 auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
                 dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -1910,7 +1931,9 @@ void RxApplet::populateSliceMenu(QMenu& menu, int sliceId)
 void RxApplet::showSliceMenu(int sliceId, QWidget* anchor, const QPoint& pos)
 {
     if (sliceId < 0 || !anchor) { return; }
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
     populateSliceMenu(menu, sliceId);
     if (menu.actions().isEmpty()) { return; }

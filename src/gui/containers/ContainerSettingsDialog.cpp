@@ -63,6 +63,11 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -151,6 +156,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "ContainerControlCatalog.h"
@@ -2293,7 +2299,9 @@ void ContainerSettingsDialog::onLoadPreset()
         "QMenu::item:selected { background: #00b4d8; color: #0f0f1a; }"
         "QMenu::separator { background: #203040; height: 1px; }";
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QLatin1String(kMenuStyle));
 
     // S-Meter sub-menu

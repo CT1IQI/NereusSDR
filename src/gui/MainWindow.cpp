@@ -854,6 +854,11 @@
 //                works FT8 through a remote window with VAX. Set up in CAT &
 //                Network > rigctld. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1075,6 +1080,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "gui/ScopedChildWidget.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -15222,11 +15228,16 @@ void MainWindow::onContainerFilterContext(ContainerWidget* c, int index)
             : tr("This mode has no preset on that button."));
         return;
     }
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
     QAction* editAct = menu.addAction(tr("Edit this preset…"));
     QAction* resetAct = menu.addAction(tr("Reset this preset"));
     QAction* chosen = menu.exec(QCursor::pos());
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (chosen == editAct) {
         auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
         dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -16144,7 +16155,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
 {
     if (!m_systemTile) { return; }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     QAction* sysAct = menu.addAction(tr("System"));
     sysAct->setCheckable(true);
     sysAct->setChecked(m_cpuShowSystem);
@@ -16172,6 +16185,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     }
 
     QAction* chosen = menu.exec(m_systemTile->mapToGlobal(localPos));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (!chosen) { return; }
 
     if (chosen == cycleAct || chosen == thisAct || chosen == coreAct) {
@@ -17983,7 +17999,9 @@ void MainWindow::showCoreRadioInfo()
 // use "Connect to other radio…" to re-select the same radio.
 void MainWindow::showSegmentContextMenu(const QPoint& globalPos)
 {
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);
@@ -18054,7 +18072,9 @@ void MainWindow::showStationContextMenu(const QPoint& globalPos)
         return;
     }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);

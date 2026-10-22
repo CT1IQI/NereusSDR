@@ -31,6 +31,11 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -114,6 +119,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ConnectionPanel.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "AddCustomRadioDialog.h"
@@ -1406,7 +1412,9 @@ void ConnectionPanel::onContextMenuRequested(const QPoint& pos)
     RadioInfo info = selectedRadio();
     bool connected = m_radioModel->isConnected();
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QStringLiteral(
         "QMenu { background: #12202e; color: #c8d8e8; border: 1px solid #203040; }"
         "QMenu::item:selected { background: #005578; }"
@@ -1427,6 +1435,9 @@ void ConnectionPanel::onContextMenuRequested(const QPoint& pos)
     actCopyMac->setEnabled(!info.macAddress.isEmpty());
 
     QAction* triggered = menu.exec(m_radioTable->viewport()->mapToGlobal(pos));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (!triggered) {
         return;
     }
