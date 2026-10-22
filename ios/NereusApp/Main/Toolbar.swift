@@ -312,7 +312,7 @@ struct Toolbar: View {
         .lineLimit(1)
         .padding(.horizontal, 10)
         .padding(.vertical, 1)
-        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
         .opacity(main.coreName == nil && app.coreHost == nil ? 0 : 1)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("coreName")

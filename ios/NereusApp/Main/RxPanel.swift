@@ -147,8 +147,8 @@ struct RxPanel: View {
                     .foregroundStyle(model.squelchOn ? ChromeColours.buttonOnGreenText : ChromeColours.textDim)
                     .frame(width: 62, height: 28)
                     .background(model.squelchOn ? ChromeColours.buttonOnGreen : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(model.squelchOn ? ChromeColours.buttonOnGreenBorder : ChromeColours.buttonBorder,
                                       lineWidth: 1))
             }
@@ -378,8 +378,8 @@ struct PanelSliderRow: View {
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .frame(minWidth: 34)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         }
         .opacity(range == nil || value == nil || greyed ? 0.45 : 1)
         .onChange(of: value) {

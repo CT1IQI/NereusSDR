@@ -139,8 +139,8 @@ struct ModMonitorSettingsSheet: View {
             content()
         }
         .padding(10)
-        .background(ChromeColours.panel, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .background(ChromeColours.panel, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
     }
 
     private func label(_ words: String) -> some View {
@@ -196,8 +196,8 @@ struct ModMonitorThresholdRow: View {
                     .focused($typing)
                     .padding(.horizontal, 4)
                     .frame(width: control * 1.05, height: control * 0.9)
-                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
                     .accessibilityLabel(title + ", percent")
                     .accessibilityIdentifier(identifier)
                     .onChange(of: typing) { _, now in
@@ -242,8 +242,8 @@ struct ModMonitorThresholdRow: View {
                 .font(.system(size: font + 7, weight: .bold))
                 .foregroundStyle(disabled ? ChromeColours.iconMuted : ChromeColours.text)
                 .frame(width: control, height: control)
-                .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6)
+                .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(disabled ? ChromeColours.insetBorder : ChromeColours.buttonBorder, lineWidth: 1))
                 .contentShape(Rectangle())
         }

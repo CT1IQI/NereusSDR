@@ -472,7 +472,7 @@ private struct PaProfileCell: View {
             } else if let number = value?.number, let range = column.range, let decimals = column.decimals {
                 if compact {
                     numberButton(number, decimals: decimals).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .accessibilityIdentifier(id)
                 } else {
                     Stepper {

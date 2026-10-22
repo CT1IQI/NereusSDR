@@ -224,8 +224,8 @@ struct DevicesPage: View {
                                 .foregroundStyle(BandColours.txBadgeOnText)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(BandColours.txBadgeOn, in: RoundedRectangle(cornerRadius: 2))
-                                .overlay(RoundedRectangle(cornerRadius: 2)
+                                .background(BandColours.txBadgeOn, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                     .strokeBorder(BandColours.txBadgeOnBorder, lineWidth: 1))
                                 .accessibilityLabel("has transmit")
                         }

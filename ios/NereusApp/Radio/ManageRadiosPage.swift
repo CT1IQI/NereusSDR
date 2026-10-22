@@ -98,7 +98,7 @@ struct ManageRadiosPage: View {
                         .foregroundStyle(ChromeColours.buttonOnGreenText)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(ChromeColours.buttonOnGreen, in: RoundedRectangle(cornerRadius: 3))
+                        .background(ChromeColours.buttonOnGreen, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .accessibilityIdentifier("manageRadios.\(radio.mac).inUse")
                 }
             }
