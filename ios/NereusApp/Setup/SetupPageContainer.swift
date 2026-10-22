@@ -660,9 +660,13 @@ extension SetupStepperRow where Label == Text {
 
 // MARK: Sliders
 
-/// A Setup slider (spec section 7.1): the track in the inset, the filled
-/// part in `kGlassSelBorder`, a light raised thumb. VoiceOver reads and
-/// adjusts it as the stock slider it stands for.
+/// A Setup slider: the stock slider, tinted with the workspace accent.
+/// It behaves exactly as the stock one does, which a drawn slider could not
+/// promise: the value moves only while the thumb is dragged, a tap on the
+/// track changes nothing and sends nothing, a vertical drag scrolls the
+/// page, and VoiceOver adjusts it. Spec section 7.1 asks for the inset
+/// track and a raised thumb; the system slider keeps its own track and
+/// thumb ("System shapes stay Apple's", W11), the filled part in the accent.
 struct SetupSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
@@ -670,83 +674,16 @@ struct SetupSlider: View {
     /// Called with true when a drag starts and false when it ends, as `Slider` does.
     var onEditingChanged: (Bool) -> Void = { _ in }
 
-    static let thumbSize: CGFloat = 22
-    static let trackHeight: CGFloat = 6
-    @State private var dragging = false
-    /// A slider that cannot act takes no drag; its row greys it at 0.4.
-    @Environment(\.isEnabled) private var isEnabled
-
-    /// Where `value` sits along the track, 0 to 1.
-    static func fraction(_ value: Double, in range: ClosedRange<Double>) -> Double {
-        let span = range.upperBound - range.lowerBound
-        guard span > 0 else {
-            return 0
-        }
-        return min(max((value - range.lowerBound) / span, 0), 1)
-    }
-
-    /// The value at `fraction` along the track, on a step.
-    static func value(at fraction: Double, in range: ClosedRange<Double>, step: Double) -> Double {
-        let raw = range.lowerBound + min(max(fraction, 0), 1) * (range.upperBound - range.lowerBound)
-        guard step > 0 else {
-            return raw
-        }
-        let stepped = range.lowerBound + ((raw - range.lowerBound) / step).rounded() * step
-        return min(max(stepped, range.lowerBound), range.upperBound)
-    }
-
     var body: some View {
-        GeometryReader { geometry in
-            let thumb = Self.thumbSize
-            let travel = max(geometry.size.width - thumb, 1)
-            let at = Self.fraction(value, in: range) * travel
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(WorkspacePalette.insetBg)
-                    .overlay { Capsule().strokeBorder(WorkspacePalette.insetBorder, lineWidth: 1) }
-                    .frame(height: Self.trackHeight)
-                Capsule()
-                    .fill(WorkspacePalette.glassSelBorder)
-                    .frame(width: max(Self.trackHeight, at + thumb / 2), height: Self.trackHeight)
-                Circle()
-                    .fill(LinearGradient(colors: [WorkspacePalette.titleText, WorkspacePalette.textTertiary],
-                                         startPoint: .top, endPoint: .bottom))
-                    .overlay { Circle().strokeBorder(WorkspacePalette.textInactive, lineWidth: 1) }
-                    .frame(width: thumb, height: thumb)
-                    .offset(x: at)
-            }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
-                guard isEnabled else {
-                    return
-                }
-                if !dragging {
-                    dragging = true
-                    onEditingChanged(true)
-                }
-                value = Self.value(at: (drag.location.x - thumb / 2) / travel, in: range, step: step)
-            }.onEnded { _ in
-                guard dragging else {
-                    return
-                }
-                dragging = false
-                onEditingChanged(false)
-            })
-        }
-        .frame(height: 30)
-        .accessibilityRepresentation {
-            let adjusted = Binding(get: { value }, set: { adjusted in
-                value = adjusted
-                onEditingChanged(false)
-            })
+        Group {
             // A step of 0 is a slider without steps; the stock slider traps on it.
             if step > 0 {
-                Slider(value: adjusted, in: range, step: step)
+                Slider(value: $value, in: range, step: step, onEditingChanged: onEditingChanged)
             } else {
-                Slider(value: adjusted, in: range)
+                Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
             }
         }
+        .tint(WorkspacePalette.accentFill)
     }
 }
 
@@ -755,13 +692,26 @@ struct SetupSlider: View {
 /// A list's swipe to delete, for a row in a panel: swipe the row left to
 /// show Delete, tap Delete to remove it; swipe right or tap elsewhere on the
 /// row to put it back. VoiceOver offers Delete as an action. It is an extra
-/// way in: the page keeps its visible Remove control (D114).
+/// way in: the page keeps its visible Remove control (D114). A drag that
+/// starts in one of the row's fields (marked ``View/setupSwipeExcluded()``)
+/// belongs to the field and never swipes the row.
 struct SetupSwipeToDelete: ViewModifier {
     let enabled: Bool
     let id: String
     let delete: () -> Void
     @State private var offset: CGFloat = 0
     @State private var open = false
+    /// The row's fields, in ``space``.
+    @State private var fields: [CGRect] = []
+
+    /// The row's own coordinate space, which the fields report their frames in.
+    static let space = "SetupSwipeToDelete"
+
+    /// True when a drag from `start` may swipe the row: it starts outside
+    /// every field.
+    static func swipes(from start: CGPoint, fields: [CGRect]) -> Bool {
+        !fields.contains { $0.contains(start) }
+    }
 
     static let deleteText = "Delete"
     static let buttonWidth: CGFloat = 84
@@ -805,14 +755,16 @@ struct SetupSwipeToDelete: ViewModifier {
                     }
                 }
         }
-        .simultaneousGesture(DragGesture(minimumDistance: 20).onChanged { drag in
-            guard enabled, abs(drag.translation.width) > abs(drag.translation.height) else {
+        .onPreferenceChange(SetupSwipeExcludedKey.self) { fields = $0 }
+        .simultaneousGesture(DragGesture(minimumDistance: 20, coordinateSpace: .named(Self.space)).onChanged { drag in
+            guard enabled, Self.swipes(from: drag.startLocation, fields: fields),
+                  abs(drag.translation.width) > abs(drag.translation.height) else {
                 return
             }
             let base = open ? -Self.buttonWidth : 0
             offset = min(0, max(-Self.buttonWidth * 1.5, base + drag.translation.width))
         }.onEnded { drag in
-            guard enabled else {
+            guard enabled, Self.swipes(from: drag.startLocation, fields: fields) else {
                 return
             }
             let horizontal = abs(drag.translation.width) > abs(drag.translation.height)
@@ -823,6 +775,8 @@ struct SetupSwipeToDelete: ViewModifier {
                 offset = open ? -Self.buttonWidth : 0
             }
         })
+        // Outside the gesture, so the drag and the fields share the space.
+        .coordinateSpace(name: Self.space)
         .onChange(of: enabled) { _, enabled in
             if !enabled {
                 close()
@@ -834,6 +788,28 @@ struct SetupSwipeToDelete: ViewModifier {
         withAnimation(.snappy(duration: 0.2)) {
             open = false
             offset = 0
+        }
+    }
+}
+
+/// The frames of a swipe-to-delete row's fields, in the row's space.
+struct SetupSwipeExcludedKey: PreferenceKey {
+    static let defaultValue: [CGRect] = []
+
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value += nextValue()
+    }
+}
+
+extension View {
+    /// A field inside a ``SetupSwipeToDelete`` row: a drag that starts on it
+    /// edits the field and never swipes the row.
+    func setupSwipeExcluded() -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: SetupSwipeExcludedKey.self,
+                                       value: [geometry.frame(in: .named(SetupSwipeToDelete.space))])
+            }
         }
     }
 }

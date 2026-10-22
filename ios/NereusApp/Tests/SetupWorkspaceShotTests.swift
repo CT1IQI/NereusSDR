@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import NereusKitTesting
+import NereusLink
 import NereusMirror
 @testable import NereusSDR
 import SwiftUI
@@ -68,14 +70,109 @@ struct SetupWorkspaceShotTests {
         }
     }
 
-    @Test("The Setup slider puts a value along its track, on its step, and takes a slider without steps")
-    func sliderPlacesValues() {
-        #expect(SetupSlider.fraction(-40, in: -80...0) == 0.5)
-        #expect(SetupSlider.fraction(20, in: -80...0) == 1)
-        #expect(SetupSlider.fraction(5, in: 5...5) == 0)
-        #expect(SetupSlider.value(at: 0.52, in: 0...100, step: 5) == 50)
-        #expect(SetupSlider.value(at: 1.4, in: 0...100, step: 5) == 100)
-        #expect(SetupSlider.value(at: 0.25, in: 0...10, step: 0) == 2.5)
+    /// I2 of the final review: a Setup slider is the stock slider, so the
+    /// value moves only while its thumb is dragged, a tap on the track
+    /// changes nothing, a vertical drag scrolls the page and VoiceOver
+    /// adjusts it, all as the system slider does. Through the fake Core
+    /// (the request seam): a tap on the slider (its activation) sends no
+    /// request, and a VoiceOver adjust sends the value it moves to.
+    @Test("A Setup slider is the stock slider: a tap sends no request, a VoiceOver adjust sends its value")
+    func sliderSendsOnlyWhenMoved() async throws {
+        let rig = try await Described.connected()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        await rig.station.deliverSetup(try Described.coreCategories())
+        let app = rig.app
+        #expect(await Described.settle { app.setupPages.isCurrent && app.setupFeed.description(for: "dsp") != nil })
+        let isSliderWrite: @Sendable (LinkMessage) -> Bool = { message in
+            guard case .propertyWrite(let write) = message else { return false }
+            return write.properties.contains { $0.name == "txLevelerMaxGain" }
+        }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        try await Self.hosted(rig: rig, path: Self.agcAlc) { window in
+            // The TX Leveler's Max Gain: editable with no slice chosen.
+            let slider = try #require(Self.adjustable("dsp.agcAlc.txLevelerMaxGain", in: window),
+                                      "AGC/ALC draws no adjustable slider for the TX Leveler's Max Gain")
+            let before = slider.accessibilityValue
+
+            // A tap on the slider gives it no value and sends nothing.
+            _ = slider.accessibilityActivate()
+            await ShotWait.laidOut(window)
+            #expect(await rig.station.waitForMessage(within: .seconds(2), matching: isSliderWrite) == nil,
+                    "a tap on the slider sent a request")
+            #expect(slider.accessibilityValue == before, "a tap on the slider moved it")
+
+            // VoiceOver's adjust moves it one step and sends that value.
+            slider.accessibilityIncrement()
+            if slider.accessibilityValue == before {
+                slider.accessibilityDecrement()
+            }
+            let sent = await rig.station.waitForMessage(within: .seconds(10), matching: isSliderWrite)
+            #expect(sent != nil, "a VoiceOver adjust of the slider sent no request")
+        }
+    }
+
+    @Test("A swipe to delete starts only outside the row's fields (final review, Minor 4)")
+    func swipeStartsOutsideTheFields() {
+        let fields = [CGRect(x: 10, y: 4, width: 180, height: 32), CGRect(x: 200, y: 4, width: 90, height: 32)]
+        #expect(!SetupSwipeToDelete.swipes(from: CGPoint(x: 150, y: 20), fields: fields))
+        #expect(!SetupSwipeToDelete.swipes(from: CGPoint(x: 280, y: 20), fields: fields))
+        #expect(SetupSwipeToDelete.swipes(from: CGPoint(x: 300, y: 20), fields: fields))
+        #expect(SetupSwipeToDelete.swipes(from: CGPoint(x: 195, y: 20), fields: fields))
+        #expect(SetupSwipeToDelete.swipes(from: CGPoint(x: 150, y: 20), fields: []))
+    }
+
+    /// The adjustable accessibility element under the element with `id`.
+    static func adjustable(_ id: String, in root: NSObject) -> NSObject? {
+        guard let control = SetupTypedEntryTests.element(id, in: root) else {
+            return nil
+        }
+        var queue: [NSObject] = [control]
+        var visited = 0
+        while !queue.isEmpty, visited < 2_000 {
+            let node = queue.removeFirst()
+            visited += 1
+            if node.accessibilityTraits.contains(.adjustable) {
+                return node
+            }
+            if let elements = node.accessibilityElements as? [NSObject] {
+                queue += elements
+            } else {
+                let count = node.accessibilityElementCount()
+                if count != NSNotFound, count > 0 {
+                    queue += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
+                }
+            }
+            if let view = node as? UIView {
+                queue += view.subviews
+            }
+        }
+        return nil
+    }
+
+    /// The Setup tab at `path` in an upright phone's window, under the
+    /// app's presentation root, for `body` to act on.
+    static func hosted(rig: Described.Rig, path: [SetupTree.Route],
+                       _ body: (UIWindow) async throws -> Void) async throws {
+        let size = CGSize(width: 402, height: 874)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: size)
+        window.windowLevel = .alert + 1
+        rig.router.path = path
+        let root = SetupTab(app: rig.app, flow: rig.flow, router: rig.router, buildTag: nil)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        try await body(window)
     }
 
     /// The number rows a described page draws, by their ids.
@@ -124,11 +221,10 @@ struct SetupWorkspaceShotTests {
             TabBar(selection: .constant(.setup), sideways: false)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
-        .toggleStyle(WorkspaceSwitchStyle())
         .preferredColorScheme(.dark)
         .environment(\.dynamicTypeSize, dynamicType)
         .environment(\.setupLayoutProbe, probe)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
