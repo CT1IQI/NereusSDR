@@ -36,6 +36,9 @@
 //                divergence from Thetis at J.J. Boyd's direction; the
 //                value is cited from piHPSDR, not ported. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21 - kAnanG2eRow comment: the 100 W hold is at full drive and
+//                the 53.0 dB figure is bench-checked on 20 m only. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From clsHardwareSpecific.cs (Thetis v2.10.3.13) ---
@@ -245,9 +248,10 @@ constexpr HfRow kAnan7000dRow = {
 // with that row, which works out to about 54.4 dB of gain at 50 W and
 // 53.1 dB at 100 W against the row's 50.9 dB. piHPSDR's default PA
 // calibration, the same 53.0 dB on every band for every radio except the
-// Hermes Lite 2, keeps the G2E at or under its 100 W rating on 20 m. It is
-// above every value in the Thetis row, so on every band the G2E gets less
-// drive, never more.
+// Hermes Lite 2, keeps the G2E at or under its 100 W rating at full drive
+// on 20 m. The 53.0 dB figure is bench-checked on 20 m only; the other
+// bands use piHPSDR's band.c default unchecked. It is above every value
+// in the Thetis row, so on every band the G2E gets less drive, never more.
 // From piHPSDR src/band.c:320-330 [@4aa95c5] (pa_calibration 53.0 for
 // 160 m through 6 m; piHPSDR's drive formula in calcLevel at
 // src/radio.c:2537-2547 matches Thetis console.cs:46801-46838
