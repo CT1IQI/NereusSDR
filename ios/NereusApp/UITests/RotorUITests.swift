@@ -82,6 +82,36 @@ final class RotorUITests: XCTestCase {
         XCTAssertTrue(app.textFields["rotor.setup.preset.2.name"].waitForNonExistence(timeout: 5))
     }
 
+    /// A preset row still deletes by swiping it left, as the list's rows
+    /// did: Delete shows at the row's end, and tapping it takes the row out.
+    /// Edit and Remove stay as the visible way (D114).
+    @MainActor
+    func testSetupRotorPresetDeletesBySwiping() {
+        let app = launch()
+        let tabBar = app.otherElements["Sections"]
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 30))
+        tabBar.buttons["Setup"].tap()
+        let category = app.buttons["CAT & Network"]
+        reveal(category, in: app)
+        category.tap()
+        let row = app.buttons["Rotor"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "CAT & Network lists no Rotor page")
+        row.tap()
+
+        let name = app.textFields["rotor.setup.preset.1.name"]
+        reveal(name, in: app)
+        XCTAssertEqual(app.textFields["rotor.setup.preset.2.name"].value as? String, "VK")
+        // Drag the row left from the end of its name field, as a finger swipes.
+        let start = name.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -220, dy: 0)))
+        let delete = app.buttons["rotor.setup.preset.1.delete"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), "A left swipe showed no Delete")
+        delete.tap()
+        // The row's place is taken by the one after it: two presets left, VK second.
+        XCTAssertTrue(app.textFields["rotor.setup.preset.2.name"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["rotor.setup.preset.1.name"].value as? String, "VK")
+    }
+
     /// What the Rotor page shows, to compare the two ways in.
     private struct Page: Equatable {
         let heading: String

@@ -192,7 +192,7 @@ private struct FilterPresetNotes: View {
     let reason: String?
     let problem: String?
     var body: some View {
-        if let reason { Text(reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).reason") }
+        if let reason { Text(reason).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).reason") }
         if let problem { Text(problem).font(.footnote).foregroundStyle(ConnectChrome.badText).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).problem") }
     }
 }
