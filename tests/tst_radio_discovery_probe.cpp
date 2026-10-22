@@ -25,7 +25,8 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - A quiet period armed while a walk runs delays its next
 //                 attempt and its next NIC, never drops them, and
-//                 stopDiscovery() during the wait sends nothing after.
+//                 stopDiscovery() during the wait sends nothing after,
+//                 and a reply during the wait does not skip the attempt.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -616,6 +617,52 @@ private slots:
         QCOMPARE(finished.count(), 1);
         QCOMPARE(radio.p1Probes(), 1);
         QCOMPARE(disc.scanStatsForTest().attempts, 1);
+    }
+
+    // Re-review of PR 600: a reply that arrives while an attempt waits out
+    // the quiet period must not end that attempt unsent. The quiet count is
+    // still full from the attempt that ended, so a poll window opened by
+    // the reply used to end the waiting attempt and, on the last NIC, the
+    // walk. One NIC, two attempts: the reply to probe 1 comes during the
+    // wait, and probe 2 must still go out after it.
+    void aReplyDuringAHoldOffWaitDoesNotSkipTheHeldAttempt() {
+        constexpr int kQuiet = 3;
+        constexpr int kPollMs = 40;
+        // Answers probe 1 after 300 ms: after the first attempt's quiet
+        // budget (120 ms) and inside the 1000 ms quiet period armed below.
+        WalkFakeRadio radio(WalkFakeRadio::Answer::After, 300);
+        RadioDiscovery disc;
+        disc.setScanNicsForTest(radio.nics());
+        disc.setTimingForTest({2, kQuiet, kPollMs});
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+        QSignalSpy found(&disc, &RadioDiscovery::radioDiscovered);
+        bool replyInsideTheWait = false;
+        connect(&disc, &RadioDiscovery::radioDiscovered, this,
+                [&disc, &replyInsideTheWait]() {
+            replyInsideTheWait = disc.holdOffRemainingMs() > 0
+                && disc.scanStatsForTest().attempts == 1;
+        });
+
+        disc.startDiscovery();
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 1, 5000);
+        disc.holdOffScans(std::chrono::milliseconds(1000));
+
+        // No probe and no end while the quiet period lasts (see
+        // aHoldOffArmedDuringAWalkDelaysItsNextProbes for why this read
+        // order makes it a count, not a time).
+        while (disc.holdOffRemainingMs() > 0) {
+            QCOMPARE(radio.p1Probes(), 1);
+            QCOMPARE(finished.count(), 0);
+            QTest::qWait(10);
+        }
+        QCOMPARE(found.count(), 1);
+        QVERIFY2(replyInsideTheWait, "the reply did not land during the wait; the case tested nothing");
+
+        QVERIFY(finished.wait(5000));
+        QTest::qWait(200);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(radio.p1Probes(), 2);
+        QCOMPARE(disc.scanStatsForTest().attempts, 2);
     }
 
     // The Core runs discovery on a worker thread with its own event loop

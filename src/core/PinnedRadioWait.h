@@ -56,7 +56,8 @@ public:
 
     void start();
 
-    // True when start() found no scan running and started one.
+    // True when start() found no scan running and its own request started
+    // one at once (not one held back by the post-disconnect quiet period).
     bool startedScan() const { return m_startedScan; }
 
 #ifdef NEREUS_BUILD_TESTS

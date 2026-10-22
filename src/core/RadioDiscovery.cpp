@@ -49,6 +49,10 @@
 //                 inside it waits for it to end, then sends. The probes are
 //                 delayed, never dropped. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - A reply that arrives while an attempt waits out the quiet
+//                 period opens no poll window, so it cannot end that
+//                 attempt before it sends. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-22 - walkBoundMs(), the longest a running walk can still take,
 //                 for the startup auto-connect wait. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -869,6 +873,12 @@ void RadioDiscovery::onScanPollWindow()
         finishScan();
         return;
     }
+    // An attempt waiting out the quiet period has no poll window open:
+    // nothing counts toward it until it sends (beginAttempt() starts its
+    // quiet count from zero then).
+    if (m_scanHoldOffTimer.isActive()) {
+        return;
+    }
 
     // From Thetis clsRadioDiscovery.cs:970-975 [v2.10.3.15]:
     //   bool readable = s.Poll(pollMs * 1000, SelectMode.SelectRead);
@@ -909,8 +919,15 @@ void RadioDiscovery::onScanReadyRead()
     // counter on activity — replies may be bursty"), which Thetis does not
     // do, so a late reply bought a whole extra quiet budget (Longpath PR 10
     // [@2e967e3f]).
-    ++m_scanStats.readableWindows;
-    m_scanPollTimer.start(qMax(10, m_scanTiming.pollTimeoutMs));
+    //
+    // While an attempt waits out the quiet period (see beginAttempt()) a
+    // late reply is still taken, but opens no poll window: the quiet count
+    // is still full from the attempt that ended, and one window would end
+    // the waiting attempt without its probes ever being sent.
+    if (!m_scanHoldOffTimer.isActive()) {
+        ++m_scanStats.readableWindows;
+        m_scanPollTimer.start(qMax(10, m_scanTiming.pollTimeoutMs));
+    }
 
     while (m_scanSock && m_scanSock->hasPendingDatagrams()) {
         QHostAddress senderAddr;

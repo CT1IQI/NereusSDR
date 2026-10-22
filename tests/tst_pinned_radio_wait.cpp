@@ -12,6 +12,9 @@
 //                 joined startup scan is not stopped, and the give-up comes
 //                 only after the scan ends. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-22 - A scan started by a held-back request is not stopped by
+//                 the backstop. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QObject>
@@ -215,6 +218,37 @@ private slots:
         QVERIFY(gaveUp.wait(5000));
         QVERIFY(!disc.isScanRunning());
         QCOMPARE(radio.p1Probes(), 1);   // the second adapter was never probed
+    }
+
+    // Re-review of PR 600: a start the quiet period holds back does not make
+    // the scan that later runs the wait's own (another start may have run
+    // first). Its backstop leaves that scan running.
+    void aScanStartedAfterAHoldOffIsNotStoppedOnGiveUp() {
+        LateFakeRadio radio(0);
+        RadioDiscovery disc;
+        disc.setScanNicsForTest(radio.nics(2));
+        disc.setTimingForTest({1, 8, 100});
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+        disc.holdOffScans(std::chrono::milliseconds(150));
+
+        PinnedRadioWait wait(&disc, kMac);
+        wait.setBackstopForTest(100);
+        QSignalSpy gaveUp(&wait, &PinnedRadioWait::gaveUp);
+        wait.start();
+        QVERIFY(!disc.isScanRunning());
+
+        // The held start runs; the backstop is armed when it starts and
+        // fires before the first adapter's eight quiet windows are done.
+        QTRY_VERIFY_WITH_TIMEOUT(disc.isScanRunning(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(disc.scanStatsForTest().quietPolls >= 3, 5000);
+        QVERIFY(disc.isScanRunning());
+        QCOMPARE(gaveUp.count(), 0);
+
+        QVERIFY(finished.wait(10000));
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(radio.p1Probes(), 2);
+        QCOMPARE(gaveUp.count(), 1);
+        QVERIFY(!wait.startedScan());
     }
 
     // No give-up (the "isn't reachable" toast) before the scan ends: when

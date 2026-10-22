@@ -8,6 +8,9 @@
 // Modification history (NereusSDR):
 //   2026-10-22 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - A scan started by a request the quiet period held back
+//                 counts as joined, never stopped by the backstop. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/PinnedRadioWait.h"
@@ -57,9 +60,13 @@ void PinnedRadioWait::start()
     // when it starts.
     connect(m_discovery, &RadioDiscovery::discoveryStarted, this, &PinnedRadioWait::armBackstop);
 
+    // The wait owns a scan only when its own request started it here. A
+    // request held back by the quiet period may later run, or may join a
+    // scan someone else started first; which one is not known, so such a
+    // scan is treated as joined and never stopped by the backstop.
     if (!m_discovery->isScanRunning()) {
-        m_startedScan = true;
         m_discovery->startDiscovery();
+        m_startedScan = !m_done && m_discovery && m_discovery->isScanRunning();
     }
     if (!m_done && m_discovery && m_discovery->isScanRunning()) {
         armBackstop();
