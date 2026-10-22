@@ -17802,9 +17802,6 @@ void MainWindow::applyRemoteRoleGating()
             TxApplet::monitorOutputUnavailableReason());
         m_txApplet->setTxProfilePermitted(profilePermitted, profileReason);
         m_txApplet->setTxProcessingPermitted(processingPermitted, processingReason);
-        // R-R3-49 (group A fix wave, M3): the RF Power slider's per-band
-        // and drive-source writes came with version 5.
-        m_txApplet->setPowerByBandPermitted(settingsAt(5));
         // R-R3-49 (parity Task 7): PS-A arms PureSignal (version 7).
         m_txApplet->setPureSignalArmingPermitted(
             holderReason.isEmpty() && pureSignalArmingPermitted(),

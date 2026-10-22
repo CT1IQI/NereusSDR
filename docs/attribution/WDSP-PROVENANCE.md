@@ -26,10 +26,10 @@ monolithic `wdsp.h` is not used as the application ABI. The obsolete local
 `FDnoiseIQ.c/.h` and `fastmath.h` were removed.
 
 Across the 169 current `.c` and `.h` files, 156 names come from the pinned
-tree and 13 are retained or new Nereus files. Of the pinned names, 119 remain
-byte-identical and 37 contain the reviewed integrations below (counted
+tree and 13 are retained or new Nereus files. Of the pinned names, 118 remain
+byte-identical and 38 contain the reviewed integrations below (counted
 against the pinned tree on 2026-10-01, then `varsamp.c` and
-`varsamp.h` on 2026-10-09). These counts
+`varsamp.h` on 2026-10-09, then `delay.c` on 2026-10-22). These counts
 describe source identity, not authorship: modified files retain their upstream
 notices and remain derived from WDSP.
 
@@ -71,6 +71,7 @@ upstream attribution.
 | TX EQ Q compatibility | `eq.c` | `SetTXAEQProfile(channel, nfreqs, F, G, Q)` takes Q as Thetis's does (`dsp.cs:788`, `wdsp/eq.c:780` at Thetis v2.10.3.15, commit `3759d096`). A non-null Q is kept on the TX EQ's impulse builder, and every rebuild of that EQ (ctfmode, window, size, rate; the ctfmode and window setters rebuild a Q profile of any size, as Thetis's always rebuild) runs Thetis's "parametric eq with Q factor" branch and its ctfmode 0 rolloff, ported verbatim with its defines (`eq_impulse_q`; Richard Samphire MW0LGE, whose notices and dual-licensing statement are retained in the file header). A null Q and the graphic EQ setters (which clear Q, as Thetis's do) keep the WDSP 2.10 path unchanged, pinned by `tst_wdsp_txa_eq_q` against impulses captured before the change. Thetis's impulse cache is not ported. RX profiles are unchanged (R-R3-49). |
 | Resampler coefficient layout | `varsamp.c/.h` | `calc_varsamp` also keeps a phase-major copy of the coefficients (`ht`, (R + 1) rows of `rsize` taps, `ht[p * rsize + m] = h[p + m * R]`), freed in `decalc_varsamp`, and `hshift` reads its two rows instead of striding through `h` R doubles (8 KB at rmatch's R = 1024) per tap. Upstream's loop, identical in Thetis v2.10.3.15, touches a different 4 KB page for each of its 140 taps on every output sample: a 48 kHz `rmatch` stream took about 0.3 s of processor time per second of audio on aarch64 Linux (Docker on Apple silicon) against 0.03 s on macOS. The same values are read and combined in the same order, so the output is bit-identical (an FNV-1a hash of ten minutes of `rmatch` output, both clock directions, was the same before the change on macOS and after it on macOS and on Linux); upstream's loop is kept as a comment. No DSP algorithm, constant or default changes (R-AUD-15). |
 | Filter-resize ownership | `emph.c`, `fmd.c` | Retain the replacement filter-curve object returned after freeing the old one. Pinned `b02d5bac` discarded that return value in both coefficient-count setters, causing a use-after-free on live RX/TX filter resize. |
+| Delay-line bound | `delay.c` | `create_delay` and `SetDelayValue` limit the requested delay to the longest the ring can hold (WSDEL - 1 whole samples plus the last sub-sample phase; a negative or NaN request becomes 0) before the unchanged upstream arithmetic runs, so `SetDelayValue` returns the delay really applied (2026-10-22). Pinned `b02d5bac`, and Thetis v2.10.3.15 `wdsp/delay.c` (identical), take any request: the PureSignal amp-delay field allows 25 ms (Thetis `PSForm.Designer.cs` `udPSPhnum.Maximum`), nearly five times the ring at 192 kHz, and `xdelay` folds its read index back only once, so it read past the end of the ring's allocation and reported a delay it never applied. Ported from Longpath PR 25 (commit `7b4450a1`, unchanged at `383f058`; see `LONGPATH-PROVENANCE.md`); covered by `tests/tst_wdsp_delay_clamp.cpp`. Delays the ring can hold are unchanged. |
 
 `linux_port.c/.h` remains the existing Warren Pratt NR0V and John Melton
 G0ORX/N6LYT POSIX shim, including the preserved DL1YCF comments. Nereus retains
@@ -238,7 +239,7 @@ source descriptions above retain the detailed lineage and license context.
 | `third_party/wdsp/src/comm.h` | TAPR WDSP 2.10 @b02d5bac, Source/comm.h | Pinned file with reviewed downstream changes; see the integration inventory above. |
 | `third_party/wdsp/src/compress.c` | TAPR WDSP 2.10 @b02d5bac, Source/compress.c | Pinned file, byte-identical. |
 | `third_party/wdsp/src/compress.h` | TAPR WDSP 2.10 @b02d5bac, Source/compress.h | Pinned file, byte-identical. |
-| `third_party/wdsp/src/delay.c` | TAPR WDSP 2.10 @b02d5bac, Source/delay.c | Pinned file, byte-identical. |
+| `third_party/wdsp/src/delay.c` | TAPR WDSP 2.10 @b02d5bac, Source/delay.c | Pinned file with reviewed downstream changes; see the integration inventory above. |
 | `third_party/wdsp/src/delay.h` | TAPR WDSP 2.10 @b02d5bac, Source/delay.h | Pinned file, byte-identical. |
 | `third_party/wdsp/src/dexp.c` | TAPR WDSP 2.10 @b02d5bac, Source/dexp.c | Pinned file, byte-identical. |
 | `third_party/wdsp/src/dexp.h` | TAPR WDSP 2.10 @b02d5bac, Source/dexp.h | Pinned file, byte-identical. |

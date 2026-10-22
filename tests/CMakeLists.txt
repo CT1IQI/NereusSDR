@@ -855,6 +855,12 @@ nereus_add_test(tst_puresignal_caps)
 # Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] @501e3f51.
 nereus_add_test(tst_wdsp_ps_smoke)
 
+# -- The PureSignal amp-delay line (WDSP delay.c): a delay the ring
+#    cannot hold is bounded and reported, not read from beyond the
+#    allocation. Ported from Longpath PR 25 (tests/tst_wdsp_delay_clamp.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_wdsp_delay_clamp EXTRA_LABELS core)
+
 # ── Phase 3M-4 Task 3: TxChannel PureSignal API wrappers (22 functions) ──
 # Smoke tests for the 22 PS API wrappers added in Task 3:
 #   19 calcc setters/readers (setPSRunCal, setPSMox, setPSReset, setPSMancal,
@@ -9655,6 +9661,14 @@ nereus_add_test(tst_radio_speaker_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_radio_speaker_link PRIVATE NEREUS_BUILD_TESTS)
+# PR 588 (JJ's decision, 2026-10-21): the Core takes transmit's
+# tuneDrivePowerSource only from a peer that declared tuneDriveSource 1; an
+# older client's change is refused with the Core's value, its other transmit
+# settings are taken, and the refusal is logged once per session.
+nereus_add_test(tst_tune_drive_source_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_tune_drive_source_link PRIVATE NEREUS_BUILD_TESTS)
 # Native audio plan Task 21 (R-AUD-25, R-AUD-28, R-AUD-30): the Core
 # speaker's JSON forms, its binding on the Core to the master level, mute and
 # speakers role, the taps it leaves alone, and the desktop rule.

@@ -100,16 +100,33 @@ struct TxPanel: View {
             // (on a Hermes Lite 2, drive in dB as its desktop shows it).
             PanelSliderRow(label: "RF Power", value: transmit.rfPower,
                            range: transmit.powerControl.range, accessibility: "RF power",
-                           format: transmit.powerControl.text, greyed: !transmit.settingsEditable(1), notConfirmed: transmit.isUnconfirmed("power")) { transmit.setRfPower($0) }
+                           format: transmit.powerControl.text,
+                           greyed: !transmit.settingsEditable(1) || transmit.rfPowerSourceReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("power")) { transmit.setRfPower($0) }
                 .accessibilityIdentifier("txRfPower")
+                .accessibilityHint(transmit.rfPowerSourceReason ?? "")
             PanelSliderRow(label: "Tune Pwr", value: transmit.tunePower,
                            range: transmit.tuneControl.range, accessibility: "Tune power",
                            format: transmit.tuneControl.text,
-                           greyed: !(transmit.settingsEditable(2) && transmit.tunePowerAvailable), notConfirmed: transmit.isUnconfirmed("tunePowerForTxBand")) { transmit.setTunePower($0) }
+                           greyed: !(transmit.settingsEditable(2) && transmit.tunePowerAvailable)
+                               || transmit.tunePowerSourceReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("tunePowerForTxBand")) { transmit.setTunePower($0) }
                 .accessibilityIdentifier("txTunePower")
+                .accessibilityHint(transmit.tunePowerSourceReason ?? "")
             if let reason = transmit.settingsReason(1) {
                 note("RF Power, Tune Pwr, TX filter and the settings below: " + reason)
                     .accessibilityIdentifier("txSettingsReason")
+            }
+            // The drive sources the desktop's Setup chose (its TX applet's
+            // drive source gate): the slider TUNE or the two-tone test is
+            // not using is greyed, with why.
+            if let reason = transmit.rfPowerSourceReason {
+                note("RF Power: " + reason)
+                    .accessibilityIdentifier("txRfPowerSourceReason")
+            }
+            if transmit.tunePowerAvailable, let reason = transmit.tunePowerSourceReason {
+                note("Tune Pwr: " + reason)
+                    .accessibilityIdentifier("txTunePowerSourceReason")
             }
             if let reason = transmit.twoToneReason {
                 note("2-Tone: " + reason)

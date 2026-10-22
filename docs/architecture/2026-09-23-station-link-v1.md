@@ -1034,6 +1034,25 @@ does not declare it sees exactly the wire it was built for: no capability
 entry, and none of the new ops. The station does not declare it; the
 desktop's remote window does (`StationClient`). The phone app does not.
 
+**`tuneDriveSource` 1** (PR 588, JJ's decision of 2026-10-21): the client
+changes TUNE's drive source (`transmit`'s `tuneDrivePowerSource`) only as
+Setup > Transmit > Power's Tune group does, never from a power slider, as
+in Thetis. A client from before this rule wrote the drive slider source
+with every RF Power move (the phone and the desktop's TX applet, on a
+Core at `transmitSettingsVersion` 5 or later). The Core takes a change of
+`tuneDrivePowerSource` only from a peer that declares it; from any other
+peer the write is refused with "Update this app to change TUNE's drive
+source on this Core." and the Core's value in the `property.result`, so
+that client shows the Core's source again. A write of the value the Core
+already has changes nothing and is taken, so an older app's RF Power
+slider shows no refusal while the source is the drive slider. Its other
+writes are taken as before, and every peer is still sent
+`tuneDrivePowerSource`. The Core logs the first refused write of each
+session once. `twoToneDrivePowerSource` needs no declaration: no client
+ever set it from a slider. Neither the station nor a Core declares it;
+the desktop's remote window and the phone app do, and a Core from before
+this ignores the name.
+
 **`rxMeterStamps` 1** (RX meter stamps): the client holds each slice's RX
 meter readings until the audio they describe plays. A peer that declares it
 is sent `rxMeterStampsVersion` (section 6.3) and each slice's
@@ -3969,10 +3988,13 @@ Notes on the keys:
   Core transmits on (its transmit slice's band, as TUNE reads it), which
   the TX applet's Tune Power slider shows; it follows the transmit slice
   across bands. `tuneDrivePowerSource` (enum: 0 the drive slider, 1 the
-  tune slider, 2 the fixed tune power) is where TUNE takes its power from.
-  At version 2 both change only through `setTunePowerForTxBand`, and
-  `tuneDrivePowerSource` is outbound; at version 5 it is two-way (Setup >
-  Transmit > Power's Tune group), and `tunePowerForTxBand` stays outbound. None of these
+  tune slider, 2 the fixed tune power) is where TUNE takes its power from;
+  only Setup > Transmit > Power's Tune group changes it, as in Thetis, and
+  neither power slider does. At version 2 `tunePowerForTxBand` changes
+  only through `setTunePowerForTxBand`, and `tuneDrivePowerSource` is
+  outbound; at version 5 `tuneDrivePowerSource` is two-way (the Tune
+  group), taken only from a peer whose hello declared `tuneDriveSource` 1
+  (section 6.1), and `tunePowerForTxBand` stays outbound. None of these
   keys the radio. The MON output choice (speakers or phones) is not on the
   link: it is each window's own audio routing.
 - **`transmit` at `transmitSettingsVersion` 3.** The radio's microphone
@@ -6763,9 +6785,11 @@ These command groups need a sentence beyond the table:
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core
-  transmits on and sets the tune drive source to the tune slider, so TUNE
-  uses that power. The Core reports both on `transmit`
-  (`tunePowerForTxBand`, `tuneDrivePowerSource`). It keys nothing, so a
+  transmits on, which TUNE uses when Setup's tune drive source is the tune
+  slider. It leaves `tuneDrivePowerSource` alone; a Core from before this
+  change also set `tuneDrivePowerSource` to the tune slider on
+  `setTunePowerForTxBand`, so TUNE took that power. The Core reports the
+  power on `transmit` (`tunePowerForTxBand`). It keys nothing, so a
   receive-only Core takes it. Below `transmitSettingsVersion` 13 it is
   refused while the radio is on the air ("The radio is on the air. Try
   again when it stops."); at 13 it is taken on the air from a peer that may
@@ -8081,6 +8105,8 @@ same on every machine.
 | `property-write` | A write and its `property.result` and side-effect `delta`; a refused outbound property and an unknown one; a write without a `writeId` answered by `delta`; a write to a slice's signal strength refused as outbound; on the receive-only Core, a `transmit` write of `power` taken off the air and a write of `mox` and `voxEnabled` refused with the receive-only reason; at `transmitSettingsVersion` 2, a write of `cpdrLevelDb` taken, and `micGainDb` and `monitorVolume` out of range refused with their ranges beside a write of the outbound `tunePowerForTxBand`; at `transmitSettingsVersion` 3, a write of `micBoost` and `lineInBoost` taken, and `lineInBoost` out of range refused with its range beside a write of the outbound `activeTxProfile`; at `transmitSettingsVersion` 4, a write of `txEqBandsJson`, `txEqUseLegacy` and `txLevelerDecay` taken, and a nine-value `txEqBandsJson`, a `cfcCompressionJson` with a value out of range and `txAlcDecay` out of range each refused whole with its range |
 | `tx-eq-curve` | `txEqCurveVersion` 1 (the client declares `txEqCurve` 1): the capability after `accessoryTxVersion`, `txEqCurve` last in the `TransmitModel` schema and, in the `transmit` snapshot, the flat default curve (`state` `default`) for the static station's empty `txEqParaEqData`; a write of the worked example's `txEqParaEqData` (section 7.1, "The TX EQ curve") taken, then the side-effect `delta` carrying its `txEqCurve` (`state` `saved`); a write to `txEqCurve` refused as outbound, the curve unchanged |
 | `tx-eq-set-curve` | `txEqCurveVersion` 2 (the client declares `txEqCurve` 2): the capability at 2; `txEq.setCurve` with the link document's worked example sent back as it was shown, but out of order and unrounded, taken: the side-effect `delta` carrying the new `txEqParaEqData` and the worked example's `txEqCurve`, then the accepted `command.result` whose `curve` is that `txEqCurve`; a four-point curve refused whole "Choose a curve of 5, 10 or 18 points." with nothing sent after; `txEq.resetCurve` taken, the `delta` and a `curve` of five flat points spread from 50 to 3000 Hz, preamp 0 |
+| `tune-drive-source` | The client declares `tuneDriveSource` 1: a write of `tuneDrivePowerSource` 2 (the fixed tune power) taken, then the `delta` carrying it |
+| `tune-drive-source-older-client` | A client that does not declare `tuneDriveSource` writes `power` 40 and `tuneDrivePowerSource` 1 (the tune slider): `power` taken, `tuneDrivePowerSource` refused "Update this app to change TUNE's drive source on this Core." with the Core's 0 (the drive slider), then the side-effect `delta` carrying `powerByBandJson` with 40 for the transmit band; then `tuneDrivePowerSource` 0, the Core's own value, taken. Runs on the station alone |
 | `cfc-set-profile` | `transmitSettingsVersion` 15 (the client declares `cfcProfile` 1): `cfcProfile` last in the `TransmitModel` schema at ordinal 88 and in the `transmit` snapshot; `cfc.setProfile` with a 5-band profile and the snapshot's revision taken: the side-effect `delta` carrying the new `cfcPostEqGainDb`, `cfcPrecompDb`, `cfcParaEqData` and `cfcProfile`, then the accepted `command.result` whose `profile` is the stored profile; the same profile sent again with the old revision refused "The CFC settings changed on the Core. Check the new values and try again." with nothing sent; a misnamed argument refused "The CFC settings were not understood." |
 | `settings-write` | A station-scoped write echoed with its origin; an operator-local write rejected; a removal sent as `settings.value` with no entry; on the receive-only Core, a DSP > Options TX key and a PA forward-power table key (`paCalibration/calPoint1`, version 6) taken off the air, an OC transmit pin (`oc/tx/20m/pin3`), an OC pin action (`oc/actions/pin1/action`) and TX Display Cal (`cal/txDisplayOffset`) taken off the air (version 8), and a transmit hardware key refused |
 | `unknown-verb` | `command.result` refused, "The Core does not know this request. Updating the Core may help."; the connection stays up |
