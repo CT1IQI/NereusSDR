@@ -889,10 +889,15 @@ void TxApplet::syncRemoteIndicators()
             }
         }
     }
-    if (m_processingSection->twoToneButton()) {
+    {
+        // Every copy of the 2-TONE button, not just the applet's own.
         const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
-        QSignalBlocker b(m_processingSection->twoToneButton());
-        m_processingSection->twoToneButton()->setChecked(ps && ps->twoToneOn());
+        const bool twoTone = ps && ps->twoToneOn();
+        for (TxProcessingSection* s : allProcessingSections()) {
+            if (!s->twoToneButton()) { continue; }
+            QSignalBlocker b(s->twoToneButton());
+            s->twoToneButton()->setChecked(twoTone);
+        }
     }
     m_updatingFromModel = wasUpdating;
 }

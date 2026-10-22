@@ -23,6 +23,7 @@
 //   6. The transmit-permission gate reaches the copy.
 //  10. A copy made after the gates carries them, with their reasons.
 //  11. A copy made while receive only is locked like the applet's row.
+//  12. A remote window's 2-TONE copies follow the Core.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -668,6 +669,36 @@ private slots:
         rm.setRxOnly(false);
         QVERIFY(keying->tuneButton()->isEnabled());
         QVERIFY(keying->moxButton()->isEnabled());
+    }
+
+    // ── 12. A remote window's 2-TONE copies follow the Core ──────────────
+    void aRemoteTwoToneCopyFollowsTheCore()
+    {
+        RadioModel rm(RadioModel::Role::Remote);
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QWidget host;
+        auto* processing = qobject_cast<TxProcessingSection*>(
+            registry.createWidget(registry.makeEntry("tx.processing"), &host));
+        QVERIFY(processing && processing->twoToneButton());
+        QVERIFY(!processing->twoToneButton()->isChecked());
+
+        QVERIFY(rm.pureSignalFacade()->applyRemoteProperty("twoToneOn", true));
+        QVERIFY(applet.twoToneButton()->isChecked());
+        QVERIFY(processing->twoToneButton()->isChecked());
+
+        QVERIFY(rm.pureSignalFacade()->applyRemoteProperty("twoToneOn", false));
+        QVERIFY(!processing->twoToneButton()->isChecked());
+
+        // A press the Core refuses is unchecked again.
+        {
+            const QSignalBlocker block(processing->twoToneButton());
+            processing->twoToneButton()->setChecked(true);
+        }
+        rm.reportRemoteTransmitRefused(QStringLiteral("test refusal"));
+        QVERIFY(!processing->twoToneButton()->isChecked());
     }
 
 private:
