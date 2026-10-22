@@ -12,6 +12,9 @@
 // session.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: the rows each push() queues can be taken at once, with the
+//               time each is due, so a widget can slide a row in before its
+//               trace is due. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-02: Capture metadata retained through frame, blend and repeat presentation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-26: created for R-R3-21 / R-R3-08 (display in step with audio).
@@ -135,6 +138,15 @@ public:
     /// Every item due at nowNs, in order, plus any repeats that fell due.
     /// Without a map everything queued is due now (an older Core).
     std::vector<Item> takeDue(qint64 nowNs, std::optional<qint64> mapNs);
+    /// The waterfall rows the last push() queued, in order, taken once: the
+    /// Blended rows for a gap and the frame's own row unless it was owed
+    /// back under row debt (a Frame item whose frame.waterfallAdvance is
+    /// true). They stay queued for takeDue() too. Repeated rows are made in
+    /// takeDue() and are not here.
+    std::vector<Item> takeQueuedRows();
+    /// When item is due at nowNs under mapNs (nowNs without a map, or for a
+    /// map that would hold it longer than kMaxHoldNs).
+    qint64 dueNs(const Item& item, qint64 nowNs, std::optional<qint64> mapNs) const;
     /// When the next item or repeat falls due, or nothing.
     std::optional<qint64> nextDueNs(qint64 nowNs, std::optional<qint64> mapNs) const;
     int queued() const { return int(m_queue.size()); }
@@ -153,11 +165,11 @@ private:
         /// presentation, or nothing while it is still queued.
         std::optional<qint64> presentedNs;
     };
-    qint64 dueNs(const Item& item, qint64 nowNs, std::optional<qint64> mapNs) const;
     std::optional<qint64> nextRepeatNs() const;
     void enqueue(Item item);
 
     std::deque<Item> m_queue;
+    std::vector<Item> m_queuedRows;
     std::optional<LastRow> m_lastRow;
     /// Rows repeated since the last good row, each one of its slots.
     int m_repeats = 0;

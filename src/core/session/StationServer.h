@@ -181,6 +181,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: peerReadsRxOnlyPairs: RX-only antennas 0..5 for a peer
+//               that declared radioAntennaRows 2. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureAvailable.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: the direct media ladder: the Core's STUN server for media
@@ -856,8 +859,14 @@ public:
     /// its hello, at minor 11), so it is sent Band 27 and the per-band
     /// lists with 2 m. Any other peer sees 2 m as GEN (BandLinkFit.h).
     bool peerKnows2m(SessionTransport* peer) const;
+    /// The peer reads and writes RX-only antenna values 0..5, Thetis's
+    /// checkbox sum (radioAntennaRows 2 in its hello, at minor 11). Any
+    /// other peer is sent 4 and 5 as 3 and may not write them
+    /// (RxOnlyLinkFit.h).
+    bool peerReadsRxOnlyPairs(SessionTransport* peer) const;
     /// The encoded `message` for `transport`: fitted by BandLinkFit for a
-    /// peer that does not know 2 m.
+    /// peer that does not know 2 m, and by RxOnlyLinkFit for one that
+    /// reads RX-only values 0..3 only.
     QByteArray encodeFor(SessionTransport* transport, const SessionMessage& message) const;
 
     /// The pairing token of a Core upgraded from before paired devices,
