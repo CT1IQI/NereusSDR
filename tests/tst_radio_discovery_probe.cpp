@@ -28,6 +28,11 @@
 //                 stopDiscovery() during the wait sends nothing after,
 //                 and a reply during the wait does not skip the attempt.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - A connect hold stops a running walk until it ends, then
+//                 the quiet period runs and the walk finishes every NIC;
+//                 a scan and a probe started during the hold wait too, and
+//                 the hold is keyed by owner. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -663,6 +668,109 @@ private slots:
         QCOMPARE(finished.count(), 1);
         QCOMPARE(radio.p1Probes(), 2);
         QCOMPARE(disc.scanStatsForTest().attempts, 2);
+    }
+
+    // Review of PR 600 (Important 2). A connect hold has no deadline: the
+    // walk sends nothing for as long as it lasts, however many attempt
+    // lengths that is, then waits the quiet period endConnectHold() arms,
+    // then finishes every NIC. Two NICs, two attempts each: four probes.
+    void aConnectHoldStopsAWalkUntilItEndsAndTheQuietPeriodPasses() {
+        WalkFakeRadio radio(WalkFakeRadio::Answer::Now);
+        RadioDiscovery disc;
+        disc.setScanNicsForTest(radio.nics() + radio.nics());
+        disc.setTimingForTest({2, 3, 40});   // one attempt's quiet budget: 120 ms
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+        int owner = 0;
+
+        disc.startDiscovery();
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 1, 5000);
+        RadioDiscovery::beginConnectHold(&owner);
+        QVERIFY(RadioDiscovery::connectHoldActive());
+        QVERIFY(disc.holdOffRemainingMs() > 0);
+
+        // Many attempt lengths pass; the walk neither sends nor ends.
+        for (int i = 0; i < 60; ++i) {
+            QTest::qWait(10);
+            QCOMPARE(radio.p1Probes(), 1);
+            QCOMPARE(finished.count(), 0);
+        }
+        QVERIFY(disc.isScanRunning());
+
+        // The connection is up: the quiet period starts now, and the walk
+        // still waits it out (a count, not a time: see
+        // aHoldOffArmedDuringAWalkDelaysItsNextProbes).
+        RadioDiscovery::endConnectHold(&owner, std::chrono::milliseconds(300));
+        QVERIFY(!RadioDiscovery::connectHoldActive());
+        QVERIFY(disc.holdOffRemainingMs() > 0);
+        while (disc.holdOffRemainingMs() > 0) {
+            QCOMPARE(radio.p1Probes(), 1);
+            QCOMPARE(finished.count(), 0);
+            QTest::qWait(10);
+        }
+
+        // Then the same walk resumes and walks both NICs.
+        QVERIFY(finished.wait(5000));
+        QTest::qWait(200);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(radio.p1Probes(), 4);
+        QCOMPARE(disc.scanStatsForTest().attempts, 4);
+    }
+
+    // A scan and a unicast probe asked for during a connect hold wait for
+    // it and the quiet period after it, then run.
+    void aScanAndAProbeAskedForDuringAConnectHoldWait() {
+        WalkFakeRadio radio(WalkFakeRadio::Answer::Now);
+        RadioDiscovery disc;
+        disc.setScanNicsForTest(radio.nics());
+        disc.setTimingForTest({1, 3, 40});
+        QSignalSpy started(&disc, &RadioDiscovery::discoveryStarted);
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+        FakeP1Probe target;
+        int owner = 0;
+
+        RadioDiscovery::beginConnectHold(&owner);
+        disc.startDiscovery();
+        disc.probeAddress(QHostAddress::LocalHost, target.port(), std::chrono::milliseconds(150));
+        for (int i = 0; i < 40; ++i) {
+            QTest::qWait(10);
+            QCOMPARE(started.count(), 0);
+            QCOMPARE(radio.p1Probes(), 0);
+            QVERIFY(target.lastP1Probe().isEmpty());
+        }
+
+        RadioDiscovery::endConnectHold(&owner, std::chrono::milliseconds(200));
+        while (disc.holdOffRemainingMs() > 0) {
+            QCOMPARE(started.count(), 0);
+            QCOMPARE(radio.p1Probes(), 0);
+            QVERIFY(target.lastP1Probe().isEmpty());
+            QTest::qWait(10);
+        }
+        QVERIFY(finished.wait(5000));
+        QCOMPARE(started.count(), 1);
+        QCOMPARE(radio.p1Probes(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(!target.lastP1Probe().isEmpty(), 5000);
+    }
+
+    // The hold is keyed by owner: a second begin is the same hold, one end
+    // releases it, and an end with no begin arms no quiet period (a
+    // connection that ends after its hold was already released, or a model
+    // that never connected).
+    void aConnectHoldIsKeyedByOwner() {
+        RadioDiscovery disc;
+        int a = 0;
+        int b = 0;
+
+        RadioDiscovery::endConnectHold(&a, std::chrono::milliseconds(3000));
+        QCOMPARE(disc.holdOffRemainingMs(), qint64(0));
+
+        RadioDiscovery::beginConnectHold(&a);
+        RadioDiscovery::beginConnectHold(&a);
+        RadioDiscovery::beginConnectHold(&b);
+        RadioDiscovery::endConnectHold(&a, std::chrono::milliseconds(0));
+        QVERIFY(RadioDiscovery::connectHoldActive());   // b still holds
+        RadioDiscovery::endConnectHold(&b, std::chrono::milliseconds(0));
+        QVERIFY(!RadioDiscovery::connectHoldActive());
+        QCOMPARE(disc.holdOffRemainingMs(), qint64(0));
     }
 
     // The Core runs discovery on a worker thread with its own event loop
