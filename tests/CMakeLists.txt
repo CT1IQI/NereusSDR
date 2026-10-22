@@ -849,6 +849,12 @@ nereus_add_test(tst_puresignal_caps)
 # Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] @501e3f51.
 nereus_add_test(tst_wdsp_ps_smoke)
 
+# -- The PureSignal amp-delay line (WDSP delay.c): a delay the ring
+#    cannot hold is bounded and reported, not read from beyond the
+#    allocation. Ported from Longpath PR 25 (tests/tst_wdsp_delay_clamp.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_wdsp_delay_clamp EXTRA_LABELS core)
+
 # ── Phase 3M-4 Task 3: TxChannel PureSignal API wrappers (22 functions) ──
 # Smoke tests for the 22 PS API wrappers added in Task 3:
 #   19 calcc setters/readers (setPSRunCal, setPSMox, setPSReset, setPSMancal,
