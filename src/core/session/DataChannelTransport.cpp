@@ -80,6 +80,9 @@
 //               ceiling releases are tested; closeLink()'s comment names
 //               all three ends of the hold. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: setDirectCandidateDelayForTest() (test builds only), so
+//               a test can have the web relay's pair nominated first.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/DataChannelTransport.h"
@@ -781,8 +784,33 @@ bool DataChannelTransport::acceptDescription(const QString& sdp, const QString& 
     }
 }
 
+#ifdef NEREUS_BUILD_TESTS
+namespace {
+// setDirectCandidateDelayForTest()'s value; 0 is at once.
+std::atomic<int>& directCandidateDelayMs()
+{
+    static std::atomic<int> delayMs{0};
+    return delayMs;
+}
+} // namespace
+
+void DataChannelTransport::setDirectCandidateDelayForTest(int ms)
+{
+    directCandidateDelayMs().store(std::max(0, ms));
+}
+#endif
+
 bool DataChannelTransport::acceptCandidate(const QString& candidate)
 {
+#ifdef NEREUS_BUILD_TESTS
+    const int delayMs = directCandidateDelayMs().load();
+    if (delayMs > 0 && m_started && m_options.ice && m_options.ice->hasCandidateSourceFactory()
+        && m_options.ice->relayAllowed() && m_options.purpose != Purpose::TxWatch) {
+        QTimer::singleShot(delayMs, this,
+                           [this, candidate] { admitCandidate(candidate, false); });
+        return true;
+    }
+#endif
     return admitCandidate(candidate, false);
 }
 

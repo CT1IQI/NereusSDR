@@ -92,6 +92,9 @@
 //   2026-10-22: setCloseDrainTimingForTest(), lingeringPeerCountForTest();
 //               kCloseDrainCeilingMs says what backlog it covers. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: setDirectCandidateDelayForTest() (test builds only), so
+//               a test can have the web relay's pair nominated first.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -314,6 +317,14 @@ public:
     /// Test seam: how many closed connections are held while their
     /// backlog drains.
     static int lingeringPeerCountForTest();
+#ifdef NEREUS_BUILD_TESTS
+    /// Test seam (PR 616): a connection that has a candidate source (the
+    /// web relay's leg) takes each of the far end's signalled candidates
+    /// this long after it arrives, so the source's pair is checked, and
+    /// can be nominated, before any direct pair (0: at once). A connection
+    /// without a source is not delayed.
+    static void setDirectCandidateDelayForTest(int ms);
+#endif
     /// The ICE settings it was started with, the relay included once known.
     std::optional<IceConfiguration> iceConfiguration() const { return m_options.ice; }
     /// The ICE settings the session's media connection uses (the Task 28
