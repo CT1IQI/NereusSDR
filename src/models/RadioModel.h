@@ -13,6 +13,13 @@
 //                (rfGain), after Longpath f1d0c181 (Martin Fischer,
 //                OE5SOS). J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
+//                share with when it tunes into their range (JJ's ruling
+//                2026-10-22), compared on the slice's new-band label.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - receiveAdcForStream; rejoin candidates compare the ADC and
+//                the receivers' own C-Tune pins. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -7336,6 +7343,26 @@ public:
     /// already owns a stream.
     bool bindSliceToStream(SliceModel* slice, double frequencyHz,
                            bool preferOwnStream = false, int requiredStream = -1);
+
+    /// JJ's ruling 2026-10-22: the other receivers `slice`, alone on
+    /// `currentStream` and retuning, may share with it (either way round;
+    /// SliceStreamAllocator::rejoinStream and canFoldDown decide geometry
+    /// and which receiver is freed). A receiver qualifies only when the
+    /// move changes nothing for anyone already on it: every slice there is
+    /// on the same pan, has the receive label `joinLabel` (the label `slice`
+    /// will have on its new band), and is not in Diversity; its DDC reads
+    /// the same ADC as `currentStream`'s (receiveAdcForStream, both known);
+    /// its C-Tune pin equals `currentStream`'s; and, where slices have
+    /// owners, the receiver's anchoring device is the slice's own.
+    QVector<int> rejoinCandidateStreams(const SliceModel* slice, int currentStream,
+                                        const QString& joinLabel) const;
+
+    /// The ADC the radio has been told `stream`'s DDC reads: the codec's
+    /// published assignment (adcForStream), which is what the wire carries
+    /// on either protocol, Protocol 1 Diversity's remapped routing word
+    /// included. -1 when it is not known: no codec has answered yet, or the
+    /// stream has no DDC.
+    int receiveAdcForStream(int stream) const;
 
     /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
     /// which is what decides whether that hardware DDC's samples are forwarded
