@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 //
 // NereusSDR - the MaxBin hold falls again after a very strong signal.
 //
@@ -40,6 +40,7 @@
 
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
 
 #include "core/WdspEngine.h"
@@ -48,7 +49,7 @@ using namespace NereusSDR;
 
 namespace {
 
-// From Longpath tests/tst_maxbin_hold_decay.cpp:26-37 [@383f058]
+// From Longpath tests/tst_maxbin_hold_decay.cpp:26-36 [@383f058]
 // Die Rechnung, wie sie bis zum 2026-10-09 im Baum stand. Nur hier, als
 // Gegenprobe: so sieht man, was der Fehler wirklich tat.
 double altThetisHold(double heldDbm, double liveDbm, double decay)
@@ -61,7 +62,7 @@ double altThetisHold(double heldDbm, double liveDbm, double decay)
 // Detektor fuer das S-Meter einrichtet.
 constexpr double kDecay = 0.90483741803595952;  // exp(-1/(0.5*20))
 
-// Thetis's own example detector (wdsp/analyzer.c:1442 [@501e3f5]):
+// Thetis's own example detector (wdsp/analyzer.c:1442 [v2.10.3.15]):
 // SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60),
 // at the 20 frames per second the comment below names.
 constexpr double kRate     = 192000.0;
@@ -88,6 +89,8 @@ private slots:
     void itStillRidesAStrongerLiveReadingAtOnce();
     void theWorkingRangeDecaysAsBefore();
     void itNeverFallsBelowTheFloorAndKeepsTheSentinel();
+    void aDecayAboveOneNeverRaisesTheHold();
+    void theStepMatchesLongpathForDecayZeroToOne();
     void aDetectorBinAboveZeroDbmReleases();
 };
 
@@ -155,6 +158,45 @@ void TstMaxBinHoldDecay::itNeverFallsBelowTheFloorAndKeepsTheSentinel()
     }
     QCOMPARE(held, -400.0);
     QCOMPARE(WdspEngine::maxBinHoldNextDbm(-400.0, -400.0, kDecay), -400.0);
+}
+
+// NereusSDR: a decay above 1 (tau * fps too small to make sense, or a
+// bad value) must never lift the hold. Thetis keeps the whole fall
+// inside fabs; so does the port.
+void TstMaxBinHoldDecay::aDecayAboveOneNeverRaisesTheHold()
+{
+    for (const double held : { 10.0, 0.0, -20.0, -42.0, -80.0, -150.0 }) {
+        for (const double decay : { 1.0000001, 1.5, 2.0, 10.0 }) {
+            const double next = WdspEngine::maxBinHoldNextDbm(held, -400.0, decay);
+            QVERIFY2(next <= held,
+                     qPrintable(QStringLiteral("held %1 rose to %2 at decay %3")
+                                    .arg(held).arg(next).arg(decay)));
+        }
+    }
+}
+
+// NereusSDR: for decay in 0..1 the step is bit-identical to Longpath's
+// line (src/core/WdspEngine.cpp:1806-1808 [@383f058]).
+void TstMaxBinHoldDecay::theStepMatchesLongpathForDecayZeroToOne()
+{
+    const auto longpathStep = [](double heldDbm, double liveDbm, double decay) {
+        double next = heldDbm - (1.0 - decay) * std::max(std::abs(heldDbm), 20.0);
+        if (next < -400.0) { next = -400.0; }
+        return liveDbm > next ? liveDbm : next;
+    };
+    for (const double held : { 30.0, 10.0, 0.5, 0.0, -10.0, -20.0, -42.0, -80.0, -150.0, -399.0, -400.0 }) {
+        for (const double decay : { 0.0, 0.25, 0.5, kDecay, 0.999, 1.0 }) {
+            for (const double live : { -400.0, -130.0, -42.0, 5.0 }) {
+                const double ours = WdspEngine::maxBinHoldNextDbm(held, live, decay);
+                const double theirs = longpathStep(held, live, decay);
+                // Exact equality on purpose: QCOMPARE on doubles is fuzzy.
+                QVERIFY2(ours == theirs,
+                         qPrintable(QStringLiteral("held %1 live %2 decay %3: %4 vs %5")
+                                        .arg(held).arg(live).arg(decay)
+                                        .arg(ours, 0, 'g', 17).arg(theirs, 0, 'g', 17)));
+            }
+        }
+    }
 }
 
 // NereusSDR: the same release through the detector the S-meter's

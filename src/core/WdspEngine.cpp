@@ -2585,10 +2585,15 @@ double WdspEngine::maxBinHoldNextDbm(double heldDbm, double liveDbm, double deca
     constexpr double kMinFallReferenceDb = 20.0;
     // Nicht unter den Sentinel aus Init_DetectMaxBin laufen lassen.
     // From Longpath src/core/WdspEngine.cpp:1804 [@383f058]; the value is
-    // Thetis's Init_DetectMaxBin sentinel (wdsp/analyzer.c:703 [@501e3f5]).
+    // Thetis's Init_DetectMaxBin sentinel (wdsp/analyzer.c:703 [v2.10.3.15]).
     constexpr double kUnsetDbm = -400.0;
 
-    double next = heldDbm - (1.0 - decay) * std::max(std::abs(heldDbm), kMinFallReferenceDb);
+    // NereusSDR: the whole fall stays inside fabs as in Thetis
+    // (wdsp/analyzer.c:818 [v2.10.3.15]), so a decay above 1 can never
+    // make the hold rise. For decay in 0..1 the product is already
+    // non-negative and the result is bit-identical to Longpath's line,
+    // which applies std::abs to the held value only.
+    double next = heldDbm - std::abs((1.0 - decay) * std::max(std::abs(heldDbm), kMinFallReferenceDb));
     if (next < kUnsetDbm) { next = kUnsetDbm; }
     return liveDbm > next ? liveDbm : next;
 }
