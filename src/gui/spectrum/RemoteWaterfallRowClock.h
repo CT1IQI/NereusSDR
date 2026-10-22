@@ -2,6 +2,10 @@
 // src/gui/spectrum/RemoteWaterfallRowClock.h  (NereusSDR-native)
 // =================================================================
 // 2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: an optional
+//               observer told when the clock starves and when its grid
+//               starts again, for the widget's NEREUS_TRACE_REMOTE_ROWS
+//               trace. It changes nothing the clock does.
 // no-port-check: NereusSDR-original. The Thetis and AetherSDR notes below
 // describe how they pace rows; no code is taken from either.
 //
@@ -63,6 +67,9 @@
 
 #include <QtGlobal>
 
+#include <functional>
+#include <utility>
+
 namespace NereusSDR {
 
 class RemoteWaterfallRowClock {
@@ -99,8 +106,9 @@ public:
     qint64 periodNs() const { return m_periodNs; }
     bool running() const { return m_periodNs > 0; }
 
-    // Start again: the next row starts the grid at its due time.
-    void reset();
+    // Start again: the next row starts the grid at its due time. cause
+    // names the caller for the observer (Reason::Reset).
+    void reset(const char* cause = "reset");
 
     // Advance to nowNs. queuedRows is the queue's depth; frontDueNs the
     // time its oldest row is due on screen and frontQueuedNs the time that
@@ -127,11 +135,40 @@ public:
     int starvedSlots() const { return m_starvedSlots; }
     // Times the grid started again at a row since the last reset.
     int reanchors() const { return m_reanchors; }
+    // Resting: the clock reached a slide start with no row in hand.
+    bool starved() const { return m_starved; }
+
+    // Diagnostics only (NEREUS_TRACE_REMOTE_ROWS): told, inside advance(),
+    // reset() and setPeriodNs(), when the clock starves and when its grid
+    // starts again or anchors. Unset, nothing is called.
+    enum class Reason {
+        FirstRow,          // the grid anchored at a row (after a reset or start again)
+        ErrorBeyondBound,  // a due time more than kReanchorRows off its slot
+        LateRowDueLater,   // a late row due later than a row period on
+        LateRowFarBehind,  // a late row's slot a few rows behind the grid
+        PeriodChange,      // setPeriodNs() with a new period
+        Reset,             // reset() with the grid anchored
+    };
+    struct Event {
+        enum class Kind { Starve, Reanchor };
+        Kind kind{Kind::Starve};
+        Reason reason{Reason::Reset};
+        // The error that started the grid again (ns): due minus slot.
+        double errorNs{0.0};
+        // FirstRow: the slot the grid anchored at.
+        double slotNs{0.0};
+        // Reset: the caller's cause.
+        const char* cause{""};
+    };
+    using Observer = std::function<void(const Event&)>;
+    void setObserver(Observer observer) { m_observer = std::move(observer); }
 
 private:
     void anchorAt(double slotNs);
     // The grid starts again at the next row (counted in reanchors()).
-    void startAgain();
+    void startAgain(Reason reason, double errorNs);
+    void resetState();
+    void notify(const Event& event) const;
 
     qint64 m_periodNs{0};
     bool   m_anchored{false};  // the grid has a slot
@@ -147,6 +184,7 @@ private:
     double m_errorNs{0.0};
     int    m_starvedSlots{0};
     int    m_reanchors{0};
+    Observer m_observer;
 };
 
 } // namespace NereusSDR

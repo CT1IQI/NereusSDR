@@ -4,6 +4,9 @@
 // Thetis has no remote display, so there is no upstream source to cite.
 //
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 NEREUS_TRACE_REMOTE_ROWS trace logs a starve when set and
+//                 nothing when unset.
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 ticker and glide at the Core's row period; the row clock's
 //                 grid locked to the rows' due times; then the review's fix
@@ -33,6 +36,7 @@
 #include "core/session/media/SpectrumEndpoint.h"
 
 #include <QtTest>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -904,6 +908,77 @@ private slots:
 
         widget.clearRemoteSpectrum();
         QVERIFY(!widget.remoteRowClockForTest().running());
+    }
+
+    void remoteRowTraceLogsAStarveOnlyWhenSet()
+    {
+        // NEREUS_TRACE_REMOTE_ROWS=1, read when the widget is built: a row
+        // anchors the grid, the clock reaches the next slot with no row in
+        // hand and the trace says so. Unset, the same run logs nothing.
+        const QByteArray saved = qgetenv("NEREUS_TRACE_REMOTE_ROWS");
+        const bool wasSet = qEnvironmentVariableIsSet("NEREUS_TRACE_REMOTE_ROWS");
+        const auto restore = [&] {
+            if (wasSet) {
+                qputenv("NEREUS_TRACE_REMOTE_ROWS", saved);
+            } else {
+                qunsetenv("NEREUS_TRACE_REMOTE_ROWS");
+            }
+        };
+        const SpectrumEndpointContext context = remoteContext(30, 2);
+        const RemoteSpectrumCapture capture{context, 14200000.0, 192000.0};
+        const QVector<float> row(400, -100.0f);
+        const auto run = [&](SpectrumWidget& widget) {
+            widget.resize(420, 240);
+            widget.setWaterfallTickerPausedForTest(true);
+            widget.setRemoteRowNowNsForTest(0);
+            widget.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
+            QVERIFY(widget.enqueueRemoteWaterfallRow(row, {}, capture, 100 * kMs, 7u));
+            widget.setRemoteRowNowNsForTest(100 * kMs - kTwoFrameRowNs);
+            widget.pumpRemoteWaterfallForTest();
+            QCOMPARE(widget.remoteRowClockForTest().lastSlotNs(), 100 * kMs);
+            widget.setRemoteRowNowNsForTest(101 * kMs);
+            widget.pumpRemoteWaterfallForTest();
+            QCOMPARE(widget.remoteRowClockForTest().starvedSlots(), 1);
+        };
+
+        qputenv("NEREUS_TRACE_REMOTE_ROWS", "1");
+        {
+            SpectrumWidget widget;
+            restore();
+            QTest::ignoreMessage(QtInfoMsg, QRegularExpression(
+                QStringLiteral("^REMOTE_ROWS pan=\\d+ REANCHOR .*reason=period-change ")));
+            QTest::ignoreMessage(QtInfoMsg, QRegularExpression(
+                QStringLiteral("^REMOTE_ROWS pan=\\d+ REANCHOR now=33\\.3 reason=first-row"
+                               " error=0\\.0 slot=100\\.0 queue=1 ")));
+            QTest::ignoreMessage(QtInfoMsg, QRegularExpression(
+                QStringLiteral("^REMOTE_ROWS pan=\\d+ PAINT_GAP now=101\\.0 gap=67\\.7 ")));
+            QTest::ignoreMessage(QtInfoMsg, QRegularExpression(
+                QStringLiteral("^REMOTE_ROWS pan=\\d+ STARVE now=101\\.0 lastSlot=100\\.0"
+                               " nextSlot=166\\.7 queue=0 frontDueMinusNow=none frontAge=none"
+                               " rate=1\\.00000 smoothedErr=0\\.0 sinceLastPut=67\\.7$")));
+            run(widget);
+        }
+
+        qunsetenv("NEREUS_TRACE_REMOTE_ROWS");
+        static QStringList traced;
+        traced.clear();
+        static QtMessageHandler previous = nullptr;
+        previous = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext& where,
+                                             const QString& message) {
+            if (message.contains(QLatin1String("REMOTE_ROWS"))) {
+                traced.append(message);
+            }
+            if (previous) {
+                previous(type, where, message);
+            }
+        });
+        {
+            SpectrumWidget widget;
+            run(widget);
+        }
+        qInstallMessageHandler(previous);
+        restore();
+        QVERIFY2(traced.isEmpty(), qPrintable(traced.join(QLatin1Char('\n'))));
     }
 };
 

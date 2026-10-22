@@ -2,6 +2,8 @@
 // src/gui/spectrum/RemoteWaterfallRowClock.cpp  (NereusSDR-native)
 // =================================================================
 // 2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//               optional trace observer.
 // See RemoteWaterfallRowClock.h for design rationale.
 // =================================================================
 #include "RemoteWaterfallRowClock.h"
@@ -18,10 +20,36 @@ void RemoteWaterfallRowClock::setPeriodNs(qint64 periodNs)
         return;
     }
     m_periodNs = periodNs;
-    reset();
+    resetState();
+    if (m_observer) {
+        Event event;
+        event.kind = Event::Kind::Reanchor;
+        event.reason = Reason::PeriodChange;
+        notify(event);
+    }
 }
 
-void RemoteWaterfallRowClock::reset()
+void RemoteWaterfallRowClock::notify(const Event& event) const
+{
+    if (m_observer) {
+        m_observer(event);
+    }
+}
+
+void RemoteWaterfallRowClock::reset(const char* cause)
+{
+    const bool wasAnchored = m_anchored;
+    resetState();
+    if (wasAnchored && m_observer) {
+        Event event;
+        event.kind = Event::Kind::Reanchor;
+        event.reason = Reason::Reset;
+        event.cause = cause;
+        notify(event);
+    }
+}
+
+void RemoteWaterfallRowClock::resetState()
 {
     m_anchored = false;
     m_starved = false;
@@ -42,9 +70,16 @@ void RemoteWaterfallRowClock::anchorAt(double slotNs)
     m_slotNs = slotNs;
     m_anchored = true;
     m_starved = false;
+    if (m_observer) {
+        Event event;
+        event.kind = Event::Kind::Reanchor;
+        event.reason = Reason::FirstRow;
+        event.slotNs = slotNs;
+        notify(event);
+    }
 }
 
-void RemoteWaterfallRowClock::startAgain()
+void RemoteWaterfallRowClock::startAgain(Reason reason, double errorNs)
 {
     // The grid starts again at the next row, at the nominal rate: a rate
     // learnt against rows that are gone says nothing of the next ones.
@@ -52,6 +87,13 @@ void RemoteWaterfallRowClock::startAgain()
     m_errorNs = 0.0;
     m_rate = 1.0;
     m_anchored = false;
+    if (m_observer) {
+        Event event;
+        event.kind = Event::Kind::Reanchor;
+        event.reason = reason;
+        event.errorNs = errorNs;
+        notify(event);
+    }
 }
 
 int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontDueNs,
@@ -101,8 +143,12 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
             // wave, second review).
             m_starved = false;
             const double lateSlot = now + step;
-            if (double(frontDueNs) > lateSlot || lateSlot - target > reanchorNs) {
-                startAgain();
+            if (double(frontDueNs) > lateSlot) {
+                startAgain(Reason::LateRowDueLater, double(frontDueNs) - lateSlot);
+                continue;
+            }
+            if (lateSlot - target > reanchorNs) {
+                startAgain(Reason::LateRowFarBehind, target - lateSlot);
                 continue;
             }
             m_slideStartNs = now;
@@ -117,7 +163,7 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
         const double scheduled = m_slotNs + step;
         const double error = target - scheduled;
         if (rows == 0 && std::abs(error) > reanchorNs) {
-            startAgain();
+            startAgain(Reason::ErrorBeyondBound, error);
             continue;
         }
         // The error is taken both ways for the phase and the rate. A row
@@ -144,6 +190,9 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
         // full row until one comes.
         m_starved = true;
         ++m_starvedSlots;
+        if (m_observer) {
+            notify(Event{});
+        }
     }
     if (rows > 0) {
         if (m_slotNs <= now) {

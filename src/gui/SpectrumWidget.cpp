@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
+//                 trace of a remote pan's row clock (starves, re-anchors,
+//                 two-row puts, paint gaps and a 10 s summary), gated on
+//                 NEREUS_TRACE_REMOTE_ROWS=1; diagnostics only.
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 pan's rows go in by a steady row clock read on every
 //                 frame, and its glide follows that clock instead of when a
@@ -847,6 +851,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         onWaterfallTick();
     }, Qt::QueuedConnection);
     m_remoteRowSteadyClock.start();
+    // Read once: a remote pan's row clock trace (diagnostics only).
+    m_traceRemoteRows = qEnvironmentVariableIntValue("NEREUS_TRACE_REMOTE_ROWS") == 1;
+    if (m_traceRemoteRows) {
+        m_remoteRowClock.setObserver([this](const RemoteWaterfallRowClock::Event& event) {
+            onRemoteRowClockEvent(event);
+        });
+    }
     m_waterfallTickerThread->start();
     applyWaterfallTickerPeriod();
     m_waterfallTicker->start();
@@ -2763,7 +2774,7 @@ void SpectrumWidget::onWaterfallTick()
         // R-R3-21: receive rows queued meanwhile are superseded by the
         // transmit rows, as the one pending row was; none plays out late.
         m_remoteRowQueue.clear();
-        m_remoteRowClock.reset();
+        m_remoteRowClock.reset("transmit-view");
         return;
     }
     // Core controls remote waterfall cadence. Replaying a cached row
@@ -2973,7 +2984,7 @@ int SpectrumWidget::forgetEarlyRemoteRows()
     const int forgotten = int(before - m_remoteRowQueue.size());
     if (forgotten > 0) {
         // As a cleared queue: the next row starts the grid again.
-        m_remoteRowClock.reset();
+        m_remoteRowClock.reset("forget-early");
     }
     return forgotten;
 }
@@ -3094,6 +3105,20 @@ qint64 SpectrumWidget::remoteRowNowNs() const
 
 void SpectrumWidget::pumpRemoteWaterfallOnFrame()
 {
+    if (m_traceRemoteRows && m_remoteSpectrum && m_remoteRowClock.running()) {
+        const qint64 now = remoteRowNowNs();
+        RemoteRowTrace& trace = m_remoteRowTrace;
+        ++trace.paintPumps;
+        if (trace.lastPaintPumpNs >= 0 && now - trace.lastPaintPumpNs > kRemoteRowTracePaintGapNs) {
+            ++trace.paintGaps;
+            traceRemoteRowEvent(QStringLiteral("PAINT_GAP now=%1 gap=%2 queue=%3 progress=%4")
+                .arg(now / 1e6, 0, 'f', 1)
+                .arg((now - trace.lastPaintPumpNs) / 1e6, 0, 'f', 1)
+                .arg(m_remoteRowQueue.size())
+                .arg(double(m_remoteRowClock.progress()), 0, 'f', 3));
+        }
+        trace.lastPaintPumpNs = now;
+    }
     // The ticks since the last drawn frame spent part of this frame's
     // budget: their rows show first on this frame.
     pumpRemoteWaterfallRows(RemoteWaterfallRowClock::kMaxRowsPerFrame - m_remoteRowsByTicks);
@@ -3113,6 +3138,9 @@ void SpectrumWidget::pumpRemoteWaterfallOnTick()
     // behind.
     const qint64 now = remoteRowNowNs();
     const qint64 freshAfterNs = m_remoteRowClock.periodNs() / 2;
+    if (m_traceRemoteRows) {
+        ++m_remoteRowTrace.tickPumps;
+    }
     if (!m_remoteBudgetStarted || now - m_remoteBudgetStartNs >= freshAfterNs) {
         m_remoteRowsByTicks = 0;
         m_remoteBudgetStartNs = now;
@@ -3138,14 +3166,47 @@ int SpectrumWidget::pumpRemoteWaterfallRows(int maxRows)
         m_remoteRowQueue.removeIf([now](const RemoteWaterfallRow& row) {
             return row.dueNs <= now;
         });
-        m_remoteRowClock.reset();
+        m_remoteRowClock.reset("transmit-view");
         return 0;
+    }
+    const bool wasStarved = m_traceRemoteRows && m_remoteRowClock.starved();
+    const int queuedBefore = int(m_remoteRowQueue.size());
+    if (m_traceRemoteRows) {
+        RemoteRowTrace& trace = m_remoteRowTrace;
+        trace.nowNs = now;
+        traceRemoteRowWindow(now);
+        trace.minQueue = trace.minQueue < 0 ? queuedBefore : std::min(trace.minQueue, queuedBefore);
+        trace.maxQueue = std::max(trace.maxQueue, queuedBefore);
     }
     const int rows = m_remoteRowQueue.isEmpty()
         ? m_remoteRowClock.advance(now, 0, now, now, maxRows)
         : m_remoteRowClock.advance(now, int(m_remoteRowQueue.size()),
                                    m_remoteRowQueue.constFirst().dueNs,
                                    m_remoteRowQueue.constFirst().queuedNs, maxRows);
+    if (m_traceRemoteRows && rows > 0) {
+        RemoteRowTrace& trace = m_remoteRowTrace;
+        if (wasStarved) {
+            // The rest ends: the row that came, and how long the glide rested.
+            const RemoteWaterfallRow& front = m_remoteRowQueue.constFirst();
+            traceRemoteRowEvent(QStringLiteral(
+                    "STARVE_END now=%1 rest=%2 slot=%3 frontDueMinusNow=%4 frontAge=%5 queue=%6")
+                .arg(now / 1e6, 0, 'f', 1)
+                .arg(trace.starveStartNs >= 0 ? (now - trace.starveStartNs) / 1e6 : -1.0, 0, 'f', 1)
+                .arg(m_remoteRowClock.lastSlotNs() / 1e6, 0, 'f', 1)
+                .arg((front.dueNs - now) / 1e6, 0, 'f', 1)
+                .arg((now - front.queuedNs) / 1e6, 0, 'f', 1)
+                .arg(queuedBefore));
+            trace.starveStartNs = -1;
+        }
+        if (rows >= 2) {
+            ++trace.twoRowPuts;
+            traceRemoteRowEvent(QStringLiteral("TWO_ROWS now=%1 slot=%2 queue=%3 maxRows=%4")
+                .arg(now / 1e6, 0, 'f', 1)
+                .arg(m_remoteRowClock.lastSlotNs() / 1e6, 0, 'f', 1)
+                .arg(queuedBefore)
+                .arg(maxRows));
+        }
+    }
     putRemoteWaterfallRows(rows);
     return rows;
 }
@@ -3155,6 +3216,12 @@ void SpectrumWidget::putRemoteWaterfallRows(int rows)
     rows = std::min(rows, int(m_remoteRowQueue.size()));
     for (int i = 0; i < rows; ++i) {
         RemoteWaterfallRow row = m_remoteRowQueue.takeFirst();
+        if (m_traceRemoteRows) {
+            const qint64 now = remoteRowNowNs();
+            ++m_remoteRowTrace.rowsPut;
+            m_remoteRowTrace.dueMinusNowMs.append((row.dueNs - now) / 1e6);
+            m_remoteRowTrace.lastPutNs = now;
+        }
         if (!qFuzzyCompare(row.centreHz, m_centerHz)
             || !qFuzzyCompare(row.spanHz, m_bandwidthHz)) {
             // Captured before a tune or zoom: draw it at the frequency it
@@ -3195,6 +3262,124 @@ void SpectrumWidget::putRemoteWaterfallRows(int rows)
         ++m_remoteRowsPushed;
         m_lastRemoteRowPushed = row.pixelsDbm;
     }
+}
+
+void SpectrumWidget::traceRemoteRowEvent(const QString& line)
+{
+    if (m_remoteRowTrace.eventLines >= kRemoteRowTraceEventCap) {
+        ++m_remoteRowTrace.eventsSuppressed;
+        return;
+    }
+    ++m_remoteRowTrace.eventLines;
+    qCInfo(lcSpectrum).noquote() << "REMOTE_ROWS pan=" + QString::number(m_panIndex) << line;
+}
+
+void SpectrumWidget::traceRemoteRowWindow(qint64 nowNs)
+{
+    RemoteRowTrace& trace = m_remoteRowTrace;
+    if (trace.windowStartNs < 0) {
+        trace.windowStartNs = nowNs;
+        return;
+    }
+    if (nowNs - trace.windowStartNs < kRemoteRowTraceWindowNs) {
+        return;
+    }
+    QList<double> dues = trace.dueMinusNowMs;
+    std::sort(dues.begin(), dues.end());
+    const auto ms = [](double value) { return QString::number(value, 'f', 1); };
+    const QString dueText = dues.isEmpty()
+        ? QStringLiteral("none")
+        : ms(dues.constFirst()) + QLatin1Char('/') + ms(dues.at(dues.size() / 2))
+            + QLatin1Char('/') + ms(dues.constLast());
+    qCInfo(lcSpectrum).noquote()
+        << QStringLiteral("REMOTE_ROWS pan=%1 SUMMARY now=%2 window=%3 rowsPut=%4 starved=%5"
+                          " reanchors=%6 twoRowPuts=%7 paintPumps=%8 tickPumps=%9")
+               .arg(m_panIndex)
+               .arg(ms(nowNs / 1e6))
+               .arg(ms((nowNs - trace.windowStartNs) / 1e6))
+               .arg(trace.rowsPut)
+               .arg(trace.starved)
+               .arg(trace.reanchors)
+               .arg(trace.twoRowPuts)
+               .arg(trace.paintPumps)
+               .arg(trace.tickPumps)
+        << QStringLiteral("paintGaps>25ms=%1 dueMinusNowAtPut(min/med/max)=%2 queue(min/max)=%3/%4"
+                          " rate=%5 smoothedErr=%6 period=%7 eventsSuppressed=%8")
+               .arg(trace.paintGaps)
+               .arg(dueText)
+               .arg(trace.minQueue)
+               .arg(trace.maxQueue)
+               .arg(m_remoteRowClock.rate(), 0, 'f', 5)
+               .arg(ms(m_remoteRowClock.smoothedErrorNs() / 1e6))
+               .arg(QString::number(m_remoteRowClock.periodNs() / 1e6, 'f', 2))
+               .arg(trace.eventsSuppressed);
+    // A new window; what spans windows (the last paint, put and starve) stays.
+    RemoteRowTrace next;
+    next.nowNs = trace.nowNs;
+    next.windowStartNs = nowNs;
+    next.lastPaintPumpNs = trace.lastPaintPumpNs;
+    next.lastPutNs = trace.lastPutNs;
+    next.starveStartNs = trace.starveStartNs;
+    trace = next;
+}
+
+void SpectrumWidget::onRemoteRowClockEvent(const RemoteWaterfallRowClock::Event& event)
+{
+    RemoteRowTrace& trace = m_remoteRowTrace;
+    const qint64 now = trace.nowNs;
+    const auto ms = [](double value) { return QString::number(value, 'f', 1); };
+    const RemoteWaterfallRowClock& clock = m_remoteRowClock;
+    if (event.kind == RemoteWaterfallRowClock::Event::Kind::Starve) {
+        ++trace.starved;
+        trace.starveStartNs = now;
+        const bool hasFront = !m_remoteRowQueue.isEmpty();
+        const double period = double(clock.periodNs());
+        traceRemoteRowEvent(QStringLiteral(
+                "STARVE now=%1 lastSlot=%2 nextSlot=%3 queue=%4 frontDueMinusNow=%5 frontAge=%6"
+                " rate=%7 smoothedErr=%8 sinceLastPut=%9")
+            .arg(ms(now / 1e6))
+            .arg(ms(clock.lastSlotNs() / 1e6))
+            .arg(ms((double(clock.lastSlotNs()) + period / clock.rate()) / 1e6))
+            .arg(m_remoteRowQueue.size())
+            .arg(hasFront ? ms((m_remoteRowQueue.constFirst().dueNs - now) / 1e6)
+                          : QStringLiteral("none"))
+            .arg(hasFront ? ms((now - m_remoteRowQueue.constFirst().queuedNs) / 1e6)
+                          : QStringLiteral("none"))
+            .arg(clock.rate(), 0, 'f', 5)
+            .arg(ms(clock.smoothedErrorNs() / 1e6))
+            .arg(trace.lastPutNs >= 0 ? ms((now - trace.lastPutNs) / 1e6)
+                                      : QStringLiteral("none")));
+        return;
+    }
+    using Reason = RemoteWaterfallRowClock::Reason;
+    QString reason;
+    switch (event.reason) {
+    case Reason::FirstRow:         reason = QStringLiteral("first-row"); break;
+    case Reason::ErrorBeyondBound: reason = QStringLiteral("error-beyond-bound"); break;
+    case Reason::LateRowDueLater:  reason = QStringLiteral("late-row-due-later"); break;
+    case Reason::LateRowFarBehind: reason = QStringLiteral("late-row-far-behind"); break;
+    case Reason::PeriodChange:     reason = QStringLiteral("period-change"); break;
+    case Reason::Reset:
+        reason = QStringLiteral("reset:") + QString::fromLatin1(event.cause);
+        break;
+    }
+    if (event.reason != Reason::FirstRow) {
+        ++trace.reanchors;
+    }
+    // Reset and period changes come from outside a pump: take the time now.
+    const qint64 at = (event.reason == Reason::Reset || event.reason == Reason::PeriodChange)
+        ? remoteRowNowNs() : now;
+    const bool hasFront = !m_remoteRowQueue.isEmpty();
+    traceRemoteRowEvent(QStringLiteral(
+            "REANCHOR now=%1 reason=%2 error=%3 slot=%4 queue=%5 frontDueMinusNow=%6 period=%7")
+        .arg(ms(at / 1e6))
+        .arg(reason)
+        .arg(ms(event.errorNs / 1e6))
+        .arg(event.reason == Reason::FirstRow ? ms(event.slotNs / 1e6) : QStringLiteral("none"))
+        .arg(m_remoteRowQueue.size())
+        .arg(hasFront ? ms((m_remoteRowQueue.constFirst().dueNs - at) / 1e6)
+                      : QStringLiteral("none"))
+        .arg(QString::number(clock.periodNs() / 1e6, 'f', 2)));
 }
 
 qint64 SpectrumWidget::remoteWaterfallRowPeriodNs() const

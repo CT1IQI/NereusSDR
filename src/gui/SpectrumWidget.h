@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
+//                 trace of a remote pan's row clock, gated on
+//                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 pan's waterfall scrolls by a steady row clock read each
 //                 frame; its rows are handed over early with the time each
@@ -3919,6 +3922,38 @@ private:
     // (RemoteWaterfallRowClock.h).
     RemoteWaterfallRowClock m_remoteRowClock;
     QElapsedTimer m_remoteRowSteadyClock;
+    // NEREUS_TRACE_REMOTE_ROWS=1, read once at construction: qCInfo lines
+    // (lcSpectrum, "REMOTE_ROWS ...") for the row clock's starves,
+    // re-anchors, two-row puts and paint gaps, at most
+    // kRemoteRowTraceEventCap a window, and a summary each window while the
+    // clock runs. Diagnostics only: nothing here changes a row.
+    static constexpr qint64 kRemoteRowTraceWindowNs = 10'000'000'000LL;
+    static constexpr int kRemoteRowTraceEventCap = 40;
+    static constexpr qint64 kRemoteRowTracePaintGapNs = 25'000'000;
+    struct RemoteRowTrace {
+        qint64 nowNs{0};            // the pump's now, for the clock's observer
+        qint64 windowStartNs{-1};
+        int eventLines{0};
+        int eventsSuppressed{0};
+        int rowsPut{0};
+        int starved{0};
+        int reanchors{0};
+        int twoRowPuts{0};
+        int paintPumps{0};
+        int tickPumps{0};
+        int paintGaps{0};
+        int minQueue{-1};
+        int maxQueue{-1};
+        QList<double> dueMinusNowMs;  // each row put in: its due time minus now
+        qint64 lastPaintPumpNs{-1};
+        qint64 lastPutNs{-1};
+        qint64 starveStartNs{-1};
+    };
+    bool m_traceRemoteRows{false};
+    RemoteRowTrace m_remoteRowTrace;
+    void traceRemoteRowEvent(const QString& line);
+    void traceRemoteRowWindow(qint64 nowNs);
+    void onRemoteRowClockEvent(const RemoteWaterfallRowClock::Event& event);
     std::optional<qint64> m_remoteRowNowNsForTest;
     // A remote pan's row period on the Core's clock: framesPerLine frames
     // at the context's frame rate, in ns. 0 before the first context.

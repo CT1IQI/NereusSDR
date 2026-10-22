@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-22: with NEREUS_TRACE_REMOTE_ROWS=1 (read once), an early row
+//               hand-off whose due time is more than 10 ms off the last
+//               row's due plus the row period is logged (HANDOFF_JUMP),
+//               with the presenter map; diagnostics only. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21: a pan's waterfall rows go to its widget as the presenter
 //               queues them, with the time each is due, so the widget's
 //               row clock slides each in by then; the trace is still drawn
@@ -1123,6 +1128,9 @@ struct RemoteMediaController::Private {
         QJsonObject acceptedRequest;
         int observedStream = -1;
         quint64 observedStreamEpoch = 0;
+        // NEREUS_TRACE_REMOTE_ROWS: the due time of the last row handed over
+        // early, on the controller's clock (handOverEarlyRows).
+        std::optional<qint64> traceLastHandoffDueNs;
         /// The Core ended this display because its slice left the Core
         /// (kRetireReasonSliceRemoved). The removal itself reaches this
         /// window's slice list after that word, so until it does the slice
@@ -1687,6 +1695,14 @@ struct RemoteMediaController::Private {
     std::optional<qint64> lastAudioDelayNs;
     QTimer* presentTimer = nullptr;
     RemoteDisplayTelemetry displayCounters;
+    // NEREUS_TRACE_REMOTE_ROWS=1, read once: HANDOFF_JUMP lines from
+    // handOverEarlyRows, at most kRemoteRowTraceEventCap a 10 s window.
+    const bool traceRemoteRows = qEnvironmentVariableIntValue("NEREUS_TRACE_REMOTE_ROWS") == 1;
+    qint64 traceRemoteRowsWindowStartNs = -1;
+    int traceRemoteRowsLines = 0;
+    int traceRemoteRowsSuppressed = 0;
+    void traceEarlyRowHandoff(Binding& binding, const RemoteDisplayPresenter::Item& item,
+                              qint64 nowNs, std::optional<qint64> mapNs, qint64 dueInNs);
     Ps3DisplayAssembler ps3Assembler;
     quint64 ps3Generation = 0;
     std::unique_ptr<RemoteAudioReceiver> audio;
@@ -8817,7 +8833,62 @@ void RemoteMediaController::handOverEarlyRows(quint32 endpointId, qint64 nowNs,
         if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
             ++d->displayCounters.rowsBlended;
         }
+        if (d->traceRemoteRows) {
+            d->traceEarlyRowHandoff(binding, item, nowNs, mapNs, dueInNs);
+        }
     }
+}
+
+void RemoteMediaController::Private::traceEarlyRowHandoff(
+    Binding& binding, const RemoteDisplayPresenter::Item& item,
+    qint64 nowNs, std::optional<qint64> mapNs, qint64 dueInNs)
+{
+    // Diagnostics only (NEREUS_TRACE_REMOTE_ROWS): a row whose due time is
+    // more than kHandoffJumpNs off the last row's due plus the row period.
+    constexpr qint64 kHandoffJumpNs = 10'000'000;
+    constexpr qint64 kWindowNs = 10'000'000'000LL;
+    constexpr int kEventCap = 40;
+    const qint64 dueNs = nowNs + dueInNs;
+    const qint64 periodNs = binding.presenter.rowPeriodNs();
+    const std::optional<qint64> previousDueNs = binding.traceLastHandoffDueNs;
+    binding.traceLastHandoffDueNs = dueNs;
+    if (traceRemoteRowsWindowStartNs < 0
+        || nowNs - traceRemoteRowsWindowStartNs >= kWindowNs) {
+        if (traceRemoteRowsSuppressed > 0) {
+            qCInfo(lcRemoteMedia).noquote()
+                << QStringLiteral("REMOTE_ROWS HANDOFF_SUPPRESSED count=%1")
+                       .arg(traceRemoteRowsSuppressed);
+        }
+        traceRemoteRowsWindowStartNs = nowNs;
+        traceRemoteRowsLines = 0;
+        traceRemoteRowsSuppressed = 0;
+    }
+    if (!previousDueNs || periodNs <= 0) {
+        return;
+    }
+    const qint64 jumpNs = dueNs - (*previousDueNs + periodNs);
+    if (std::abs(jumpNs) <= kHandoffJumpNs) {
+        return;
+    }
+    if (traceRemoteRowsLines >= kEventCap) {
+        ++traceRemoteRowsSuppressed;
+        return;
+    }
+    ++traceRemoteRowsLines;
+    const auto ms = [](double ns) { return QString::number(ns / 1e6, 'f', 1); };
+    qCInfo(lcRemoteMedia).noquote()
+        << QStringLiteral("REMOTE_ROWS HANDOFF_JUMP pan=%1 now=%2 kind=%3 producerNs=%4 map=%5"
+                          " prevDue=%6 due=%7 dueIn=%8 period=%9")
+               .arg(binding.panId)
+               .arg(ms(double(nowNs)))
+               .arg(static_cast<int>(item.kind))
+               .arg(item.producerNs)
+               .arg(mapNs ? QString::number(*mapNs) : QStringLiteral("none"))
+               .arg(ms(double(*previousDueNs)))
+               .arg(ms(double(dueNs)))
+               .arg(ms(double(dueInNs)))
+               .arg(QString::number(periodNs / 1e6, 'f', 2))
+        << QStringLiteral("jump=%1").arg(ms(double(jumpNs)));
 }
 
 void RemoteMediaController::scheduleDisplayPresentation(std::optional<qint64> mapNs)
