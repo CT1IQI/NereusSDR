@@ -22,7 +22,10 @@ enum ConnectChrome {
     static let warn = P.amberText
     static let bad = P.redBorder
     static let badBorder = P.redBorder
-    static let badText = P.redText
+    // Standalone red text on a plain panel takes kRedBorder, as the desktop
+    // colors it (src/gui/SliceChooser.cpp:417); kRedText is only for text on a
+    // kRedBg fill (src/gui/applets/ModMonitorApplet.cpp:630-640).
+    static let badText = P.redBorder
     static let pillOn = P.liveGreen
     static let pillStale = P.noticeWarn
     static let pillOff = P.redBorder

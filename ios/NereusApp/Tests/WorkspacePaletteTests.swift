@@ -247,7 +247,7 @@ struct WorkspacePaletteTests {
             // W5 wins over the board's table for a red that is not transmit.
             ("ConnectChrome.bad", ConnectChrome.bad, 0xA86B6D),
             ("ConnectChrome.badBorder", ConnectChrome.badBorder, 0xA86B6D),
-            ("ConnectChrome.badText", ConnectChrome.badText, 0xF0DCDC),
+            ("ConnectChrome.badText", ConnectChrome.badText, 0xA86B6D),
             ("ConnectChrome.WideButton.stopFill", ConnectChrome.WideButton.stopFill, 0x7A2C2E),
             ("ConnectChrome.WideButton.stopBorder", ConnectChrome.WideButton.stopBorder, 0xA86B6D),
             ("ConnectChrome.rowFill", ConnectChrome.rowFill, 0x141418),
@@ -381,6 +381,12 @@ struct WorkspacePaletteTests {
     /// The switch reads to VoiceOver as the stock switch does: the same
     /// traits and the same on and off value.
     @Test func switchKeepsTheStockSwitchsAccessibility() async throws {
+        // SwiftUI builds its accessibility elements only while application
+        // accessibility is on; turn it on as SetupTypedEntryTests.onScreen
+        // does, and put it back as found (it outlives the test process).
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(wasOn) }
         for isOn in [false, true] {
             let stockState = SwitchState(), styledState = SwitchState()
             stockState.isOn = isOn
