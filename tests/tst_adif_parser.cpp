@@ -9,7 +9,7 @@
 //
 // Phase 3J-2 Task C2. Pins the contract that AdifParser parses an
 // ADIF (Amateur Data Interchange Format) log file into a vector
-// of QsoRecord (callsign + band + modeGroup). Five tests:
+// of QsoRecord (callsign + band + modeGroup). Six tests:
 //   - parsesSampleAdif: synchronous parseFile() against the
 //     bundled 10-QSO sample fixture returns 10 records with the
 //     expected first-record callsign / band / modeGroup values.
@@ -21,6 +21,9 @@
 //     <eor> / <EOR> / <Eor> all parse the same.
 //   - rejectsMalformedAdif: arbitrary garbage bytes yield an
 //     empty record vector.
+//   - handlesTypeIndicatorTags: typed field tags such as
+//     <CALL:6:S> and lowercase tags parse, and a typed FREQ
+//     falls back to the band.
 //
 // Modification history (NereusSDR):
 //   2026-10-22: handlesTypeIndicatorTags ported from Longpath by

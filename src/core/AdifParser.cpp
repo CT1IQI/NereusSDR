@@ -124,7 +124,7 @@ namespace NereusSDR {
 static QString extractField(const QString& block, const QString& fieldName)
 {
     // e.g. <CALL:6>G3ABC  or <CALL:6:S>G3ABC
-    // From Longpath src/core/AdifParser.cpp:70-76 [@383f058]
+    // From Longpath src/core/AdifParser.cpp:71-76 [@383f058]
     // Tag grammar: <FIELDNAME:length> with an optional trailing
     // :DataTypeIndicator (single letter, e.g. :S, :N, :D).
     // NOTE: do NOT make this regex static — the pattern depends on fieldName.
