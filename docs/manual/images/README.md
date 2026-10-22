@@ -107,17 +107,17 @@ Rendered on 9 October 2026 by the native audio engines plan's widget and phone-p
 | --- | --- |
 | [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker grayed, Rescan devices grayed. |
 | [desktop-modes-audio.png](desktop-modes-audio.png) | Audio > Digital modes on a Mac: four VAX cards off, TCI settings. |
-| [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. Recaptured on 21 October 2026 in the workspace look by `SoundPanelTests` (see Phone and iPad captures). |
+| [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. Recaptured on 22 October 2026 in the workspace look, with the workspace switch, by `SoundPanelTests` (see Phone and iPad captures). |
 
 ## Phone and iPad captures
 
 These images were recaptured on 21 October 2026, when the phone took the
 desktop's workspace look, from the native simulator tests each row names, at
 the sizes of the 1 October originals: an iPhone 17 simulator for most, an
-iPhone 18 Pro Max simulator for **Sound**. The tests ran on branch
-`claude/ios-workspace-look` at `4ff934ec0`; Devices, Navigation and Data use
-come from `0408a09ae`, which draws Setup's switches as the app's root does.
-Both carry the same app source. [Capture provenance](capture-provenance.json)
+iPhone 18 Pro Max simulator for **Sound**. On 22 October, after the final
+review's fixes (the workspace switch in every presentation, accent text and
+the 7 and 10 radii), all of them except Devices were recaptured again from
+branch `claude/ios-workspace-look` at `45c52b2dd`; Devices did not change. [Capture provenance](capture-provenance.json)
 records each image's test, hash and build. **Sound** is a screenshot of the full running app driven by
 `XCUIApplication`. The other phone images render the application’s actual
 SwiftUI screens in a simulator window with test services or simulated Core

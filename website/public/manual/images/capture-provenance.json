@@ -5,60 +5,60 @@
     {
       "file": "iphone-welcome-original.png",
       "source": "docs/manual/images/iphone-welcome-original.png",
-      "sha256": "197404c94e43f8003d6c3a25a489bf53c8e6d76a61d0b8df33f8bd517f445403",
+      "sha256": "935b0ad249fea2c07e549ff14961f5b5a4d7b99ef709d00890c95be68c6c9b68",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-shared-slices-original.png",
       "source": "docs/manual/images/iphone-shared-slices-original.png",
-      "sha256": "edb974fcc0e5db24fe179b52377533899fcf5a95e82f801bb0045d889aea2b32",
+      "sha256": "25ce33d7dd66053fd4f1fd1befa3bb8892a918d303bb21cf0c2ca716c8f2522e",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-sound-original.png",
       "source": "docs/manual/images/iphone-sound-original.png",
-      "sha256": "e54e355a7bc3afb68d8a679b06a33648d17fe74e411ff2cf43ea0f541c7c1474",
+      "sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
       "dimensions": [
         1320,
         2868
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "full-app-XCUIApplication",
       "state": "Simulator route, without live Core audio"
     },
     {
       "file": "iphone-tools-original.png",
       "source": "docs/manual/images/iphone-tools-original.png",
-      "sha256": "db93692268e66756d02d7e901589ab7bff5204a88401f4b0aa22fb3ca89666e3",
+      "sha256": "96869eaa2e82aeb6c657cc04c9507f78aee8560a3cb53b18b7966cdee175a9be",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-spot-hub-landscape-original.png",
       "source": "docs/manual/images/iphone-spot-hub-landscape-original.png",
-      "sha256": "4a9033b5d94a096b0a130886ffe5f0fdc7ea1f1a5f5462ccdad68855ad30e5f9",
+      "sha256": "721a4f0c579087e9614f3b6254e4c82302102c274d1102301f931f8ef1569911",
       "dimensions": [
         2622,
         1206
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
@@ -77,48 +77,48 @@
     {
       "file": "iphone-navigation-original.png",
       "source": "docs/manual/images/iphone-navigation-original.png",
-      "sha256": "21edcde52c43de58d6ec2a37280e9e54f7c520c8e6181d253c9e5a2d760d281a",
+      "sha256": "9fde6019a0e43c1e331813dba21cc71b6a6fcdf6c4f58edd9621584bfa19e504",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "0408a09ae (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-data-use-original.png",
       "source": "docs/manual/images/iphone-data-use-original.png",
-      "sha256": "931181a52d36a7361988bf498620b93f45a6c023006a453119283672435576f5",
+      "sha256": "09b20de4a95651fb91caded3177c67938d785cd83eb52b59c78db27a7582b13b",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "0408a09ae (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-radio-landscape-original.png",
       "source": "docs/manual/images/iphone-radio-landscape-original.png",
-      "sha256": "9369bc735a9f6f04b2a854b93caac7f1e4283dca94c6944f7e5e0a2dd8d6830f",
+      "sha256": "66e861e0439ba5da3ec1d8581094324e93d8925e359bfff4b7f3f08d63a2c07f",
       "dimensions": [
         2622,
         1206
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-mic-muted-original.png",
       "source": "docs/manual/images/iphone-mic-muted-original.png",
-      "sha256": "4bdf82420708d3387bcc3534f015343e850f775019520a9760f373b5178db030",
+      "sha256": "c90c24fdebd8d1a91505e47327f2376155288911f1196556957c5d1f20b14d3c",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
@@ -137,12 +137,12 @@
     {
       "file": "iphone-sound-core-speaker.png",
       "source": "docs/manual/images/iphone-sound-core-speaker.png",
-      "sha256": "5a2b2220edba5d96a29ac7aaa18dffd42e1d5e9662fad50cdadecd48a7b1d2f1",
+      "sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
       "dimensions": [
         870,
         2040
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "45c52b2dd (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; Radio speaker 40, Core speaker 60, AirPods route"
     },

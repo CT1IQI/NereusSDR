@@ -140,8 +140,8 @@
     },
     {
       "output": "manual/images/README.md",
-      "output_sha256": "134cc799d6382de33692531240c5de7e74d756aaaef1ba9724cb8053975ff08d",
-      "sha256": "134cc799d6382de33692531240c5de7e74d756aaaef1ba9724cb8053975ff08d",
+      "output_sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
+      "sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
       "source": "docs/manual/images/README.md"
     },
     {
@@ -154,14 +154,14 @@
   "images": [
     {
       "output": "manual/images/README.md",
-      "output_sha256": "134cc799d6382de33692531240c5de7e74d756aaaef1ba9724cb8053975ff08d",
-      "sha256": "134cc799d6382de33692531240c5de7e74d756aaaef1ba9724cb8053975ff08d",
+      "output_sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
+      "sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
       "source": "docs/manual/images/README.md"
     },
     {
       "output": "manual/images/capture-provenance.json",
-      "output_sha256": "07dc1edcbe579f680b0dceaa7d5183674c8d9c9211b3f82d4ecf780b972f6204",
-      "sha256": "1ef077c0e4a765ee0053a7fbbe53842571f9d3c07f110045e294d0018f8aa0c6",
+      "output_sha256": "2bbb05dcd65d1ae3e6a95b913eaee860b162c663ce96463f037da23531581396",
+      "sha256": "df71c1c15dc38dbad0fe5d0156286804f388ff3374370e4131f4ab4afae15dd1",
       "source": "docs/manual/images/capture-provenance.json"
     },
     {
@@ -358,8 +358,8 @@
     },
     {
       "output": "manual/images/iphone-data-use-original.png",
-      "output_sha256": "931181a52d36a7361988bf498620b93f45a6c023006a453119283672435576f5",
-      "sha256": "931181a52d36a7361988bf498620b93f45a6c023006a453119283672435576f5",
+      "output_sha256": "09b20de4a95651fb91caded3177c67938d785cd83eb52b59c78db27a7582b13b",
+      "sha256": "09b20de4a95651fb91caded3177c67938d785cd83eb52b59c78db27a7582b13b",
       "source": "docs/manual/images/iphone-data-use-original.png"
     },
     {
@@ -370,56 +370,56 @@
     },
     {
       "output": "manual/images/iphone-mic-muted-original.png",
-      "output_sha256": "4bdf82420708d3387bcc3534f015343e850f775019520a9760f373b5178db030",
-      "sha256": "4bdf82420708d3387bcc3534f015343e850f775019520a9760f373b5178db030",
+      "output_sha256": "c90c24fdebd8d1a91505e47327f2376155288911f1196556957c5d1f20b14d3c",
+      "sha256": "c90c24fdebd8d1a91505e47327f2376155288911f1196556957c5d1f20b14d3c",
       "source": "docs/manual/images/iphone-mic-muted-original.png"
     },
     {
       "output": "manual/images/iphone-navigation-original.png",
-      "output_sha256": "21edcde52c43de58d6ec2a37280e9e54f7c520c8e6181d253c9e5a2d760d281a",
-      "sha256": "21edcde52c43de58d6ec2a37280e9e54f7c520c8e6181d253c9e5a2d760d281a",
+      "output_sha256": "9fde6019a0e43c1e331813dba21cc71b6a6fcdf6c4f58edd9621584bfa19e504",
+      "sha256": "9fde6019a0e43c1e331813dba21cc71b6a6fcdf6c4f58edd9621584bfa19e504",
       "source": "docs/manual/images/iphone-navigation-original.png"
     },
     {
       "output": "manual/images/iphone-radio-landscape-original.png",
-      "output_sha256": "9369bc735a9f6f04b2a854b93caac7f1e4283dca94c6944f7e5e0a2dd8d6830f",
-      "sha256": "9369bc735a9f6f04b2a854b93caac7f1e4283dca94c6944f7e5e0a2dd8d6830f",
+      "output_sha256": "66e861e0439ba5da3ec1d8581094324e93d8925e359bfff4b7f3f08d63a2c07f",
+      "sha256": "66e861e0439ba5da3ec1d8581094324e93d8925e359bfff4b7f3f08d63a2c07f",
       "source": "docs/manual/images/iphone-radio-landscape-original.png"
     },
     {
       "output": "manual/images/iphone-shared-slices-original.png",
-      "output_sha256": "edb974fcc0e5db24fe179b52377533899fcf5a95e82f801bb0045d889aea2b32",
-      "sha256": "edb974fcc0e5db24fe179b52377533899fcf5a95e82f801bb0045d889aea2b32",
+      "output_sha256": "25ce33d7dd66053fd4f1fd1befa3bb8892a918d303bb21cf0c2ca716c8f2522e",
+      "sha256": "25ce33d7dd66053fd4f1fd1befa3bb8892a918d303bb21cf0c2ca716c8f2522e",
       "source": "docs/manual/images/iphone-shared-slices-original.png"
     },
     {
       "output": "manual/images/iphone-sound-core-speaker.png",
-      "output_sha256": "5a2b2220edba5d96a29ac7aaa18dffd42e1d5e9662fad50cdadecd48a7b1d2f1",
-      "sha256": "5a2b2220edba5d96a29ac7aaa18dffd42e1d5e9662fad50cdadecd48a7b1d2f1",
+      "output_sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
+      "sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
       "source": "docs/manual/images/iphone-sound-core-speaker.png"
     },
     {
       "output": "manual/images/iphone-sound-original.png",
-      "output_sha256": "e54e355a7bc3afb68d8a679b06a33648d17fe74e411ff2cf43ea0f541c7c1474",
-      "sha256": "e54e355a7bc3afb68d8a679b06a33648d17fe74e411ff2cf43ea0f541c7c1474",
+      "output_sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
+      "sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
       "source": "docs/manual/images/iphone-sound-original.png"
     },
     {
       "output": "manual/images/iphone-spot-hub-landscape-original.png",
-      "output_sha256": "4a9033b5d94a096b0a130886ffe5f0fdc7ea1f1a5f5462ccdad68855ad30e5f9",
-      "sha256": "4a9033b5d94a096b0a130886ffe5f0fdc7ea1f1a5f5462ccdad68855ad30e5f9",
+      "output_sha256": "721a4f0c579087e9614f3b6254e4c82302102c274d1102301f931f8ef1569911",
+      "sha256": "721a4f0c579087e9614f3b6254e4c82302102c274d1102301f931f8ef1569911",
       "source": "docs/manual/images/iphone-spot-hub-landscape-original.png"
     },
     {
       "output": "manual/images/iphone-tools-original.png",
-      "output_sha256": "db93692268e66756d02d7e901589ab7bff5204a88401f4b0aa22fb3ca89666e3",
-      "sha256": "db93692268e66756d02d7e901589ab7bff5204a88401f4b0aa22fb3ca89666e3",
+      "output_sha256": "96869eaa2e82aeb6c657cc04c9507f78aee8560a3cb53b18b7966cdee175a9be",
+      "sha256": "96869eaa2e82aeb6c657cc04c9507f78aee8560a3cb53b18b7966cdee175a9be",
       "source": "docs/manual/images/iphone-tools-original.png"
     },
     {
       "output": "manual/images/iphone-welcome-original.png",
-      "output_sha256": "197404c94e43f8003d6c3a25a489bf53c8e6d76a61d0b8df33f8bd517f445403",
-      "sha256": "197404c94e43f8003d6c3a25a489bf53c8e6d76a61d0b8df33f8bd517f445403",
+      "output_sha256": "935b0ad249fea2c07e549ff14961f5b5a4d7b99ef709d00890c95be68c6c9b68",
+      "sha256": "935b0ad249fea2c07e549ff14961f5b5a4d7b99ef709d00890c95be68c6c9b68",
       "source": "docs/manual/images/iphone-welcome-original.png"
     }
   ],
