@@ -678,10 +678,13 @@ public:
     //   // however we dont want switch anything back on, unless all of the above have been released
     // latchStopAllTx: records which PTT sources (mic, CAT, VOX, TCI) are
     // still held after the stop's unkey; pollPtt keeps each of those off
-    // until that source is released. The unkey drops CAT and TCI itself
-    // (dropPttOnUnkey), so in practice a held mic PTT or VOX is waited on,
-    // and a fresh key from a source not waited on keys normally. The latch
-    // clears when nothing is waited on (at once when none is held).
+    // until that source is released. When the stop unkeys a live key, the
+    // unkey drops CAT and TCI itself (dropPttOnUnkey), so only a held mic
+    // PTT or VOX is waited on. When MOX is already off (a stop during a
+    // release, a tail or a tune), no unkey runs, so a held CAT or TCI key
+    // stays waited on until the app releases it. A fresh key from a source
+    // not waited on keys normally. The latch clears when nothing is waited
+    // on (at once when none is held).
     void latchStopAllTx();
     bool isStopAllTxLatched() const noexcept { return m_stopAllTxWait != 0; }
 

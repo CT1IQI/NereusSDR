@@ -412,7 +412,10 @@ void MoxController::latchStopAllTx()
     // NereusSDR records which sources it waits on rather than one flag.
     // Callers latch before their setMox(false), whose dropPttOnUnkey then
     // drops CAT and TCI and takes them out of the wait (clearHeldBits), so
-    // the wait ends up as the sources still held after the unkey. Thetis's
+    // the wait ends up as the sources still held after the unkey. With MOX
+    // already off (Stop All TX during a release, a tail or a tune) that
+    // setMox(false) runs no unkey, so a held CAT or TCI key stays waited on
+    // until the app releases it. Thetis's
     // PollPTT tests all five levels on each pass and that unkey clears
     // cat_ptt and _tci_ptt there too (console.cs:29406-29411), so only a
     // held mic or VOX holds Thetis off as well. Unlike Thetis, a fresh key
