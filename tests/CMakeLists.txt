@@ -1745,6 +1745,12 @@ nereus_add_test(tst_am_modulation_analyzer)
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)
 
+# ── Quit is not refused while a pan or an applet floats (Longpath PR 83) ──
+# Runs the real queued QApplication::quit() in a child process with a
+# floating pan and a floating applet up; a refused quit trips the child's
+# watchdog.
+nereus_add_test(tst_floating_window_quit)
+
 # ── Phase 3R Task K1: MicProfileManager "RADE" factory preset ──
 # Verifies the NereusSDR-native "RADE" factory profile is seeded on
 # first launch and that its EQ-off / Leveler-on / ALC-off /
