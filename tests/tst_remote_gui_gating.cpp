@@ -49,6 +49,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - The transmit settings gate case puts TUNE on the Tune
+//                slider too, so the chain settings gate is what it reads.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-18 - The Tune slider is grayed while no drive source uses it;
 //                the cases that read the transmit gates put TUNE on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4454,6 +4457,9 @@ private slots:
     void remoteTxAppletSettingsFollowTheTransmitSettingsGate()
     {
         RadioModel remote(RadioModel::Role::Remote);
+        // TUNE on the Tune slider, so the window's drive source gate leaves
+        // it live and the chain settings gate below is what keeps it closed.
+        remote.transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
         TxApplet applet(&remote);
         const auto findButton = [&applet](const QString& accessibleName) {
             for (QPushButton* button : applet.findChildren<QPushButton*>()) {
