@@ -1260,6 +1260,14 @@
 //                against Longpath 99b20c81, which releases the latch at the
 //                hardware flip instead. Modified by J.J. Boyd (KG4VCF),
 //                with AI-assisted transformation via Claude Code.
+//   2026-10-22 - PR 604 fix wave: the ANAN-8000D alex_fwd_limit follows PWR
+//                before every SWR sample, MOX and TUNE alike
+//                (console.cs:26112-26114 [v2.10.3.15]); an open antenna
+//                drops MOX and shows Thetis's warning (console.cs:26036-26057,
+//                26177-26185); the SWR release runs on every unkey
+//                (moxChanging) and the poll is gated on MOX as `if (_mox)`.
+//                Modified by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1724,6 +1732,31 @@ namespace NereusSDR {
 // (bridge_volt, refvoltage, adc_cal_offset, volt_div, amp_voff, amp_sens)
 // preserved exactly per CLAUDE.md "Constants and Magic Numbers" rule.
 namespace {
+
+// SWR protection's trip floor, alex_fwd_limit, from the model and the PWR
+// slider (ptbPWR.Value).
+// From Thetis console.cs:26112-26114 [v2.10.3.15]:
+// Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+//   float alex_fwd_limit = 5.0f;
+//   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+//       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+constexpr float kSwrAlexFwdLimitW = 5.0f;
+constexpr float kSwrAlexFwdLimit8000DPerPwr = 2.0f;
+
+float swrAlexFwdLimit(HPSDRModel model, int pwrSlider) noexcept
+{
+    if (model == HPSDRModel::ANAN8000D) {        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+        return kSwrAlexFwdLimit8000DPerPwr * static_cast<float>(pwrSlider);        //    by comparing alex_fwd with power setting
+    }
+    return kSwrAlexFwdLimitW;
+}
+
+// The open-antenna warning, checkAntennaWarning's text and caption.
+// From Thetis console.cs:26177-26185 [v2.10.3.15]:
+//   MessageBox.Show("Please check your antenna connection.",
+//   "High SWR condition detected",
+constexpr const char* kOpenAntennaWarning =
+    "High SWR condition detected. Please check your antenna connection.";
 
 // scaleFwdPowerWatts: lifted from this anonymous namespace into the
 // public PaTelemetryScaling API in Phase 1 Agent 1B of issue #167.
@@ -4809,17 +4842,22 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //   Display.PowerFoldedBack = false;
     //   Audio.HighSWRScale = 1.0;
     //   HighSWR = false;
-    // moxChanged is UIMOXChangedFalse's point here (as the DUP noise
-    // blanker restore above). The controller's onMoxOff makes those resets
-    // and its factor signal stores 1.0 in TransmitModel; nothing is pumped,
-    // as upstream. The next key's drive restore (restoreNormalTxDrive,
-    // ptbPWR_Scroll) sends full drive. Not gated on the role: a window
-    // whose controller never keys never sees this edge.
+    // Thetis runs UIMOXChangedFalse on every unkey, synchronously. Here the
+    // release is hooked to moxChanging(true -> false), which MoxController
+    // emits on every real unkey before it commits MOX off. moxChanged
+    // fires only at the end of the TX-to-RX walk, which a quick re-key
+    // cancels, so a latch released there could survive into the next key.
+    // The SWR poll in handlePaTelemetry is gated on isMox() as Thetis's
+    // `if (_mox)`, so no sample after this point can trip it again. The
+    // controller's onMoxOff makes those resets and its factor signal
+    // stores 1.0 in TransmitModel; nothing is pumped, as upstream. The
+    // next key's drive restore (restoreNormalTxDrive, ptbPWR_Scroll) sends
+    // full drive. Not gated on the role: a window whose controller never
+    // keys never sees this edge.
     // Cross-checked against Longpath 99b20c81 (2026-08-14), which calls
-    // onMoxOff from onMoxHardwareFlipped(false); Thetis's reset point is
-    // the end of the MOX change, so that is where it is called here.
+    // onMoxOff from onMoxHardwareFlipped(false).
     if (m_moxController) {
-        connect(m_moxController, &MoxController::moxChanged, this,
+        connect(m_moxController, &MoxController::moxChanging, this,
                 [this](int, bool oldMox, bool newMox) {
             if (oldMox && !newMox) {
                 m_swrProt.onMoxOff();
@@ -21505,14 +21543,54 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //           float old_swr_protect = NetworkIO.SWRProtect;
     // so a sample arriving after the key is released (or before the walk
     // reaches Tx) cannot trip the protection again after UIMOXChangedFalse
-    // reset it. inTx above is the same gate the TX readings use.
-    if (!inTx) {
+    // reset it. inTx above is the same gate the TX readings use; isMox() is
+    // `_mox` itself, false from the moment an unkey starts (the RADE
+    // end-of-over tail and the rest of the TX-to-RX walk included), which is
+    // where the release (moxChanging) runs.
+    const bool swrPollKeyed = m_forceTxForTest
+        || (inTx && m_moxController && m_moxController->isMox());
+    if (!swrPollKeyed) {
         return;
     }
     const float oldSwrProtect = m_transmitModel.swrProtectFactor();
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26040 and 26112-26114 [v2.10.3.15], worked out
+    // on every poll from the model and the PWR slider (ptbPWR.Value), MOX
+    // and TUNE alike:
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    //   float alex_fwd_limit = 5.0f;
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+    m_swrProt.setHpsdrModel(model);
+    m_swrProt.setAlexFwdLimit(swrAlexFwdLimit(model, m_transmitModel.power()));
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
+
+    // Open antenna: Thetis drops MOX and warns.
+    // From Thetis console.cs:26041-26055 [v2.10.3.15]:
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    //   swr = 50.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   chkMOX.Checked = false;
+    //
+    //   if (this.InvokeRequired)
+    //   { this.Invoke(new MethodInvoker(() => { checkAntennaWarning(); })); }
+    //   else
+    //   { checkAntennaWarning(); }
+    // and checkAntennaWarning, console.cs:26177-26185 [v2.10.3.15]:
+    //   MessageBox.Show("Please check your antenna connection.",
+    //   "High SWR condition detected", ...);
+    // chkMOX.Checked = false is MoxController's own unkey (the controller's
+    // key, as stopAllTx releases it), so the normal TX-to-RX walk and the
+    // release above run. The warning goes out on transmitStopped, which
+    // MainWindow already shows; no new UI. Thetis has no TUNE arm here: the
+    // check does not run while tuning (!chkTUN.Checked).
+    if (m_swrProt.openAntennaDetected() && m_moxController && m_moxController->isMox()) {
+        m_moxController->setMox(false);
+        emit transmitStopped(QString::fromLatin1(kOpenAntennaWarning));
+    }
+
     // From Thetis console.cs:26151-26158 [v2.10.3.15]:
     //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
     //   {
@@ -21525,7 +21603,10 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // m_lastAudioVolume (kept by pumpAudioVolume) is radio_volume.
     if (m_swrProt.windBackEnabled() && m_swrProt.isEnabled()
         && oldSwrProtect != m_transmitModel.swrProtectFactor()) {
-        // there has been a change  [original inline comment from console.cs:26153]
+        // there has been a change
+        // We need to change the output power, as setting SWRProtect does nothing unless
+        // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+        // So just assign it with its own data
         pumpAudioVolume(m_lastAudioVolume);
     }
 }
@@ -28296,10 +28377,10 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
 //   }
 // With HighSWRScale baseline-1.0, the IQ scalar is just audio_volume.
 //
-// Caches the value into m_lastAudioVolume so a subsequent
-// swrProtectFactorChanged emit can re-pump the same audio_volume through
-// updated SWR protect (mirrors console.cs:26102-26109 [v2.10.3.13]
-// `Audio.RadioVolume = Audio.RadioVolume` re-emit on _swr_protect change).
+// Caches the value into m_lastAudioVolume so handlePaTelemetry's wind-back
+// re-pump can send the same audio_volume through the updated SWR protect
+// (mirrors console.cs:26151-26158 [v2.10.3.15] `Audio.RadioVolume =
+// Audio.RadioVolume` re-emit on a SWRProtect change).
 // Ports the drive restore mi0bot performs on every MOX-to-TX transition, at
 // console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
 // `if (tx)` branch:
@@ -29521,13 +29602,13 @@ void RadioModel::setTune(bool on)
         //     float alex_fwd_limit = 5.0f;
         //     if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea: try to determine if Hi-Z or Lo-Z load
         //         alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+        // ptbPWR.Value is the PWR slider, not the tune power; handlePaTelemetry
+        // sets it again before every sample (console.cs:26112-26114
+        // [v2.10.3.15]), so this only primes it.
         m_swrProt.setTunePowerSliderValue(tunePower);
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
-        const float alexFwdLimit =
-            (m_hardwareProfile.model == HPSDRModel::ANAN8000D)
-                ? 2.0f * static_cast<float>(tunePower)
-                : 5.0f;
-        m_swrProt.setAlexFwdLimit(alexFwdLimit);
+        m_swrProt.setAlexFwdLimit(
+            swrAlexFwdLimit(m_hardwareProfile.model, m_transmitModel.power()));
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // ── ENGAGE MOX via MoxController ─────────────────────────────────────
