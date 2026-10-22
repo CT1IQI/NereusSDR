@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd / KG4VCF  Declares tuneDriveSource 1: this window
+//                                    changes TUNE's drive source only from
+//                                    Setup. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  A refused property write that carries no
 //                                    value puts the Core's last value back
 //                                    on screen. AI-assisted via Anthropic
@@ -1027,6 +1031,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // computer" section shows the Core computer's VAX channels (the `vax`
     // object); this window's own VAX channels stay its own (R-R3-44).
     m_declaredFeatures.insert(QByteArrayLiteral("vax"), 1);
+    // PR 588 (JJ's decision, 2026-10-21): only Setup > Transmit > Power
+    // changes TUNE's drive source here, never a power slider, so the Core
+    // takes this window's tuneDrivePowerSource (tuneDriveSource 1). An
+    // older Core ignores the name.
+    m_declaredFeatures.insert(QByteArrayLiteral("tuneDriveSource"), 1);
     m_settingsBackupReplyTimer = new QTimer(this);
     m_settingsBackupReplyTimer->setSingleShot(true);
     connect(m_settingsBackupReplyTimer, &QTimer::timeout, this, [this]() {

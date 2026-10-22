@@ -208,6 +208,13 @@
 /// which is the first alone; a Core that sends none is worded by the first
 /// number alone.
 ///
+/// `tuneDriveSource` 1: the app changes TUNE's drive source
+/// (`transmit`'s `tuneDrivePowerSource`) only as Setup > Transmit > Power
+/// does, never from the RF Power or Tune Pwr slider. The Core takes a
+/// change of it only from a client that declares this; it refuses one from
+/// an older app, whose RF Power slider set it to the drive slider. A Core
+/// from before this ignores the name.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -224,5 +231,6 @@ public enum LinkFeatures {
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
                                             "audioQuality": 1, "stationCat": 1,
                                             "radioSpeaker": 1, "coreSpeaker": 1,
-                                            "spectrumPicture": 1, "firmwareBeta": 1]
+                                            "spectrumPicture": 1, "firmwareBeta": 1,
+                                            "tuneDriveSource": 1]
 }

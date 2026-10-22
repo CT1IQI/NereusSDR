@@ -181,6 +181,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21: Peer::tuneDriveSourceRefusalLogged, so a refused
+//               tuneDrivePowerSource is logged once per session.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureAvailable.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: the direct media ladder: the Core's STUN server for media
@@ -1801,6 +1804,9 @@ private:
         /// Desktop remote transmit: the refusal it was last sent with it
         /// (empty for a peer without remoteTx, or while permitted).
         TxRefusal txRefusalSent;
+        /// PR 588: a refused tuneDrivePowerSource write from this session
+        /// was logged; one line per session, not one per slider step.
+        bool tuneDriveSourceRefusalLogged = false;
         /// iPhone app Task 76: this admitted session's media epoch (never
         /// 0 once admitted, unique for the Core's life), its share of the
         /// display budget and why, and what its capabilities last said of
