@@ -39,8 +39,8 @@ struct ModMonitorView: View {
                         .padding(.horizontal, 9)
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Self.reasonGround, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                        .background(Self.reasonGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                         .accessibilityIdentifier("modMonitorReason")
                 }
                 controls
@@ -166,7 +166,7 @@ struct ModMonitorView: View {
                     .foregroundStyle(Self.chipText)
                     .lineLimit(1)
                     .padding(.horizontal, 6)
-                    .background(Self.chipGround, in: RoundedRectangle(cornerRadius: 3))
+                    .background(Self.chipGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .accessibilityIdentifier("modMonitorChip")
             }
         }
@@ -244,8 +244,8 @@ struct ModMonitorView: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 5)
-        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(reading)
@@ -343,8 +343,8 @@ struct ModMonitorSegment: View {
                 .foregroundStyle(foreground)
                 .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, minHeight: height)
-                .background(background, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background(background, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(border, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -420,8 +420,8 @@ struct ModMonitorLamp: View {
             .foregroundStyle(colours.text)
             .padding(.horizontal, 6)
             .frame(minWidth: 60, maxWidth: wide ? .infinity : nil, minHeight: height)
-            .background(colours.ground, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(colours.border, lineWidth: 1))
+            .background(colours.ground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(colours.border, lineWidth: 1))
     }
 }
 

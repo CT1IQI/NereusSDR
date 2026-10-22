@@ -97,8 +97,8 @@ struct FifthDeviceSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(9)
-            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                 .strokeBorder(selected ? ChromeColours.accent : ConnectChrome.rowBorder, lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -118,7 +118,7 @@ struct FifthDeviceSheet: View {
             .frame(maxWidth: .infinity)
             .frame(height: 48)
             .background(red ? ConnectChrome.WideButton.stopFill : ChromeColours.buttonOnBlue,
-                        in: RoundedRectangle(cornerRadius: 4))
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
         }
         .buttonStyle(.plain)
         .disabled(flow.heldBusy)

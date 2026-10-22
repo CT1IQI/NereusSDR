@@ -136,8 +136,8 @@ private struct FlagMenuShell<Content: View>: View {
             inner
             ScrollView { inner }
         }
-        .background(Self.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(Self.background, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .shadow(color: .black.opacity(0.6), radius: 14, y: 10)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("flagMenu")

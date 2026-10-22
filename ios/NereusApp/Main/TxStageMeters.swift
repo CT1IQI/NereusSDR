@@ -167,8 +167,8 @@ struct TxStageMeters: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Self.reasonFill, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.reasonBorder, lineWidth: 1))
+                    .background(Self.reasonFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.reasonBorder, lineWidth: 1))
                     .accessibilityIdentifier("txStagesReason")
             } else if let line = Self.line(look) {
                 Text(line)

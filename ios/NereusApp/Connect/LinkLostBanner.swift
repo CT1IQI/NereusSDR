@@ -115,8 +115,8 @@ struct LinkLostBanner: View {
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(height: 50)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.barBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.barBorder, lineWidth: 1))
         .frame(maxWidth: 360)
     }
 
@@ -149,8 +149,8 @@ struct LinkLostBanner: View {
                 .padding(.horizontal, 14)
                 .frame(height: 38)
                 .background(go ? ChromeColours.buttonOnBlue : ChromeColours.revoke,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(go ? ChromeColours.buttonOnBlueBorder : ChromeColours.revokeBorder,
                                   lineWidth: 1))
         }
@@ -171,8 +171,8 @@ struct LinkLostBanner: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
-        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("backOnAir")
     }
