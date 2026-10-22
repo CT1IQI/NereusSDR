@@ -8152,6 +8152,12 @@ nereus_add_test(tst_vfo_widget_tx_badge_click)
 # Source: AetherSDR src/gui/VfoWidget.cpp [@3a1f59ea] (fold); NereusSDR-original
 # (zoom row placement).
 nereus_add_test(tst_vfo_flag_fold)
+# Wide receiver grab, flag drag and trackpad wheel steps (2026-10-18).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp [@1e0718ad] (edge zones,
+# wheel accumulator); NereusSDR-original (flag drag, grab order).
+nereus_add_test(tst_wheel_step_accumulator)
+nereus_add_test(tst_spectrum_receiver_grab)
+nereus_add_test(tst_vfo_flag_drag)
 # The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
 # buttons and floating buttons carry the pass's sheets with the look on and
 # are untouched with it off.
