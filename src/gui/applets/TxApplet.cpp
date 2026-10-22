@@ -20,6 +20,11 @@
 //                longer leaves the model writing to it; one power refresh
 //                timer for every row. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-20 - The rows as independent container content: each row's wiring
+//                moves into a wireXSect() method the applet's own row and a
+//                container's copy share, the gates and state pushes reach the
+//                copies, and a copy gets the column's margins.
+//                Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-14 - The 2-Tone tooltip names the page as the Settings tree
 //                does: Settings > Test > Two-Tone IMD. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.

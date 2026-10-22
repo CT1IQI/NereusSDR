@@ -20,6 +20,10 @@
 //   2026-10-20 - connectRow: a row's connection ends with the row or the
 //                applet, whichever goes first. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - The rows as independent container content: per-row
+//                wireXSect() methods, the list of copies (QPointers) and the
+//                margins a copy gives itself. Brian Sutton, AI-assisted via
+//                OpenCode.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.

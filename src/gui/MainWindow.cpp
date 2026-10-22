@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20: The TX applet's rows are registered as container content
+//               (registerTxSectionContent). Brian Sutton, AI-assisted via
+//               OpenCode.
 //   2026-10-16: A remote window opens its speakers at window start, before
 //               the Core is asked for audio (openRemoteSpeakers), as a local
 //               start() opens them before the radio streams. J.J. Boyd

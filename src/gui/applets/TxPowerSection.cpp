@@ -29,6 +29,10 @@
 //   2026-10-20 - The mi0bot-Thetis quotes and MI0BOT tags above the slider
 //                rescale and the dB labels, as TxApplet.cpp carried them.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - A copy of this row in a container is told the outer
+//                 margins the applet's column gives the row (outerMargins);
+//                 the applet's own row is told none.
+//                 Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-19 - Extracted from TxApplet.{h,cpp} as part of splitting the
 //                 TX applet into per-concern section objects. Behaviour,
 //                 appearance, object names and tooltips are unchanged.

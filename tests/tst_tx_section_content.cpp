@@ -33,6 +33,9 @@
 //                Take transmit and inert previews; the unreachable "+" menu
 //                test goes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-20 - The tests for the TX rows as container content, with the
+//                crash on closing a container that held a copy, and a
+//                copy's margins. Brian Sutton, AI-assisted via OpenCode.
 // =================================================================
 
 #include <QtTest/QtTest>
