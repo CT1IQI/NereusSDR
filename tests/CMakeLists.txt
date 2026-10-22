@@ -849,6 +849,12 @@ nereus_add_test(tst_puresignal_caps)
 # Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] @501e3f51.
 nereus_add_test(tst_wdsp_ps_smoke)
 
+# -- The PureSignal amp-delay line (WDSP delay.c): a delay the ring
+#    cannot hold is bounded and reported, not read from beyond the
+#    allocation. Ported from Longpath PR 25 (tests/tst_wdsp_delay_clamp.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_wdsp_delay_clamp EXTRA_LABELS core)
+
 # ── Phase 3M-4 Task 3: TxChannel PureSignal API wrappers (22 functions) ──
 # Smoke tests for the 22 PS API wrappers added in Task 3:
 #   19 calcc setters/readers (setPSRunCal, setPSMox, setPSReset, setPSMancal,
@@ -1736,6 +1742,12 @@ nereus_add_test(tst_am_modulation_analyzer)
 
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)
+
+# ── Quit is not refused while a pan or an applet floats (Longpath PR 83) ──
+# Runs the real queued QApplication::quit() in a child process with a
+# floating pan and a floating applet up; a refused quit trips the child's
+# watchdog.
+nereus_add_test(tst_floating_window_quit)
 
 # ── Phase 3R Task K1: MicProfileManager "RADE" factory preset ──
 # Verifies the NereusSDR-native "RADE" factory profile is seeded on
