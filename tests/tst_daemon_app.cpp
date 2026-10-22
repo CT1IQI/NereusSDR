@@ -66,7 +66,12 @@
 //   2026-10-10: nereusd's speaker plays every receiver (JJ's ruling,
 //               R-AUD-27), by J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <QHostAddress>
@@ -131,11 +136,7 @@ namespace {
 DaemonConfig listenerConfig()
 {
     DaemonConfig cfg = testCoreConfig();
-    QTcpServer probe;
-    if (probe.listen(QHostAddress::LocalHost, 0)) {
-        cfg.remotePort = static_cast<int>(probe.serverPort());
-        probe.close();
-    }
+    cfg.remotePort = static_cast<int>(unusedLoopbackPort());
     cfg.remoteBind = QStringLiteral("127.0.0.1");
     return cfg;
 }
@@ -915,10 +916,8 @@ private slots:
         // to be requested explicitly. Bind loopback and let the OS pick by
         // asking for a high port; a fixed port would collide with a
         // parallel ctest shard.
-        QTcpServer probe;
-        QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-        const quint16 freePort = probe.serverPort();
-        probe.close();
+        const quint16 freePort = unusedLoopbackPort();
+        QVERIFY(freePort != 0);
         cfg.remotePort = static_cast<int>(freePort);
         cfg.remoteBind = QStringLiteral("127.0.0.1");
         // Synthetic limits verify the real config consumer, not board capacity.
@@ -1310,10 +1309,8 @@ private slots:
         const bool haveIpv6 = ipv6Probe.listen(QHostAddress::LocalHostIPv6, 0);
         ipv6Probe.close();
 
-        QTcpServer probe;
-        QVERIFY(probe.listen(QHostAddress::Any, 0));
-        const quint16 freePort = probe.serverPort();
-        probe.close();
+        const quint16 freePort = unusedLoopbackPort(QHostAddress::Any);
+        QVERIFY(freePort != 0);
 
         DaemonConfig cfg = DaemonConfig::defaults();
         cfg.remotePort = static_cast<int>(freePort);
@@ -1357,7 +1354,7 @@ private slots:
         }
 
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 port = blocker.serverPort();
 
         DaemonConfig cfg = testCoreConfig();
@@ -1412,7 +1409,7 @@ private slots:
         }
 
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 port = blocker.serverPort();
 
         DaemonConfig cfg = testCoreConfig();
@@ -1447,8 +1444,8 @@ private slots:
 
         QTcpServer oldBlocker;
         QTcpServer newBlocker;
-        QVERIFY(oldBlocker.listen(QHostAddress::LocalHost, 0));
-        QVERIFY(newBlocker.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(oldBlocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        QVERIFY(newBlocker.listen(QHostAddress::LocalHost, unusedLoopbackPort(QHostAddress::LocalHost, oldBlocker.serverPort())));
         const quint16 oldPort = oldBlocker.serverPort();
         const quint16 newPort = newBlocker.serverPort();
         QVERIFY(oldPort != newPort);

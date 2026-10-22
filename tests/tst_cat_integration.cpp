@@ -3,6 +3,7 @@
 // 2026-10-07 A VFO A retune and the commands refused while keyed check what
 //            reaches the transmitter, not how many pushes land. J.J. Boyd
 //            (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -56,10 +57,9 @@ struct CatIntegrationFixture {
     }
     bool configure(int channel = 1, bool reverse = false, bool secondary = true)
     {
-        QTcpServer reservation;
-        if (!reservation.listen(QHostAddress::LocalHost, 0)) { return false; }
         CatEndpointConfig config;
-        config.tcpEnabled = true; config.tcpPort = reservation.serverPort(); reservation.close();
+        config.tcpEnabled = true; config.tcpPort = unusedLoopbackPort();
+        if (config.tcpPort == 0) { return false; }
         config.binding.primarySliceId = reverse ? 2 : 0;
         if (secondary) { config.binding.secondarySliceId = reverse ? 0 : 2; }
         return service.applyChannelConfig(channel, config);

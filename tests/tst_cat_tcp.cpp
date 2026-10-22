@@ -4,6 +4,7 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-06 Over-long input gets no reply. J.J. Boyd (KG4VCF), AI-assisted
 //            via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <QElapsedTimer>
 #include <algorithm>
@@ -19,9 +20,7 @@
 using namespace NereusSDR;
 static quint16 unusedCatPort()
 {
-    QTcpServer probe;
-    if (!probe.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    return probe.serverPort();
+    return unusedLoopbackPort();
 }
 class TstCatTcp : public QObject {
     Q_OBJECT
@@ -149,7 +148,7 @@ private slots:
     }
     void occupiedBindAndWelcome()
     {
-        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, 0));
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         RadioModel model; CatService& service = *model.catService();
         CatEndpointConfig config; config.tcpEnabled = true; config.tcpPort = occupied.serverPort();
         QVERIFY(service.applyChannelConfig(1, config)); service.startConfigured();

@@ -1,4 +1,5 @@
 // no-port-check: NereusSDR-original. Task 48, step 1. No radio hardware is opened here.
+#include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/ConnectionState.h"
@@ -33,11 +34,7 @@ StationHostOptions listenerOptions()
     options.remoteBind = QStringLiteral("127.0.0.1");
     options.statusPage = false;
     options.rendezvousServers.clear();
-    QTcpServer probe;
-    if (probe.listen(QHostAddress::LocalHost, 0)) {
-        options.remotePort = probe.serverPort();
-        probe.close();
-    }
+    options.remotePort = unusedLoopbackPort();
     return options;
 }
 }

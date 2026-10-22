@@ -3,6 +3,7 @@
 // 2026-10-15 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a
 // saved Core whose learned addresses are IPv6 only still moves to its own
 // IPv4 address.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/session/RemoteStationOptions.h"
 #include "gui/GuiConnectionController.h"
@@ -137,7 +138,7 @@ private slots:
         const auto key = std::make_shared<const ClientDeviceIdentity>(ClientDeviceIdentity::loadOrCreate(keyDir.path()));
         QVERIFY(core.pairComputer(*key));
         QTcpServer closed;
-        QVERIFY(closed.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(closed.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const QUrl stale(QStringLiteral("wss://127.0.0.1:%1").arg(closed.serverPort()));
         closed.close();
         StationClient client(nullptr, nullptr);

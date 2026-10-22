@@ -8,6 +8,7 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <QAction>
@@ -402,7 +403,7 @@ void TestGuiConnectionController::automaticLocalStartupDoesNotOpenSelector()
         QString error;
         QVERIFY2(ownership->acquire(0, &error), qPrintable(error));
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 selectedPort = port.serverPort();
         port.close();
         QFile config(configPath);

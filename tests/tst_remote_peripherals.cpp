@@ -94,6 +94,7 @@
 // tst_station_tci_server now shares. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 
 #include <QDateTime>
@@ -536,11 +537,7 @@ public:
 
 quint16 freeLoopbackPort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 TunerModel::StationConnectionState state(TunerModel::ConnectionPhase phase,

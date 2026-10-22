@@ -13,6 +13,7 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-12 The serial and Input PTT Enable ticks wait for what they need.
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -42,7 +43,7 @@
 #include "models/TransmitModel.h"
 using namespace NereusSDR;
 namespace {
-int unusedPort() { QTcpServer reservation; if (!reservation.listen(QHostAddress::LocalHost,0)) { return 0; } return reservation.serverPort(); }
+int unusedPort() { return unusedLoopbackPort(); }
 template<class T> T* control(QWidget& page,const char* name) { return page.findChild<T*>(QString::fromLatin1(name)); }
 }
 class TstCatSetup : public QObject {
@@ -73,7 +74,7 @@ private slots:
         QSignalSpy changed(&service,&CatService::configurationChanged);
         CatEndpointConfig external=service.channelConfig(1); external.rigctldEnabled=false; QVERIFY(service.reconfigureChannel(1,external));
         QCOMPARE(changed.size(),1); QVERIFY(!enabled->isChecked()); QCOMPARE(service.rigctldClientCount(1),0);
-        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0)); port->setValue(occupied.serverPort()); enabled->setChecked(true);
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, unusedLoopbackPort())); port->setValue(occupied.serverPort()); enabled->setChecked(true);
         QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains("error"));
         QVERIFY(!service.isListening(1)); QVERIFY(service.channelConfig(1).rigctldEnabled);
         address->setText("invalid"); QVERIFY(QMetaObject::invokeMethod(address,"editingFinished",Qt::DirectConnection));
@@ -137,7 +138,7 @@ private slots:
     }
     void failedActivationRemainsSavedAndVisible() {
         RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatTcpIpPage page(&model);
-        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0));
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         control<QSpinBox>(page,"cat1Port")->setValue(occupied.serverPort()); control<QCheckBox>(page,"cat1Enabled")->setChecked(true);
         QVERIFY(service.channelConfig(1).tcpEnabled); QVERIFY(!service.isListening(1)); QVERIFY(service.transportState(1,CatTransportKind::Tcp).contains("error"));
         QVERIFY(control<QCheckBox>(page,"cat1Enabled")->isChecked()); QVERIFY(control<QLabel>(page,"cat1Status")->text().contains("error"));
@@ -387,7 +388,7 @@ private slots:
         const QString directory=qEnvironmentVariable("NEREUS_CAT_CAPTURE_DIR"); if (directory.isEmpty()) { QSKIP("Visual capture is requested explicitly in the sandbox native/scaled runs."); }
         QVERIFY(QDir().mkpath(directory)); RadioModel model; model.addSlice(); model.addSlice(); CatService& service=*model.catService(); service.startConfigured();
         QTemporaryDir devices; QVERIFY(devices.isValid()); CatEndpointConfig first=service.channelConfig(1); first.tcpEnabled=true; first.tcpPort=unusedPort(); first.rigctldEnabled=true; first.rigctldPort=unusedPort(); QVERIFY(service.reconfigureChannel(1,first));
-        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0)); CatEndpointConfig second=service.channelConfig(2); second.tcpEnabled=true; second.tcpPort=occupied.serverPort(); second.rigctldEnabled=true; second.rigctldPort=occupied.serverPort(); QVERIFY(service.reconfigureChannel(2,second));
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, unusedLoopbackPort())); CatEndpointConfig second=service.channelConfig(2); second.tcpEnabled=true; second.tcpPort=occupied.serverPort(); second.rigctldEnabled=true; second.rigctldPort=occupied.serverPort(); QVERIFY(service.reconfigureChannel(2,second));
         CatEndpointConfig third=service.channelConfig(3); third.ptyEnabled=true; third.ptyDialect="Rigctld"; third.serialEnabled=true; third.serialDevice=devices.filePath("absent.serial"); QVERIFY(service.reconfigureChannel(3,third));
         QWidget window; auto* root=new QVBoxLayout(&window); auto* applet=new CatApplet(&model,&window); root->addWidget(applet); auto* tabs=new QTabWidget(&window); root->addWidget(tabs,1);
         tabs->addTab(new CatTcpIpPage(&model,tabs),"TCP / PTY"); tabs->addTab(new CatSerialPortsPage(&model,tabs),"Serial"); tabs->addTab(new CatOptionsSetupPage(&model,tabs),"Options / Tester"); tabs->addTab(new CatPttSetupPage(&model,tabs),"Input PTT");

@@ -11,6 +11,7 @@
 // Anthropic Claude Code.
 // 2026-10-17: run as three ctest entries (TestFunctionGroups). J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCloseEvent>
@@ -217,7 +218,7 @@ private slots:
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 selectedPort = port.serverPort();
         port.close();
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
@@ -327,7 +328,7 @@ private slots:
         radio.macAddress = QStringLiteral("AA:BB:CC:11:22:33");
         radio.firmwareVersion = 72;
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 selectedPort = port.serverPort();
         port.close();
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
@@ -392,7 +393,7 @@ private slots:
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 selectedPort = port.serverPort();
         port.close();
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
@@ -452,7 +453,7 @@ private slots:
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
         const quint16 selectedPort = port.serverPort();
         port.close();
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
