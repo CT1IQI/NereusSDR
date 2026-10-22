@@ -75,6 +75,33 @@ struct WorkspacePaletteTests {
         #expect(WorkspacePalette.disabledOpacity == SetupNumberRow.greyedOpacity)
     }
 
+    /// R-IOS-50: each PanelButton style lights in its treatment; at rest and
+    /// greyed it is raised (plan call 2), and a greyed lit button is raised too.
+    @Test func panelButtonsDrawTheirTreatments() {
+        let lit: [(PanelButton.Style, WorkspaceLook)] = [(.blue, .glass), (.dsp, .litGreen),
+                                                         (.amber, .litAmber), (.red, .keyed)]
+        for (style, look) in lit {
+            #expect(PanelButton.look(style: style, lit: true, disabled: false) == look)
+            #expect(PanelButton.look(style: style, lit: false, disabled: false) == .raised)
+            #expect(PanelButton.look(style: style, lit: true, disabled: true) == .raised)
+            #expect(PanelButton.look(style: style, lit: false, disabled: true) == .raised)
+        }
+    }
+
+    /// The other shared buttons: the connecting screens' wide button, the
+    /// performance page's buttons and the WIDE chip.
+    @Test func sharedButtonsDrawTheirTreatments() {
+        typealias Wide = ConnectChrome.WideButton
+        #expect(Wide.face(.go, enabled: true) == .glass)
+        #expect(Wide.face(.plain, enabled: true) == .raised)
+        #expect(Wide.face(.stop, enabled: true) == .danger)
+        for look in [Wide.Look.go, .plain, .stop] {
+            #expect(Wide.face(look, enabled: false) == .raised)
+        }
+        #expect(PerformanceButtonStyle.look == .raised)
+        #expect(WideChip.look == .litAmber)
+    }
+
     @Test func lookForegrounds() {
         #expect(Self.hex(workspaceForeground(.raised)) == Self.hex(WorkspacePalette.textPrimary))
         #expect(Self.hex(workspaceForeground(.glass)) == Self.hex(WorkspacePalette.glassSelText))

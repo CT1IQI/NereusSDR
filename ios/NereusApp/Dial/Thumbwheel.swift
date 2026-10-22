@@ -33,7 +33,7 @@ struct Thumbwheel: View {
 
     var body: some View {
         HStack(spacing: Self.gap) {
-            DialStepButton(label: tuning.dialStepLabel, outline: RoundedRectangle(cornerRadius: 6),
+            DialStepButton(label: tuning.dialStepLabel, outline: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous),
                            size: CGSize(width: Self.stepWidth, height: Self.height)) {
                 tuning.toggleDialStepMenu()
             }

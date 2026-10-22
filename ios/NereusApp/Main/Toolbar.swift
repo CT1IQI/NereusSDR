@@ -141,14 +141,13 @@ struct Toolbar: View {
             }
         } label: {
             PanelGlyph(side: .leading)
-                .stroke(rxPanelOpen ? ChromeColours.accent : ChromeColours.icon,
+                .stroke(rxPanelOpen ? workspaceForeground(.glass) : ChromeColours.icon,
                         style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
                 .frame(width: 22, height: 22)
                 .frame(width: 40, height: 40)
-                .background(rxPanelOpen ? ChromeColours.iconOpenBackground : .clear, in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
+                .background {
                     if rxPanelOpen {
-                        RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.iconOpenBorder, lineWidth: 1)
+                        WorkspaceFace(.glass)
                     }
                 }
                 .contentShape(Rectangle())
@@ -170,15 +169,13 @@ struct Toolbar: View {
             }
         } label: {
             PanelGlyph(side: .trailing)
-                .stroke(txPanelOpen ? ChromeColours.accent : ChromeColours.icon,
+                .stroke(txPanelOpen ? workspaceForeground(.glass) : ChromeColours.icon,
                         style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
                 .frame(width: 22, height: 22)
                 .frame(width: 40, height: 40)
-                .background(txPanelOpen ? ChromeColours.iconOpenBackground : .clear,
-                            in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
+                .background {
                     if txPanelOpen {
-                        RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.iconOpenBorder, lineWidth: 1)
+                        WorkspaceFace(.glass)
                     }
                 }
                 .contentShape(Rectangle())
@@ -196,15 +193,13 @@ struct Toolbar: View {
             shown.wrappedValue.toggle()
         } label: {
             PanelGlyph(side: .trailing)
-                .stroke(shown.wrappedValue ? ChromeColours.accent : ChromeColours.icon,
+                .stroke(shown.wrappedValue ? workspaceForeground(.glass) : ChromeColours.icon,
                         style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
                 .frame(width: 22, height: 22)
                 .frame(width: 40, height: 40)
-                .background(shown.wrappedValue ? ChromeColours.iconOpenBackground : .clear,
-                            in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
+                .background {
                     if shown.wrappedValue {
-                        RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.iconOpenBorder, lineWidth: 1)
+                        WorkspaceFace(.glass)
                     }
                 }
                 .contentShape(Rectangle())
@@ -224,11 +219,9 @@ struct Toolbar: View {
                         style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
                 .frame(width: 22, height: 22)
                 .frame(width: 40, height: 40)
-                .background(soundPanelOpen ? ChromeColours.iconOpenBackground : .clear,
-                            in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
+                .background {
                     if soundPanelOpen {
-                        RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.iconOpenBorder, lineWidth: 1)
+                        WorkspaceFace(.glass)
                     }
                 }
                 .contentShape(Rectangle())
@@ -361,7 +354,11 @@ private extension View {
             .fixedSize()
             .padding(.horizontal, 5)
             .frame(height: 34)
-            .background(open ? ChromeColours.toolbarOpenBackground : .clear, in: RoundedRectangle(cornerRadius: 4))
+            .background {
+                if open {
+                    WorkspaceFace(.glass)
+                }
+            }
             .frame(height: 40)
             .contentShape(Rectangle())
     }

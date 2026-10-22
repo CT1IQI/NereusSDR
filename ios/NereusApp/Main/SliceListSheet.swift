@@ -237,51 +237,25 @@ struct SliceListButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: large ? 19 : 13, weight: .bold))
-                .foregroundStyle(foreground)
+                .foregroundStyle(workspaceForeground(look))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .background(background, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background { WorkspaceFace(look) }
+                // Greyed: the raised face at 40 percent, still in place and
+                // still taking the tap that says why.
+                .opacity(kind == .greyed ? WorkspacePalette.disabledOpacity : 1)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityValue(kind == .greyed ? "Not available" : "")
     }
 
-    private var foreground: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.text
-        case .go:
-            return .white
-        case .greyed:
-            return SliceListStyle.greyedText
-        }
-    }
-
-    private var background: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.button
-        case .go:
-            return ChromeColours.buttonOnBlue
-        case .greyed:
-            return SliceListStyle.greyed
-        }
-    }
-
-    private var border: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.buttonBorder
-        case .go:
-            return ChromeColours.buttonOnBlueBorder
-        case .greyed:
-            return SliceListStyle.greyedEdge
-        }
+    /// The treatment: the glass for `go`, raised otherwise.
+    var look: WorkspaceLook {
+        kind == .go ? .glass : .raised
     }
 }
 

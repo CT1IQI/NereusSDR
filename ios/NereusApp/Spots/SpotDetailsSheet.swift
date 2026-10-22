@@ -156,17 +156,12 @@ private struct TurnBeamButton: View {
         } label: {
             Text(SpotDetailsSheet.turnBeamTitle(spot))
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(reason == nil ? RotorColours.amber : ChromeColours.buttonOffText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(reason == nil ? RotorColours.beam : ChromeColours.buttonOff,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(reason == nil ? RotorColours.beamBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Lit amber, as the mockup's amber Turn beam; greyed, raised at 40 percent.
+        .buttonStyle(WorkspaceButtonStyle(reason == nil ? .litAmber : .raised))
         .disabled(reason != nil)
         .accessibilityHint(reason ?? "")
         .accessibilityIdentifier("spotDetailsTurnBeam")

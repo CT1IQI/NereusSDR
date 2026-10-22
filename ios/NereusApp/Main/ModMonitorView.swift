@@ -387,16 +387,9 @@ struct ModMonitorButton: View {
                 .font(.system(size: font + 1))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .foregroundStyle(disabled ? Color(red: 0x50 / 255, green: 0x60 / 255, blue: 0x70 / 255)
-                                 : ChromeColours.text)
                 .frame(maxWidth: .infinity, minHeight: height)
-                .background(disabled ? Color(red: 0x12 / 255, green: 0x1A / 255, blue: 0x24 / 255) : ChromeColours.button,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(disabled ? ChromeColours.insetBorder : ChromeColours.buttonBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WorkspaceButtonStyle(.raised))
         .disabled(disabled)
         .accessibilityLabel(label)
     }

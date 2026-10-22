@@ -76,7 +76,9 @@ enum ConnectChrome {
         }
     }
 
-    /// A full-width button: `.go` is the board's blue one.
+    /// A full-width button: `.go` is the glass, `.plain` raised and `.stop`
+    /// the danger set (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    /// section 5); greyed, the raised face at 40 percent.
     struct WideButton: View {
         enum Look {
             case go
@@ -93,50 +95,38 @@ enum ConnectChrome {
         let action: () -> Void
 
         var body: some View {
+            let face = Self.face(look, enabled: enabled)
             Button(action: action) {
                 HStack(spacing: 8) {
                     if busy {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(workspaceForeground(face))
                     }
                     Text(title)
                 }
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(enabled ? (look == .plain ? ChromeColours.text : Color.white) : ChromeColours.textDim)
+                .foregroundStyle(workspaceForeground(face))
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
-                .background(fill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background { WorkspaceFace(face) }
+                .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!enabled || busy)
         }
 
-        private var fill: Color {
+        /// The treatment a look draws in, raised while greyed.
+        static func face(_ look: Look, enabled: Bool) -> WorkspaceLook {
             guard enabled else {
-                return ChromeColours.buttonOff
+                return .raised
             }
             switch look {
             case .go:
-                return ChromeColours.buttonOnBlue
+                return .glass
             case .plain:
-                return ChromeColours.button
+                return .raised
             case .stop:
-                return Self.stopFill
-            }
-        }
-
-        private var border: Color {
-            guard enabled else {
-                return ChromeColours.buttonOffBorder
-            }
-            switch look {
-            case .go:
-                return ChromeColours.buttonOnBlueBorder
-            case .plain:
-                return ChromeColours.buttonBorder
-            case .stop:
-                return Self.stopBorder
+                return .danger
             }
         }
 
@@ -147,7 +137,7 @@ enum ConnectChrome {
         static let stopBorder = WorkspacePalette.redBorder
     }
 
-    /// A row's button, the board's `.rbtn`.
+    /// A row's button, the board's `.rbtn`: the glass for `go`, else raised.
     struct RowButton: View {
         let title: String
         var go = false
@@ -157,16 +147,11 @@ enum ConnectChrome {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(go ? Color.white : ChromeColours.text)
                     .padding(.horizontal, 12)
                     .frame(minWidth: 88)
                     .frame(height: 40)
-                    .background(go ? ChromeColours.buttonOnBlue : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(go ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder, lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(go ? .glass : .raised))
         }
     }
 
@@ -235,8 +220,8 @@ enum ConnectChrome {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .background(tone == .warn ? ConnectChrome.warn.opacity(0.08) : ConnectChrome.badBorder.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
                 .strokeBorder(tone == .warn ? ConnectChrome.warn.opacity(0.35) : ConnectChrome.badBorder.opacity(0.45),
                               lineWidth: 1))
             .accessibilityElement(children: .combine)

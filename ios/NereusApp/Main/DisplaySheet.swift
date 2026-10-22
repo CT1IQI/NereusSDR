@@ -84,7 +84,7 @@ struct DisplaySheet: View {
             HStack(spacing: 8) {
                 // DUP, the desktop's display duplex: greyed with its reason
                 // on a Core that cannot keep the receiver on the band.
-                PanelButton(label: "DUP", lit: model.duplex && model.duplexAvailable, style: .blue,
+                PanelButton(label: "DUP", lit: model.duplex && model.duplexAvailable, style: .dsp,
                             disabled: !model.duplexAvailable) { model.setDuplex(!model.duplex) }
                     .frame(width: 84)
                     .accessibilityLabel("Display duplex")
@@ -125,7 +125,7 @@ struct DisplaySheet: View {
                     model.setLookBack(seconds: $0)
                 }
                 .accessibilityIdentifier("lookBack")
-                PanelButton(label: "LIVE", lit: model.lookBackSeconds == 0, style: .red,
+                PanelButton(label: "LIVE", lit: model.lookBackSeconds == 0, style: .blue,
                             disabled: model.lookBackSeconds == 0) { model.goLive() }
                     .frame(width: 64)
                     .accessibilityIdentifier("lookBackLive")

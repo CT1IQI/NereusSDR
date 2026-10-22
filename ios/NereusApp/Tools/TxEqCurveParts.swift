@@ -766,16 +766,9 @@ enum TxEqCurveParts {
             Button(action: action) {
                 Text(symbol)
                     .font(.system(size: large ? 22 : 18, weight: .semibold))
-                    .foregroundStyle(enabled ? ChromeColours.textBright : ChromeColours.buttonOffText)
                     .frame(width: large ? 48 : 38, height: large ? 44 : 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
-                                      lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
             .accessibilityLabel(label)
             .accessibilityIdentifier(identifier)
@@ -794,18 +787,11 @@ enum TxEqCurveParts {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: large ? 16 : 13, weight: .semibold))
-                    .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                     .lineLimit(1)
                     .padding(.horizontal, 12)
                     .frame(maxWidth: large ? .infinity : nil, minHeight: large ? 44 : 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
-                                      lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
             .accessibilityIdentifier(identifier)
         }

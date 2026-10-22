@@ -129,7 +129,7 @@ struct SupportBundlePage: View {
         }
     }
 
-    /// One of the Core's logging categories, blue while it is on. Greyed,
+    /// One of the Core's logging categories, in the glass while it is on. Greyed,
     /// one that is on keeps a lighter grey outline and text, as the Tools
     /// pages' greyed choices do.
     struct CategoryButton: View {
@@ -152,8 +152,7 @@ struct SupportBundlePage: View {
                     .minimumScaleFactor(0.7)
                     .foregroundStyle(look.text)
                     .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(look.fill, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(look.border, lineWidth: 1))
+                    .background { look.background }
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

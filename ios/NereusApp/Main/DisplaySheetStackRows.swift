@@ -76,7 +76,7 @@ struct DisplaySheetStackRows: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            PanelButton(label: model.sliceShadow ? "On" : "Off", lit: model.sliceShadow, style: .blue) {
+            PanelButton(label: model.sliceShadow ? "On" : "Off", lit: model.sliceShadow, style: .dsp) {
                 model.setSliceShadow(!model.sliceShadow)
             }
             .frame(width: 72)
