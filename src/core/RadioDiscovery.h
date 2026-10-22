@@ -25,6 +25,9 @@
 //                 addition). From Longpath PRs 9, 10, 251 and 267 by Martin
 //                 Fischer (OE5SOS). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - m_scanHoldOffTimer: a running walk's next attempt waits
+//                 out the post-disconnect quiet period. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -383,6 +386,7 @@ private:
     QPointer<QUdpSocket> m_scanSock;   // child of this object, one per NIC
     QTimer m_scanPollTimer;            // one poll window, single shot
     QTimer m_scanDeadlineTimer;        // one attempt's hard limit, single shot
+    QTimer m_scanHoldOffTimer;         // an attempt waiting out holdOffScans, single shot
     QSet<QString> m_scanSeen;          // MAC de-duplication for this walk
     qint64 m_scanNowMs{0};
     QByteArray m_scanP1;

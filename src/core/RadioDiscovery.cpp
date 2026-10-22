@@ -44,6 +44,11 @@
 //                 10 (2e967e3f), 251 (279ab925) and 267 (1ca46ba2) by Martin
 //                 Fischer (OE5SOS). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - A running walk honors the post-disconnect quiet period:
+//                 an attempt (and so a NIC's first attempt) that would start
+//                 inside it waits for it to end, then sends. The probes are
+//                 delayed, never dropped. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -205,6 +210,11 @@ RadioDiscovery::RadioDiscovery(QObject* parent)
     connect(&m_scanPollTimer, &QTimer::timeout, this, &RadioDiscovery::onScanPollWindow);
     m_scanDeadlineTimer.setSingleShot(true);
     connect(&m_scanDeadlineTimer, &QTimer::timeout, this, &RadioDiscovery::onScanAttemptDeadline);
+    // An attempt that met the post-disconnect quiet period waits on this
+    // timer and starts again when it fires (see beginAttempt()).
+    m_scanHoldOffTimer.setSingleShot(true);
+    m_scanHoldOffTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_scanHoldOffTimer, &QTimer::timeout, this, &RadioDiscovery::beginAttempt);
 }
 
 RadioDiscovery::~RadioDiscovery()
@@ -756,6 +766,26 @@ void RadioDiscovery::beginAttempt()
         finishScan();
         return;
     }
+
+    // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup). The walk
+    // no longer blocks the thread, so a disconnect can arm holdOffScans()
+    // while it runs. startDiscovery() only checks the quiet period when a
+    // walk starts; every attempt checks it again here, including a NIC's
+    // first. The attempt waits, with no poll or deadline timer running, and
+    // starts again (this function) when the quiet period ends: the probes
+    // are delayed, never dropped, and the walk does not end early. A
+    // stopDiscovery() meanwhile ends the walk and finishScan() stops this
+    // wait. The check is repeated on resume, since a later disconnect may
+    // have extended the deadline.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        m_scanPollTimer.stop();
+        m_scanDeadlineTimer.stop();
+        qCDebug(lcDiscovery) << "Discovery attempt" << m_scanAttempt + 1
+                             << "waits" << waitMs << "ms for the post-disconnect quiet period";
+        m_scanHoldOffTimer.start(int(waitMs));
+        return;
+    }
+
     const ScanNic& nic = m_scanNics.at(m_scanNicIndex);
 
     // Send P1 and P2 probes to directed subnet broadcast and 255.255.255.255
@@ -948,6 +978,7 @@ void RadioDiscovery::finishScan()
 {
     m_scanPollTimer.stop();
     m_scanDeadlineTimer.stop();
+    m_scanHoldOffTimer.stop();
     if (m_scanSock) {
         m_scanSock->disconnect(this);
         m_scanSock->close();

@@ -23,6 +23,10 @@
 //                 thread. Counts, not milliseconds, after Longpath PRs 9,
 //                 10, 251 and 267 by Martin Fischer (OE5SOS). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - A quiet period armed while a walk runs delays its next
+//                 attempt and its next NIC, never drops them, and
+//                 stopDiscovery() during the wait sends nothing after.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -526,6 +530,92 @@ private slots:
         QVERIFY(started.wait(5000));
         QVERIFY(finished.wait(5000));
         QCOMPARE(found.count(), 1);
+    }
+
+    // Review of PR 600 (Critical). A disconnect can now land while a walk
+    // runs, and the quiet period it arms must hold back the walk's next
+    // attempt and its next NIC, not only a walk that starts later. No probe
+    // is sent while holdOffRemainingMs() is above zero: the remaining time
+    // only falls, so a probe the fake radio has counted was sent before a
+    // read that saw time left, and that is the case asserted against. No
+    // millisecond threshold decides the result.
+    void aHoldOffArmedDuringAWalkDelaysItsNextProbes() {
+        WalkFakeRadio radio(WalkFakeRadio::Answer::Now);
+        RadioDiscovery disc;
+        // Two NICs on the same fake radio, two attempts each: four probes.
+        disc.setScanNicsForTest(radio.nics() + radio.nics());
+        disc.setTimingForTest({2, 3, 100});
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+        QSignalSpy found(&disc, &RadioDiscovery::radioDiscovered);
+
+        // Waits out the quiet period and checks that no probe beyond
+        // `probesSoFar` arrives and the walk does not end while it lasts.
+        const auto holdsBack = [&](int probesSoFar) {
+            while (disc.holdOffRemainingMs() > 0) {
+                QCOMPARE(radio.p1Probes(), probesSoFar);
+                QCOMPARE(finished.count(), 0);
+                QTest::qWait(10);
+            }
+        };
+
+        disc.startDiscovery();
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 1, 5000);
+
+        // Armed during NIC 1's first attempt: its second attempt waits.
+        disc.holdOffScans(std::chrono::milliseconds(500));
+        holdsBack(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 2, 5000);
+
+        // Armed during NIC 1's last attempt: NIC 2's first attempt waits.
+        disc.holdOffScans(std::chrono::milliseconds(500));
+        holdsBack(2);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // Then the rest of the walk runs, and it ends once.
+        QVERIFY(finished.wait(5000));
+        QTest::qWait(200);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(radio.p1Probes(), 4);
+        QCOMPARE(disc.scanStatsForTest().attempts, 4);
+        QCOMPARE(found.count(), 1);
+    }
+
+    // stopDiscovery() while an attempt waits out the quiet period ends the
+    // walk at once, and nothing is sent when the quiet period ends.
+    void stopDiscoveryDuringAHoldOffWaitSendsNothingAfter() {
+        constexpr int kQuiet = 3;
+        constexpr int kPollMs = 40;
+        WalkFakeRadio radio(WalkFakeRadio::Answer::Now);
+        RadioDiscovery disc;
+        disc.setScanNicsForTest(radio.nics());
+        disc.setTimingForTest({3, kQuiet, kPollMs});
+        QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
+
+        disc.startDiscovery();
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 1, 5000);
+        disc.holdOffScans(std::chrono::milliseconds(400));
+
+        // The first attempt's quiet budget runs out; the second attempt
+        // would start in the same call and is held back.
+        QTRY_VERIFY_WITH_TIMEOUT(disc.scanStatsForTest().quietPolls >= kQuiet, 5000);
+        QVERIFY(disc.holdOffRemainingMs() > 0);
+        QCOMPARE(disc.scanStatsForTest().attempts, 1);
+
+        disc.stopDiscovery();
+        QCOMPARE(finished.count(), 1);
+        QVERIFY(!disc.scanRunningForTest());
+
+        // Past the quiet period, then longer than the rest of the walk.
+        QTRY_COMPARE_WITH_TIMEOUT(disc.holdOffRemainingMs(), qint64(0), 5000);
+        QTest::qWait(3 * kQuiet * kPollMs + 200);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(radio.p1Probes(), 1);
+        QCOMPARE(disc.scanStatsForTest().attempts, 1);
     }
 
     // The Core runs discovery on a worker thread with its own event loop
