@@ -27,6 +27,9 @@
 //   §6 TUNE engagement triggers full math chain.
 //   §7 No PaProfileManager / no active profile -> graceful no-op.
 //   §8 PaTelemetryScaling::scaleFwdPowerWatts public lift parity.
+//   §9 SWR protection reaches the drive: a trip sets the factor the pump
+//      reads, wind-back re-pumps at once, MOX off releases the latch, and
+//      disabled protection leaves the drive alone.
 //
 // Source references (cite comments only — no Thetis logic translated):
 //   audio.cs:262-271 [v2.10.3.13] — wire byte composition (NO SWR).
@@ -55,6 +58,7 @@
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TxChannel.h"
+#include "core/safety/SwrProtectionController.h"
 #include "core/TwoToneController.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
@@ -115,6 +119,39 @@ static void pump()
     QCoreApplication::processEvents();
     QCoreApplication::processEvents();
 }
+
+// Key through MoxController and wait until the walk reaches Tx.
+static void keyAndWait(RadioModel& model)
+{
+    MoxController* mox = model.moxController();
+    mox->setMoxCheck({});
+    mox->setMox(true);
+    pump();
+    QTRY_COMPARE(mox->state(), MoxState::Tx);
+}
+
+static void unkeyAndWait(RadioModel& model)
+{
+    MoxController* mox = model.moxController();
+    mox->setMox(false);
+    pump();
+    QTRY_COMPARE(mox->state(), MoxState::Rx);
+}
+
+// The wire byte pumpAudioVolume sends, as NetworkIO.SetOutputPower
+// (NetworkIO.cs:199-212 [v2.10.3.15]) computes it.
+static int expectedWire(double audioVolume, float swrProtect)
+{
+    double f = audioVolume * 1.02;
+    if (f < 0.0) { f = 0.0; }
+    if (f >= 1.0) { f = 1.0; }
+    return static_cast<int>(255.0 * f * static_cast<double>(swrProtect));
+}
+
+// Raw ANAN-8000D bridge counts for a high SWR well above the 5 W
+// alex_fwd_limit floor and clear of the open-antenna test.
+constexpr quint16 kHighSwrFwdRaw = 3000;
+constexpr quint16 kHighSwrRevRaw = 1600;
 
 // Set up the model with a connected slice + injected mock connection so
 // drive-slider / TUNE callsites have something to push wire bytes to.
@@ -414,6 +451,154 @@ private slots:
 
         // Detach before scope-exit destroys the TxChannel.
         model.injectTxChannelForTest(nullptr);
+    }
+
+    // ── §9 SWR protection reaches the drive ──────────────────────────────────
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    // From Thetis console.cs:26110-26159 [v2.10.3.15] (PollPAPWR): four
+    // samples above the limit set NetworkIO.SWRProtect = limit / (swr + 1);
+    // with wind-back on the catch-all sets 0.01 and, because SWRProtect
+    // changed, Audio.RadioVolume is reassigned so SetOutputPower applies it.
+    // Without wind-back nothing reassigns RadioVolume: the factor reaches
+    // the wire at the next power set. UIMOXChangedFalse
+    // (console.cs:29241-29246 [v2.10.3.15]) resets SWRProtect to 1.0 and
+    // clears the wind-back latch.
+    void swrTrip_windBack_cutsDriveAtOnce()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TxChannel txCh(/*channelId=*/1);
+        model.injectTxChannelForTest(&txCh);
+        auto detachTx = qScopeGuard([&]{ model.injectTxChannelForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(100);
+        pump();
+        keyAndWait(model);
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        const int fullDrive = conn->txDriveLog.last();
+        const double audioVolume = txCh.lastFixedGainForTest();
+        QCOMPARE(fullDrive, expectedWire(audioVolume, 1.0f));
+        QVERIFY(fullDrive > 0);
+
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY2(prot.measuredSwr() > 2.0f,
+                 qPrintable(QString::number(prot.measuredSwr())));
+        QVERIFY(prot.highSwr());
+        QVERIFY(prot.windBackLatched());
+        QCOMPARE(prot.protectFactor(), 0.01f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 0.01f);
+        // One reassignment of RadioVolume per poll, with the final factor.
+        QCOMPARE(conn->txDriveLog.size(), 1);
+        QCOMPARE(conn->txDriveLog.last(), expectedWire(audioVolume, 0.01f));
+        QVERIFY(conn->txDriveLog.last() < fullDrive);
+
+        // MOX off releases the latch and the factor; the next key starts at
+        // full drive.
+        unkeyAndWait(model);
+        QVERIFY(!prot.windBackLatched());
+        QVERIFY(!prot.highSwr());
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+
+        conn->txDriveLog.clear();
+        keyAndWait(model);
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        QCOMPARE(conn->txDriveLog.last(), fullDrive);
+        unkeyAndWait(model);
+    }
+
+    void swrTrip_noWindBack_factorAppliesAtNextPowerSet()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TxChannel txCh(/*channelId=*/1);
+        model.injectTxChannelForTest(&txCh);
+        auto detachTx = qScopeGuard([&]{ model.injectTxChannelForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(false);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(100);
+        pump();
+        keyAndWait(model);
+
+        // Three samples above the limit: no trip yet.
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 3; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        pump();
+
+        const float swr = prot.measuredSwr();
+        QVERIFY2(swr > 2.0f, qPrintable(QString::number(swr)));
+        const float expectedFactor = 2.0f / (swr + 1.0f);
+        QVERIFY(prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(prot.protectFactor(), expectedFactor);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), expectedFactor);
+        // Without wind-back Thetis does not reassign RadioVolume.
+        QVERIFY(conn->txDriveLog.isEmpty());
+
+        // The next power set carries the factor to the wire.
+        model.transmitModel().setPower(90);
+        pump();
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        QCOMPARE(conn->txDriveLog.last(),
+                 expectedWire(txCh.lastFixedGainForTest(), expectedFactor));
+
+        unkeyAndWait(model);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(!prot.highSwr());
+    }
+
+    void swrProtectionDisabled_leavesDriveAlone()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(false);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(100);
+        pump();
+        keyAndWait(model);
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 8; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY(!prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(conn->txDriveLog.isEmpty());
+        unkeyAndWait(model);
     }
 
     // ── §6 TUNE engagement triggers full math chain ──────────────────────────

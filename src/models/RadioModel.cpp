@@ -1249,6 +1249,17 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - SWR protection reaches the drive, as Thetis applies
+//                NetworkIO.SWRProtect: the controller's factor is the
+//                TransmitModel factor the wire pump reads, a wind-back
+//                change re-pumps once per poll and only while keyed
+//                (console.cs:26151-26158 [v2.10.3.15]), the poll runs only
+//                while transmitting (console.cs:25989-25991), and MOX off
+//                resets the factor and the wind-back latch
+//                (UIMOXChangedFalse, console.cs:29241-29246). Cross-checked
+//                against Longpath 99b20c81, which releases the latch at the
+//                hardware flip instead. Modified by J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -4765,22 +4776,56 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(&m_transmitModel, &TransmitModel::audioVolumeChanged,
             this, &RadioModel::pumpAudioVolume);
 
-    // Connect TransmitModel::swrProtectFactorChanged → re-pump current
-    // audio_volume through the new SWR factor.  Mirrors Thetis
-    // console.cs:26102-26109 [v2.10.3.13]:
-    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
-    //   {
-    //       // setting SWRProtect does nothing unless power is changed,
-    //       // RadioVolume is the only code that uses SWRProtect using
-    //       // NetworkIO.SetOutputPower.
-    //       Audio.RadioVolume = Audio.RadioVolume;  // self-assign re-emits
-    //   }
-    // The NereusSDR cache (m_lastAudioVolume, updated inside pumpAudioVolume)
-    // stands in for Thetis's `radio_volume` backing field.
-    connect(&m_transmitModel, &TransmitModel::swrProtectFactorChanged,
-            this, [this](float /*factor*/) {
-        pumpAudioVolume(m_lastAudioVolume);
-    });
+    // SWR protection → drive.  TransmitModel's swrProtectFactor is
+    // NetworkIO.SWRProtect (NetworkIO.cs:192-197 [v2.10.3.15]); every
+    // write PollPAPWR makes to it is the controller's protectFactor, so the
+    // controller's factor is stored there as it changes:
+    // From Thetis console.cs:26042, 26122, 26129, 26137 [v2.10.3.15]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   NetworkIO.SWRProtect = (float)(_swrProtectionLimit / (swr + 1.0f));
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    // (open antenna, trip, clear, wind-back latch, in that order).
+    // Storing it sends nothing: SetOutputPower (NetworkIO.cs:199-212)
+    // multiplies it in when Audio.RadioVolume is next assigned
+    // (pumpAudioVolume here). The one reassignment PollPAPWR itself makes,
+    // with wind-back on, is in handlePaTelemetry after ingest().
+    //
+    // This replaces a connect that re-pumped on every factor change,
+    // which dropped the `_swr_wind_back_power && swrprotection` guard of
+    // console.cs:26151 [v2.10.3.15] and ran outside the keyed poll.
+    connect(&m_swrProt, &safety::SwrProtectionController::protectFactorChanged,
+            &m_transmitModel, &TransmitModel::setSwrProtectFactor);
+
+    // MOX off releases the SWR protection.
+    // From Thetis console.cs:29721-29722 [v2.10.3.15] (chkMOX_CheckedChanged2):
+    //   if (tx) UIMOXChangedTrue();
+    //   else UIMOXChangedFalse();
+    // and UIMOXChangedFalse, console.cs:29241-29246 [v2.10.3.15]:
+    //   //[2.10.3.7]MW0LGE reset
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   _wind_back_engaged = false;
+    //   Display.PowerFoldedBack = false;
+    //   Audio.HighSWRScale = 1.0;
+    //   HighSWR = false;
+    // moxChanged is UIMOXChangedFalse's point here (as the DUP noise
+    // blanker restore above). The controller's onMoxOff makes those resets
+    // and its factor signal stores 1.0 in TransmitModel; nothing is pumped,
+    // as upstream. The next key's drive restore (restoreNormalTxDrive,
+    // ptbPWR_Scroll) sends full drive. Not gated on the role: a window
+    // whose controller never keys never sees this edge.
+    // Cross-checked against Longpath 99b20c81 (2026-08-14), which calls
+    // onMoxOff from onMoxHardwareFlipped(false); Thetis's reset point is
+    // the end of the MOX change, so that is where it is called here.
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxChanged, this,
+                [this](int, bool oldMox, bool newMox) {
+            if (oldMox && !newMox) {
+                m_swrProt.onMoxOff();
+            }
+        });
+    }
 
     // (Codex-flagged duplicate audioVolumeChanged listener removed in 67298ff
     // follow-up.  The single canonical pump is RadioModel::pumpAudioVolume,
@@ -21450,9 +21495,39 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // skew the foldback math; raw bridge watts are the canonical input
     // Thetis uses for protection (console.cs alex_fwd path is independent
     // of CalibratedPAPower).
+    //
+    // From Thetis console.cs:25989-25993 [v2.10.3.15] (PollPAPWR): the SWR
+    // poll acts only while keyed,
+    //   while (chkPower.Checked)
+    //   {
+    //       if (_mox)
+    //       {
+    //           float old_swr_protect = NetworkIO.SWRProtect;
+    // so a sample arriving after the key is released (or before the walk
+    // reaches Tx) cannot trip the protection again after UIMOXChangedFalse
+    // reset it. inTx above is the same gate the TX readings use.
+    if (!inTx) {
+        return;
+    }
+    const float oldSwrProtect = m_transmitModel.swrProtectFactor();
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
+    // From Thetis console.cs:26151-26158 [v2.10.3.15]:
+    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
+    //   {
+    //       // there has been a change
+    //       // We need to change the output power, as setting SWRProtect does nothing unless
+    //       // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+    //       // So just assign it with its own data
+    //       Audio.RadioVolume = Audio.RadioVolume;
+    //   }
+    // m_lastAudioVolume (kept by pumpAudioVolume) is radio_volume.
+    if (m_swrProt.windBackEnabled() && m_swrProt.isEnabled()
+        && oldSwrProtect != m_transmitModel.swrProtectFactor()) {
+        // there has been a change  [original inline comment from console.cs:26153]
+        pumpAudioVolume(m_lastAudioVolume);
+    }
 }
 
 // Issue #182 — TransmitModel::micPttDisabled → RadioConnection wire bit.
