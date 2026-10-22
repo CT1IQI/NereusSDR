@@ -25,6 +25,10 @@
 // 2026-10-01: RD-I11: the tuner's name is one word (Shack_Tuner); a name
 // with a space is refused on the Core and nothing reaches the tuner. J.J.
 // Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QJsonArray>

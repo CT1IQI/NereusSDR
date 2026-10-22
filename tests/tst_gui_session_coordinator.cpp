@@ -11,6 +11,10 @@
 // Anthropic Claude Code.
 // 2026-10-17: run as three ctest entries (TestFunctionGroups). J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -217,10 +221,8 @@ private slots:
         StationHandover ownership(AppSettings::profileOverride());
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
-        const quint16 selectedPort = port.serverPort();
-        port.close();
+        const quint16 selectedPort = unusedLoopbackPort();
+        QVERIFY(selectedPort != 0);
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
         QVERIFY(config.open(QIODevice::WriteOnly));
         const QByteArray bytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
@@ -327,10 +329,8 @@ private slots:
         radio.protocol = ProtocolVersion::Protocol1;
         radio.macAddress = QStringLiteral("AA:BB:CC:11:22:33");
         radio.firmwareVersion = 72;
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
-        const quint16 selectedPort = port.serverPort();
-        port.close();
+        const quint16 selectedPort = unusedLoopbackPort();
+        QVERIFY(selectedPort != 0);
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
         QVERIFY(config.open(QIODevice::WriteOnly));
         const QByteArray bytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
@@ -393,9 +393,8 @@ private slots:
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
         QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
-        const quint16 selectedPort = port.serverPort();
-        port.close();
+        const quint16 selectedPort = unusedLoopbackPort();
+        QVERIFY(selectedPort != 0);
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
         QVERIFY(config.open(QIODevice::WriteOnly));
         const QByteArray configBytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
@@ -452,10 +451,8 @@ private slots:
         StationHandover ownership(AppSettings::profileOverride());
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
-        const quint16 selectedPort = port.serverPort();
-        port.close();
+        const quint16 selectedPort = unusedLoopbackPort();
+        QVERIFY(selectedPort != 0);
         QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
         QVERIFY(config.open(QIODevice::WriteOnly));
         const QByteArray configBytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"

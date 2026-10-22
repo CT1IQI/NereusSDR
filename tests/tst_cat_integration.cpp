@@ -3,6 +3,10 @@
 // 2026-10-07 A VFO A retune and the commands refused while keyed check what
 //            reaches the transmitter, not how many pushes land. J.J. Boyd
 //            (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <QTcpServer>

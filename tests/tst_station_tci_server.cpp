@@ -37,6 +37,10 @@
 // 2026-10-15: FakeStationLink moved unchanged to tests/fakes/FakeStationLink.h
 // so the visual preview can use it too. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include "MultiDeviceHarness.h"
 
@@ -1344,7 +1348,9 @@ private slots:
     void coreRetriesAFailedStationListener()
     {
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
         RadioModel model;
         StationTciModel state;
@@ -1417,7 +1423,9 @@ private slots:
                   "for the station.");
         }
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
         RadioModel model;
         StationTciModel state;

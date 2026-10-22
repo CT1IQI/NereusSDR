@@ -603,7 +603,9 @@ private slots:
         QVERIFY(temp.isValid());
         AppSettings& settings = AppSettings::instance();
         QTcpServer occupied;
-        QVERIFY(occupied.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(occupied.listen(QHostAddress::LocalHost, freedLater));
         const int port = occupied.serverPort();
         QVERIFY(writeConfig(serviceConfigPath(settings), port));
         StationServiceOptions service;

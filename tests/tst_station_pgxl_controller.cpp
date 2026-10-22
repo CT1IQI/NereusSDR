@@ -18,6 +18,10 @@
 // 2026-10-11: a desktop window that runs its own radio shares its Power
 // Genius at the typed address, for its own Connect and a client's. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include "OperatorWording.h"
@@ -855,7 +859,9 @@ private slots:
             QTRY_COMPARE(model.amplifierModel()->connectionPhase(), Phase::Retrying);
             QVERIFY(pgxl->testReconnectPending());
         } else {
-            QVERIFY(amp.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+            const quint16 freedLater = unusedLoopbackPort();
+            QVERIFY(freedLater != 0);
+            QVERIFY(amp.listen(QHostAddress::LocalHost, freedLater));
             port = amp.serverPort();
             if (phase == QStringLiteral("connecting")) {
                 QVERIFY(model.configurePgxlForStation(QStringLiteral("127.0.0.1"), port, &reason));

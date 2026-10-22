@@ -133,6 +133,7 @@ namespace {
 
 // A loopback listener on a port the OS just said was free, so a parallel
 // ctest shard cannot collide with it.
+// remotePort is 0 when no port was found; each caller checks it.
 DaemonConfig listenerConfig()
 {
     DaemonConfig cfg = testCoreConfig();
@@ -988,7 +989,9 @@ private slots:
 
         DaemonApp app;
         app.primeBoardForTest(HPSDRHW::HermesLite);
-        QVERIFY(app.start(listenerConfig()));
+        const DaemonConfig listening = listenerConfig();
+        QVERIFY(listening.remotePort != 0);
+        QVERIFY(app.start(listening));
         StationServer* const server = app.stationServer();
         QVERIFY(server && server->isListening());
         StationDevicesFacade* const devices = server->devicesFacade();
@@ -1070,7 +1073,9 @@ private slots:
         {
             DaemonApp app;
             app.primeBoardForTest(HPSDRHW::HermesLite);
-            QVERIFY(app.start(listenerConfig()));
+            const DaemonConfig listening = listenerConfig();
+            QVERIFY(listening.remotePort != 0);
+            QVERIFY(app.start(listening));
             StationServer* const server = app.stationServer();
             QVERIFY(server);
             QCOMPARE(server->configuredDisplayBudgetLimits(),
@@ -1084,6 +1089,7 @@ private slots:
         }
         {
             DaemonConfig cfg = listenerConfig();
+            QVERIFY(cfg.remotePort != 0);
             cfg.displayAdaptive = false;
             DaemonApp app;
             app.primeBoardForTest(HPSDRHW::HermesLite);
@@ -1139,6 +1145,7 @@ private slots:
         DaemonApp app;
         app.primeBoardForTest(HPSDRHW::HermesLite);
         DaemonConfig cfg = listenerConfig();
+        QVERIFY(cfg.remotePort != 0);
         cfg.displayAdaptive = beforeBytes != 0;
         QVERIFY(app.start(cfg));
         StationServer* const server = app.stationServer();
@@ -1190,6 +1197,7 @@ private slots:
         }
         const DisplayBudgetLimits ceiling = DisplayLoadGovernor::computedCeiling();
         DaemonConfig cfg = listenerConfig();
+        QVERIFY(cfg.remotePort != 0);
         cfg.displayApplicationBytesPerSecond = ceiling.applicationBytesPerSecond;
         cfg.spectrumSampleUnitsPerSecond = ceiling.spectrumSampleUnitsPerSecond;
         qint64 now = 0;
@@ -1254,6 +1262,7 @@ private slots:
         }
         const DisplayBudgetLimits ceiling = DisplayLoadGovernor::computedCeiling();
         DaemonConfig cfg = listenerConfig();
+        QVERIFY(cfg.remotePort != 0);
         cfg.displayApplicationBytesPerSecond = ceiling.applicationBytesPerSecond;
         cfg.spectrumSampleUnitsPerSecond = ceiling.spectrumSampleUnitsPerSecond;
         qint64 now = 0;
@@ -1354,7 +1363,9 @@ private slots:
         }
 
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
 
         DaemonConfig cfg = testCoreConfig();
@@ -1409,7 +1420,9 @@ private slots:
         }
 
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
 
         DaemonConfig cfg = testCoreConfig();
@@ -1444,8 +1457,10 @@ private slots:
 
         QTcpServer oldBlocker;
         QTcpServer newBlocker;
-        QVERIFY(oldBlocker.listen(QHostAddress::LocalHost, unusedLoopbackPort()));
-        QVERIFY(newBlocker.listen(QHostAddress::LocalHost, unusedLoopbackPort(QHostAddress::LocalHost, oldBlocker.serverPort())));
+        QVERIFY(oldBlocker.listen(QHostAddress::LocalHost, 0));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(newBlocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 oldPort = oldBlocker.serverPort();
         const quint16 newPort = newBlocker.serverPort();
         QVERIFY(oldPort != newPort);
