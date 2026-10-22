@@ -6,6 +6,10 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: An I/Q sequence gap from the radio resets the input of the
+//               sources of its stream only, or of every stream for -1
+//               (after Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 //   2026-10-15: Display send thread: on the real transport the failing
 //               display send is the display thread's, made while this
 //               thread is held, so the close and the error drain together;
@@ -771,6 +775,7 @@ private slots:
     void aPeerTheCoreDropsIsToldToTheAppAtOnce();
     void aNewStartReplacesTheSessionsHalfOpenPeer();
     void aKeyEdgeResetsEveryActiveSourceOnce();
+    void aSequenceGapResetsTheSourcesOfItsStreamOnly();
     void staleRevisionAndWrongEpochPreserveTheActiveSource();
     void streamRemovalRetiresEndpointAndSource();
     void nonoverlappingCropIsRejectedBeforeSourceActivation();
@@ -3397,6 +3402,63 @@ void TstDaemonMediaController::aKeyEdgeResetsEveryActiveSourceOnce()
     QCOMPARE(resetsSince(1), quint64{3});
     emit mox->moxStateChanged(false);
     QTRY_COMPARE(resetsSince(0), quint64{4});
+    harness.finish();
+}
+
+// A lost I/Q packet (RadioModel::iqSequenceGapForStream, after Longpath PR
+// 62): every source of that stream drops its window in progress, through
+// the dropped-packet path, on its own worker thread when the samples after
+// the gap are drained. A gap on another stream resets nothing; -1 (a
+// Protocol 1 gap) resets every stream.
+void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
+{
+    Harness harness;
+    harness.establishSession();
+    harness.startReadyPeer();
+    const double centre = harness.radio.streamCentreHz(harness.streamIndex);
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        33, 1, harness.sliceId, centre, QStringLiteral("wide"), 1024),
+        harness.client.sessionEpoch()));
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        34, 1, harness.sliceId, centre, QStringLiteral("fine"), 1024),
+        harness.client.sessionEpoch()));
+    QTRY_COMPARE(harness.controller.activeSourceCount(), 2);
+    DaemonSpectrumSource* const source = &harness.controller.sharedSpectrum()->source();
+    const QList<MediaSourceKey> keys = source->activeSources();
+    QCOMPARE(keys.size(), 2);
+    for (const MediaSourceKey& key : keys) {
+        QTRY_VERIFY_WITH_TIMEOUT(source->publishFrameForTest(key, harness.nowNs), 10'000);
+    }
+    QList<quint64> before;
+    for (const MediaSourceKey& key : keys) {
+        before.append(source->inputHistoryResets(key));
+    }
+    const auto resetsSince = [&](int index) {
+        return source->inputHistoryResets(keys.at(index)) - before.at(index);
+    };
+
+    emit harness.radio.iqSequenceGapForStream(harness.streamIndex);
+    harness.feedRadio();
+    QTRY_COMPARE(resetsSince(0), quint64{1});
+    QTRY_COMPARE(resetsSince(1), quint64{1});
+
+    // Another stream's gap: the samples after it still drain, and reset
+    // nothing here.
+    emit harness.radio.iqSequenceGapForStream(harness.streamIndex + 1);
+    harness.feedRadio();
+    QTest::qWait(50);
+    QCOMPARE(resetsSince(0), quint64{1});
+    QCOMPARE(resetsSince(1), quint64{1});
+
+    emit harness.radio.iqSequenceGapForStream(-1);
+    harness.feedRadio();
+    QTRY_COMPARE(resetsSince(0), quint64{2});
+    QTRY_COMPARE(resetsSince(1), quint64{2});
+    // Had the other stream's gap reset these sources, the count would now
+    // go on to 3.
+    QTest::qWait(50);
+    QCOMPARE(resetsSince(0), quint64{2});
+    QCOMPARE(resetsSince(1), quint64{2});
     harness.finish();
 }
 

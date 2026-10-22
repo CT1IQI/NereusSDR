@@ -678,6 +678,9 @@
 //   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
 //                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-22 - iqSequenceGapForStream: a lost I/Q packet on a stream, for
+//                the display FFTs (after Longpath PR 62). J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6372,6 +6375,14 @@ signals:
     // reach its own engine (and from there its own panadapter).
     // Emitted from the same Connection-thread fork as rawIqData.
     void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
+
+    // An I/Q sequence gap on this stream (-1: every stream), emitted from
+    // the same Connection-thread path as rawIqDataForStream and before the
+    // samples after the gap. A display FFT fed by rawIqDataForStream
+    // discards its window in progress on it (FFTEngine::requestWindowReset),
+    // delivered on the engine's thread in order with the samples.
+    // NereusSDR, 2026-10-22, after Longpath PR 62.
+    void iqSequenceGapForStream(int streamIndex);
 
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
     // so TitleBar::ConnectionSegment can pulse its activity LED without

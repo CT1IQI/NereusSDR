@@ -32,6 +32,15 @@
 //               a skip under the 5 ms minimum gap is counted and logged
 //               instead of silent. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-22: feedIQ takes a pending window reset first, ported from
+//               Longpath src/core/FFTEngine.cpp:241-249 [@383f058]
+//               (Longpath PR 62, caddf95b): after a lost I/Q packet the
+//               next frame is built only from samples after the gap.
+//               Longpath's banner on this file is NereusSDR's own header
+//               renamed, with no Longpath author entry, so it is not
+//               copied; the project-level LICENSE applies. Ported by
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
 // =================================================================
 
 //=================================================================
@@ -316,6 +325,17 @@ void FFTEngine::setDecimation(int factor)
 void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 {
 #ifdef HAVE_FFTW3
+    // From Longpath src/core/FFTEngine.cpp:241-249 [@383f058] (PR 62).
+    // Ein Loch im Strom macht das angefangene Fenster wertlos: der
+    // Sprung an der Nahtstelle ist breitbandig und malt einen Schmierer
+    // ueber das ganze Bild. requestWindowReset() setzt die Fahne von
+    // irgendeinem Faden, abgeholt wird sie hier, auf dem Faden, dem das
+    // Fenster gehoert.
+    if (m_windowResetPending.exchange(false)) {
+        m_iqWritePos = 0;
+        m_windowResets.fetch_add(1);
+    }
+
     // Apply any pending FFT size change (coalesces rapid slider drags)
     int pending = m_pendingFftSize.exchange(0);
     if (pending > 0 && pending != m_currentFftSize) {

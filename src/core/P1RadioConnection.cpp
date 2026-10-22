@@ -244,6 +244,11 @@
 //   2026-10-15 - A request cut short names the limit to raise, not the
 //                Core's packages, since the desktop app logs it too. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - An EP6 sequence mismatch emits iqSequenceGap(-1) before the
+//                frame's samples, after Longpath P1RadioConnection.cpp
+//                2715-2727 [@383f058] (PR 62); every mismatch, as AetherSDR
+//                PR 5744 resets. J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 /*
@@ -4747,6 +4752,18 @@ void P1RadioConnection::onReadyRead()
                     // frame of a connection has no number before it.
                     m_linkStats.noteSequenced(arrivalUs,
                                               (seqError && m_ep6SeqPrimed) ? 1U : 0U);
+                    // NereusSDR, 2026-10-22, after Longpath PR 62
+                    // (P1RadioConnection.cpp:2715-2727 [@383f058]): the
+                    // same mismatch leaves a jump in every display FFT's
+                    // window. Sent before parseEp6Frame hands this frame's
+                    // samples on, so each engine drops its window first.
+                    // -1: the EP6 frame carries every receiver interleaved.
+                    // Any mismatch, as Thetis counts it, not only a forward
+                    // jump: a repeated or reordered frame breaks the window
+                    // too (AetherSDR PR 5744, a449dee4).
+                    if (seqError && m_ep6SeqPrimed) {
+                        emit iqSequenceGap(-1);
+                    }
                     // NereusSDR-native jitter (RFC 3550 section 6.4.1, see
                     // RadioLinkStats): one ep6 datagram is two 504-byte
                     // sub-frames of spr samples each, spr = 504 / (6*nddc + 2)

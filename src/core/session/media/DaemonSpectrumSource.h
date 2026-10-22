@@ -17,6 +17,10 @@
 //               queue overflows, the engine's 5 ms skips and the clock's
 //               re-anchors are counted, and the first two logged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: an I/Q sequence gap from the radio is an input
+//               discontinuity, counted in inputHistoryResets (after
+//               Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -174,8 +178,8 @@ public:
     /// Owner thread only.
     void resetInputHistoryAll();
     /// Input resets the source's engine has made on its worker thread for a
-    /// discontinuity (a dropped packet or resetInputHistoryAll). 0 for an
-    /// unknown source.
+    /// discontinuity (a dropped packet, an I/Q sequence gap from the radio
+    /// or resetInputHistoryAll). 0 for an unknown source.
     quint64 inputHistoryResets(const MediaSourceKey& key) const;
 
     /// Stops a single source tier and releases its engine. Safe for an

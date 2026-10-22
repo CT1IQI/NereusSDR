@@ -30,6 +30,15 @@
 //               stamps; minimumGapSkips(), the 5 ms rule's skips counted
 //               and logged instead of silent. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22: requestWindowReset() and windowResets(), ported from
+//               Longpath src/core/FFTEngine.h:196-211 [@383f058]
+//               (Longpath PR 62, caddf95b): a lost I/Q packet discards
+//               the window in progress instead of painting a line across
+//               the spectrum. Longpath's banner on this file is
+//               NereusSDR's own header renamed, with no Longpath author
+//               entry, so it is not copied; the project-level LICENSE
+//               applies. Ported by J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -246,6 +255,31 @@ public slots:
     // Accumulates until fftSize samples are collected, then runs FFT.
     void feedIQ(const QVector<float>& interleavedIQ);
 
+    // From Longpath src/core/FFTEngine.h:196-211 [@383f058] (PR 62).
+    /// Das angefangene Fenster verwerfen — nach einem Loch im Datenstrom.
+    ///
+    /// Der Panadapter schiebt seine Abtastwerte in ein gleitendes Fenster
+    /// und rechnet erst, wenn es voll ist. Fehlen mittendrin Pakete (WLAN,
+    /// ausgelastete Gegenstelle), steht im Fenster ein Sprung — und ein
+    /// Sprung ist breitbandig: er malt einen Schmierer ueber das ganze
+    /// Bild, der aussieht wie ein Signal. Diese Methode wirft das
+    /// angefangene Fenster weg, sodass das naechste Bild nur aus Werten
+    /// nach dem Loch entsteht.
+    ///
+    /// Darf von JEDEM Faden gerufen werden: sie setzt nur eine Fahne, die
+    /// feedIQ() auf seinem eigenen Faden abholt.
+    ///
+    /// NereusSDR: in English, a lost I/Q packet leaves a jump in the
+    /// window, and a jump is broadband, so the next frame shows a line
+    /// across the whole width. The window in progress (and the overlap
+    /// tail) is dropped at the next feedIQ(). The callers deliver it on
+    /// this engine's thread, queued in order with the samples, so the
+    /// flag is always taken by the first batch after the gap.
+    void requestWindowReset() { m_windowResetPending.store(true); }
+
+    /// Wie oft ein Fenster deshalb verworfen wurde (Diagnose).
+    quint64 windowResets() const { return m_windowResets.load(); }
+
     /// Drops every accumulated and overlap sample on this engine's worker
     /// thread. Call at an RF-source context boundary before accepting input
     /// for the new context; configuration setters alone do not clear the
@@ -408,6 +442,9 @@ private:
     // I/Q accumulation buffer (interleaved pairs)
     QVector<float> m_iqBuffer;
     int m_iqWritePos{0};  // write position in sample pairs
+    // From Longpath src/core/FFTEngine.h:343-344 [@383f058] (PR 62).
+    std::atomic<bool>    m_windowResetPending{false};  // von requestWindowReset()
+    std::atomic<quint64> m_windowResets{0};            // nur Diagnose
 
     // Output rate limiting
     QElapsedTimer m_frameTimer;

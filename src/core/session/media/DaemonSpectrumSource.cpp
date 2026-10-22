@@ -26,6 +26,10 @@
 // overflows are counted and logged, the engine's 5 ms skips and the clock's
 // re-anchors read out.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-22: RadioModel::iqSequenceGapForStream marks the stream's sources
+// through the dropped-packet path (inputDiscontinuity), so a lost I/Q packet
+// does not paint a line across the spectrum (after Longpath PR 62).
+// J.J. Boyd (KG4VCF), with AI-assisted transformation via Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -99,6 +103,9 @@ struct DaemonSpectrumSource::SourceEntry {
     QPointer<FFTEngine> engine;
     QSharedPointer<FrameState> state;
     QMetaObject::Connection iqConnection;
+    /// RadioModel::iqSequenceGapForStream for this stream (attachRadioIq);
+    /// made and taken down with iqConnection.
+    QMetaObject::Connection gapConnection;
     QMetaObject::Connection frameConnection;
 };
 
@@ -133,6 +140,8 @@ DaemonSpectrumSource::~DaemonSpectrumSource()
     for (SourceEntry& entry : m_sources) {
         QObject::disconnect(entry.iqConnection);
         entry.iqConnection = {};
+        QObject::disconnect(entry.gapConnection);
+        entry.gapConnection = {};
     }
     m_sources.clear();
     m_pool.reset();
@@ -146,6 +155,8 @@ void DaemonSpectrumSource::setRadioModel(RadioModel* radioModel)
     for (SourceEntry& entry : m_sources) {
         QObject::disconnect(entry.iqConnection);
         entry.iqConnection = {};
+        QObject::disconnect(entry.gapConnection);
+        entry.gapConnection = {};
     }
     m_radioModel = radioModel;
     for (SourceEntry& entry : m_sources) {
@@ -327,6 +338,7 @@ void DaemonSpectrumSource::deactivate(const MediaSourceKey& key)
         it->state->pendingIq.clear();
     }
     QObject::disconnect(it->iqConnection);
+    QObject::disconnect(it->gapConnection);
     QObject::disconnect(it->frameConnection);
     m_pool->removeSource(key);
     m_sources.erase(it);
@@ -749,6 +761,27 @@ void DaemonSpectrumSource::attachRadioIq(SourceEntry& entry)
             if (receivedStream == streamIndex) {
                 enqueueIq(engine, state, samples);
             }
+        }, Qt::DirectConnection);
+    // A lost I/Q packet on this stream (-1: every stream). NereusSDR,
+    // 2026-10-22, after Longpath PR 62: the window in progress is dropped
+    // so the jump at the seam does not paint a line across the spectrum.
+    // Sent on the connection thread between the samples before the gap
+    // and after it, so it takes the path a dropped packet already uses
+    // (inputDiscontinuity): the queued samples from before the gap are
+    // discarded here, and the drain the next packet posts resets the
+    // engine's input history before it feeds the samples after the gap.
+    entry.gapConnection = connect(
+        m_radioModel, &RadioModel::iqSequenceGapForStream, entry.engine,
+        [state = entry.state, streamIndex](int gapStream) {
+            if (gapStream >= 0 && gapStream != streamIndex) {
+                return;
+            }
+            QMutexLocker lock(&state->mutex);
+            if (state->retired) {
+                return;
+            }
+            state->pendingIq.clear();
+            state->inputDiscontinuity = true;
         }, Qt::DirectConnection);
 }
 

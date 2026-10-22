@@ -33,6 +33,11 @@
 //                 snapshots after unlocking, including callback-safe retunes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 NereusSDR-original synchronization logic.
+//   2026-10-22 - noteIqSequenceGap / iqSequenceGapForReceiver: an I/Q
+//                 sequence gap routed through the hardware-to-logical map
+//                 the samples take, after Longpath ReceiverManager.cpp:359
+//                 [@383f058] (PR 62 follow-up 7eccc204). J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -206,6 +211,16 @@ public:
     // Routes to the correct logical receiver.
     void feedIqData(int hwReceiverIndex, const QVector<float>& samples);
 
+    // RadioConnection::iqSequenceGap, routed like feedIqData (same thread,
+    // same hardware-to-logical map), so the gap reaches the stream whose
+    // samples it broke: emits iqSequenceGapForReceiver with the logical
+    // index, or -1 when hwReceiverIndex is -1 (every receiver). A hardware
+    // receiver with no logical receiver says nothing: its samples are
+    // dropped too. After Longpath ReceiverManager::logischerEmpfaengerFuer
+    // (ReceiverManager.cpp:359 [@383f058]), which MainWindow uses for the
+    // same mapping. NereusSDR, 2026-10-22.
+    void noteIqSequenceGap(int hwReceiverIndex);
+
     // One socket drain's worth of I/Q, bracketed by the connection thread
     // (RadioConnection::iqBatchStarted / iqBatchFinished, DirectConnection).
     // Between the two, feedIqData still emits iqDataForReceiver and
@@ -331,6 +346,11 @@ signals:
 
     // I/Q data routed to the appropriate receiver (by logical index).
     void iqDataForReceiver(int receiverIndex, const QVector<float>& samples);
+
+    // An I/Q sequence gap for this logical receiver (-1: every receiver),
+    // emitted on the thread that called noteIqSequenceGap, before the
+    // samples after the gap (noteIqSequenceGap).
+    void iqSequenceGapForReceiver(int receiverIndex);
 
     // The same batch, emitted right after iqDataForReceiver with the
     // enqueueClockNs() time it left this manager. RxDspWorker consumes it

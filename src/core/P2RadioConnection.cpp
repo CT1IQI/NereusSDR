@@ -193,6 +193,11 @@
 //                workgroup, whose Core Audio lookup could hold up the first
 //                frames and stopTxIqSender's join. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22 - A DDC sequence error emits iqSequenceGap for each stream
+//                the packet carries, before its samples, after Longpath
+//                P2RadioConnection.cpp 3234-3244 [@383f058] (PR 62); every
+//                mismatch, as AetherSDR PR 5744 resets. J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 // =================================================================
 
 //
@@ -5002,6 +5007,16 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
     }
 
     if (nstreams == 1) {
+        // NereusSDR, 2026-10-22, after Longpath PR 62
+        // (P2RadioConnection.cpp:3234-3244 [@383f058]): a sequence error
+        // leaves a jump in this DDC's display FFT window. Sent just before
+        // the packet's samples so each engine drops its window first. Any
+        // mismatch counts, not only a forward jump (Longpath: delta > 0
+        // only): a repeated or reordered packet breaks the window too
+        // (AetherSDR PR 5744, a449dee4).
+        if (seqError) {
+            emit iqSequenceGap(ddcIndex);
+        }
         emit iqDataReceived(ddcIndex, buf);
     } else {
         // De-interleave: input buf has packet sample order
@@ -5075,6 +5090,11 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
         // no longer drives PS; it remains the source of truth for all
         // non-PS DDC consumers.
         for (int s = 0; s < nstreams; ++s) {
+            // NereusSDR, 2026-10-22: a gap in DDC0's synchronized packets
+            // is a gap in every stream folded into them.
+            if (seqError) {
+                emit iqSequenceGap(streamDdc[s]);
+            }
             emit iqDataReceived(streamDdc[s], streamBufs[s]);
         }
     }

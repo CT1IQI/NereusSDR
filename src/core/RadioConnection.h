@@ -44,6 +44,12 @@
 //               may set that unkeys on this object's thread and refuses a
 //               key until it is cleared. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-22: iqSequenceGap, a lost, repeated or reordered I/Q datagram,
+//               sent before the samples after it, so the display FFTs drop
+//               their window in progress. Idea from Longpath PR 62
+//               (caddf95b) and AetherSDR PR 5744 (a449dee4); no upstream
+//               code. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//               via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -1034,6 +1040,17 @@ signals:
     // hwReceiverIndex: 0-based hardware receiver number.
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
+
+    // A sequence discontinuity in the I/Q datagrams (a lost, repeated or
+    // reordered packet), emitted on the connection thread just before the
+    // samples of the packet that showed it, so it reaches each consumer in
+    // order with those samples. hwReceiverIndex is the hardware receiver
+    // the gap belongs to, as iqDataReceived names it, or -1 for every
+    // receiver (a Protocol 1 EP6 frame carries all of them interleaved).
+    // The display FFTs discard their window in progress on it; the audio
+    // path does not listen. Idea from Longpath PR 62 (caddf95b,
+    // RadioConnection::iqSequenceGap) and AetherSDR PR 5744 (a449dee4).
+    void iqSequenceGap(int hwReceiverIndex);
 
     // Bracket one socket drain on the connection thread (Protocol 2's
     // onReadyRead). Every iqDataReceived between them belongs to that
