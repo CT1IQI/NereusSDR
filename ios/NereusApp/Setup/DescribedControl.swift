@@ -313,7 +313,8 @@ struct DescribedControl: View {
                         .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 SetupSlider(value: Binding(get: { draft ?? Double(index) }, set: { draft = $0 }),
-                            range: 0...Double(max(options.count - 1, 1)), step: 1) { editing in
+                            range: 0...Double(max(options.count - 1, 1)), step: 1,
+                            identifier: control.id) { editing in
                     if !editing, let draft {
                         let chosen = options[min(max(Int(draft.rounded()), 0), options.count - 1)]
                         self.draft = nil
@@ -332,7 +333,8 @@ struct DescribedControl: View {
                         .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 SetupSlider(value: Binding(get: { draft ?? number }, set: { draft = $0 }),
-                            range: range.minimum...range.maximum, step: range.step) { editing in
+                            range: range.minimum...range.maximum, step: range.step,
+                            identifier: control.id) { editing in
                     if !editing, let draft {
                         self.draft = nil
                         request(wholeRange ? .integer(Int64(draft.rounded())) : .decimal(draft))

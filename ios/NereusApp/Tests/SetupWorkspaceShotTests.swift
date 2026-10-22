@@ -91,6 +91,11 @@ struct SetupWorkspaceShotTests {
                                       "the page draws no workspace slider")
             #expect(slider.isAccessibilityElement && slider.accessibilityTraits.contains(.adjustable),
                     "the workspace slider is not an adjustable accessibility element")
+            // N3: as the stock Slider at 8937553ad, the slider carries the
+            // row's identifier and no label of its own (the title is the
+            // element above it), and reads its value as UISlider's percentage.
+            #expect(slider.accessibilityIdentifier == Self.sliderId)
+            #expect(slider.accessibilityLabel == nil)
             let before = slider.accessibilityValue
 
             // Accessibility activation gives it no value and sends nothing.
@@ -152,6 +157,52 @@ struct SetupWorkspaceShotTests {
         }
         // A picture of the slider in the workspace look (spec section 7.1).
         _ = try await Self.shoot("setup-ws-slider", rig: rig, path: Self.sliderRoute, dynamicType: .large)
+    }
+
+    /// N3 of the second re-review: the Core's display slider (Display on
+    /// this phone) is a UIViewRepresentable now, so its name, identifier
+    /// and value are set on the UISlider itself, as the stock Slider carried
+    /// them at 8937553ad: the control's label, the row's "core.<key>", and
+    /// the row's value text (the row's accessibilityValue reached the slider).
+    @Test("The Core's display slider names itself and carries its row's identifier on the UISlider")
+    func coreDisplaySliderAccessibility() async throws {
+        let rig = try DisplaySheetTests.Rig()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let core = rig.main.coreDisplay
+        #expect(await Described.settle { !core.groups.isEmpty })
+        let control = try #require(core.groups.flatMap(\.controls).first { control in
+            guard case .slider = control.kind, control.options.isEmpty, let range = core.range(control) else {
+                return false
+            }
+            return (range.max - range.min) / range.step > 50
+        }, "the fake Core's display catalogue has no slider with many steps")
+        try await Self.hostedView(CoreControlRow(core: core, control: control).padding()) { window in
+            let slider = try #require(Self.views(in: window).compactMap { $0 as? SetupUISlider }.first,
+                                      "the row draws no workspace slider")
+            #expect(slider.accessibilityLabel == control.label)
+            #expect(slider.accessibilityIdentifier == "core.\(control.settingsKey ?? control.subscribe)")
+            #expect(slider.accessibilityValue == (core.value(control).map(control.text) ?? ""))
+        }
+    }
+
+    /// `view` in an upright phone's window, under the app's presentation
+    /// root, for `body` to act on.
+    static func hostedView<Content: View>(_ view: Content, _ body: (UIWindow) async throws -> Void) async throws {
+        let size = CGSize(width: 402, height: 874)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: size)
+        window.windowLevel = .alert + 1
+        let host = ShotHosting.host(view.preferredColorScheme(.dark))
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        try await body(window)
     }
 
     @Test("A Setup slider snaps to its step and stays inside its range")

@@ -671,6 +671,13 @@ struct SetupSlider: UIViewRepresentable {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double
+    /// What VoiceOver names the slider, set on the UISlider itself (an
+    /// accessibility modifier on a representable may not reach it).
+    var label: String?
+    /// The slider's accessibility identifier, set on the UISlider itself.
+    var identifier: String?
+    /// What VoiceOver reads as the value; nil keeps UISlider's percentage.
+    var valueText: String?
     /// Called with true when a drag starts and false when it ends, as `Slider` does.
     var onEditingChanged: (Bool) -> Void = { _ in }
 
@@ -688,6 +695,9 @@ struct SetupSlider: UIViewRepresentable {
         slider.onMove = { binding.wrappedValue = $0 }
         slider.onEditingChanged = onEditingChanged
         slider.isEnabled = context.environment.isEnabled
+        slider.accessibilityLabel = label
+        slider.accessibilityIdentifier = identifier
+        slider.spokenValue = valueText
         slider.show(value)
     }
 }

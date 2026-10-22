@@ -23,6 +23,9 @@ final class SetupUISlider: UISlider {
     var onMove: (Double) -> Void = { _ in }
     /// Called with true when an edit starts and false when it ends, as `Slider` does.
     var onEditingChanged: (Bool) -> Void = { _ in }
+    /// What VoiceOver reads as the value in place of UISlider's percentage;
+    /// nil keeps the percentage.
+    var spokenValue: String?
     /// True from an edit's start to its end.
     private(set) var isEditing = false
     /// The value last handed to `onMove`, so a move that snaps to the same
@@ -68,6 +71,11 @@ final class SetupUISlider: UISlider {
     override func cancelTracking(with event: UIEvent?) {
         super.cancelTracking(with: event)
         editingEnded()
+    }
+
+    override var accessibilityValue: String? {
+        get { spokenValue ?? super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
     }
 
     /// VoiceOver's swipe up: one step, sent as one edit.

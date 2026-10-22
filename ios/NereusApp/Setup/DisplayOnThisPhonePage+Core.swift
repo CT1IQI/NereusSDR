@@ -195,8 +195,8 @@ struct CoreControlRow: View {
             }
             if let range, (range.max - range.min) / range.step > 50 {
                 SetupSlider(value: Binding(get: { value ?? range.min }, set: { core.set(control, to: $0) }),
-                            range: range.min...range.max, step: 0)
-                    .accessibilityLabel(control.label)
+                            range: range.min...range.max, step: 0, label: control.label, identifier: id,
+                            valueText: value.map(control.text) ?? "")
                     .setupGreyed(!enabled)
             }
         }
