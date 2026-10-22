@@ -861,6 +861,12 @@
 //               AI-assisted transformation via Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22 - Startup auto-connect to a pinned radio waits on the scan
+//                (PinnedRadioWait), not a fixed 3 s: a radio already listed
+//                connects at once, radioUpdated counts too, a joined startup
+//                scan is never stopped, and the "isn't reachable" toast comes
+//                only after the scan ends without the radio. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1134,6 +1140,7 @@ warren@wpratt.com
 #include "core/BuildIdentity.h"
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
+#include "core/PinnedRadioWait.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
@@ -19474,10 +19481,15 @@ bool MainWindow::localDisconnectAvailable() const
 //      - Single autoConnect entry → use it directly.
 //      - Multiple entries → most-recently-connected MAC wins (radios/lastConnected);
 //        a one-time status-bar warning is posted via RadioModel::autoConnectAmbiguous.
-//   3a. pinToMac=true  → run a Fast-profile discovery, connect when the same MAC
-//      is seen. A 3-second kill timer fires if the MAC never appears; on timeout
-//      the ConnectionPanel opens with the target row highlighted and a status-bar
-//      message explains why.  RadioModel's m_autoConnectInProgress flag ensures
+//   3a. pinToMac=true  → connect when the same MAC is seen (PinnedRadioWait,
+//      2026-10-22). A MAC already listed connects at once; otherwise the wait
+//      joins the running startup scan (or runs a Fast-profile one) and listens
+//      for radioDiscovered and radioUpdated until that scan ends. If the scan
+//      ends without the MAC, the ConnectionPanel opens with the target row
+//      highlighted and a toast explains why. A joined scan is never stopped,
+//      so radios on later adapters still reach the list; until 2026-10-22 a
+//      fixed 3 s timer gave up mid-scan and stopped it.  RadioModel's
+//      m_autoConnectInProgress flag ensures
 //      the RadioConnection::connectFailed signal (if the radio replies but fails)
 //      also surfaces via RadioModel::autoConnectFailed → MainWindow lambdas.
 //   3b. pinToMac=false → direct connect to saved IP. Arm m_autoConnectInProgress
@@ -19535,36 +19547,42 @@ void MainWindow::tryAutoReconnect()
                          << "(pinToMac=" << saved->pinToMac << ")";
 
     if (saved->pinToMac) {
-        // Use Fast profile — ~480ms per NIC, shorter than the SafeDefault
-        // that the user's manual Start Discovery uses.
         RadioDiscovery* disc = m_radioModel->discovery();
-        disc->setProfile(DiscoveryProfile::Fast);
+        // Use Fast profile — ~480ms per NIC, shorter than the SafeDefault
+        // that the user's manual Start Discovery uses. Only for a scan the
+        // wait starts itself: a running scan (the startup scan) keeps the
+        // timing it started with, and the wait joins it.
+        const bool setFast = !disc->isScanRunning();
+        if (setFast) {
+            disc->setProfile(DiscoveryProfile::Fast);
+        }
         m_autoReconnectInProgress = true;
 
         // Arm the RadioModel flag so RadioConnection::connectFailed (which fires
         // if the radio replies but fails the handshake) is forwarded as
         // RadioModel::autoConnectFailed. This covers the pinToMac discovery-found
-        // but connect-failed path; the timeout path below handles unreachable.
+        // but connect-failed path; the gave-up path below handles unreachable.
         m_radioModel->setAutoConnectInProgress(true, chosenMac);
 
-        // Listen for a radio that matches our chosen MAC
-        // Both the discovery callback and its timeout own this handle. A
+        // Qt parent owns it; each handler releases it with deleteLater(). A
         // station switch may destroy the window before either fires.
-        auto connPtr = std::make_shared<QMetaObject::Connection>();
-        *connPtr = connect(disc, &RadioDiscovery::radioDiscovered,
-            this, [this, chosenMac, connPtr](const RadioInfo& found) {
+        auto* wait = new PinnedRadioWait(disc, chosenMac, this);
+        connect(wait, &PinnedRadioWait::found,
+            this, [this, wait, setFast](const RadioInfo& found) {
+            wait->deleteLater();
             if (m_shuttingDown) { return; }
-            if (found.macAddress != chosenMac) {
-                return;
+            if (setFast) {
+                m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
             }
+            m_autoReconnectInProgress = false;
             if (m_radioModel->isConnected()) {
-                return; // User beat us to it
+                // User beat us to it
+                m_radioModel->setAutoConnectInProgress(false);
+                return;
             }
             qCInfo(lcConnection) << "Auto-reconnect: MAC found —"
                                  << found.displayName()
                                  << found.address.toString();
-            QObject::disconnect(*connPtr);
-            m_autoReconnectInProgress = false;
             // Note: do NOT disarm m_radioModel->setAutoConnectInProgress here —
             // connectToRadio runs asynchronously and we want connectFailed to
             // still be forwarded if the handshake itself fails. RadioModel's
@@ -19578,27 +19596,23 @@ void MainWindow::tryAutoReconnect()
             m_radioModel->connectToRadio(ri);
         });
 
-        // Kick off the Fast-profile discovery
-        disc->startDiscovery();
-
-        // 3-second hard timeout — if the MAC never appears, the radio is
+        // The scan the wait was on ended without the MAC: the radio is
         // unreachable on this network. Open the panel + post a status message.
-        QTimer::singleShot(3000, this, [this, chosenMac, connPtr]() {
-            if (!m_autoReconnectInProgress) {
-                // Already connected (discovery lambda cleaned up) — nothing to do.
+        connect(wait, &PinnedRadioWait::gaveUp, this, [this, wait, chosenMac, setFast]() {
+            wait->deleteLater();
+            if (m_shuttingDown || !m_autoReconnectInProgress) {
                 return;
             }
-            qCInfo(lcConnection) << "Auto-reconnect: 3-second timeout — radio not found";
-            // Disconnect the listener so it doesn't fire on later scans
-            QObject::disconnect(*connPtr);
+            qCInfo(lcConnection) << "Auto-reconnect: the scan ended without the radio";
             m_autoReconnectInProgress = false;
-            // Disarm RadioModel flag — the Timeout path is surfaced here directly
+            // Disarm RadioModel flag — the not-found path is surfaced here directly
             // (not via connectFailed, which only fires after a reply is received).
             m_radioModel->setAutoConnectInProgress(false);
-            // Stop the discovery pass we started; restore SafeDefault profile
-            // so the user's next manual scan uses the full timing.
-            m_radioModel->discovery()->stopDiscovery();
-            m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
+            // Restore SafeDefault profile so the user's next manual scan uses
+            // the full timing.
+            if (setFast) {
+                m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
+            }
             // Phase 3Q Task 10: surface the failure — open panel + toast.
             const QString name = AppSettings::instance()
                 .savedRadio(chosenMac)
@@ -19615,6 +19629,8 @@ void MainWindow::tryAutoReconnect()
                     .arg(displayName),
                 ToastSeverity::Warning, 8000);
         });
+
+        wait->start();
     } else {
         // No MAC pinning — direct connect to saved IP address.
         // Arm m_autoConnectInProgress so that RadioConnection::connectFailed
