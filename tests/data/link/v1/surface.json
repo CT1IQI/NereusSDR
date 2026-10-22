@@ -570,6 +570,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "rxMeterStampsVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -7500,6 +7505,12 @@
                     "kind": "utf8",
                     "name": "radeReason",
                     "ordinal": 153
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "meterReadingNs",
+                    "ordinal": 154
                 }
             ]
         },

@@ -59,6 +59,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: RX meter stamps: rxMeterStampsVersion, after waveformVersion
+//               and before coreBuildInfo. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta, after
 //               spectrumPictureVersion and before coreBuildInfo. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -624,6 +627,12 @@ struct StationCapabilities {
     /// decodes). Sent after rxFilterLowPassVersion and before coreBuildInfo,
     /// only to a peer whose hello declared `radeReason` 1; 0 otherwise.
     int radeReasonVersion = 0;
+    /// RX meter stamps: 1 means every slice carries `meterReadingNs`, when
+    /// the Core measured its RX meter readings on its producer clock, so a
+    /// window can hold them until their audio plays. Sent after
+    /// waveformVersion and before coreBuildInfo, only to a peer whose hello
+    /// declared `rxMeterStamps` 1; 0 otherwise.
+    int rxMeterStampsVersion = 0;
     /// CAT setup from a connected desktop: 1 means the Core sends its CAT
     /// as the read-only `stationCat` object and the `catLog` record stream,
     /// and takes setStationCatChannel, setStationCatGlobal,

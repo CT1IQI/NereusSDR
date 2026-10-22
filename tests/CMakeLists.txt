@@ -9624,6 +9624,15 @@ nereus_add_test(tst_rade_reason_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_rade_reason_link PRIVATE NEREUS_BUILD_TESTS)
+# RX meter stamps: the Core stamps each slice's RX meter readings with its
+# lane's read time, only a peer that declared rxMeterStamps 1 is sent the
+# stamp, and a remote window holds the readings until their audio plays.
+nereus_add_test(tst_rx_meter_stamps
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_rx_meter_stamps PRIVATE NEREUS_BUILD_TESTS)
 # Radio speaker (R-SPK-13, R-SPK-14, R-SPK-16; V-SW-4): radio's RADIO
 # level, mute, amplifier choice and reports reach only a peer that declared
 # radioSpeaker 1, a remote window's change lands on the Core, and a window

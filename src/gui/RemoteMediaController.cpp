@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-22: RX meter stamps: the StationClient holds each slice's RX
+//               meter readings on the display's clock and map
+//               (rxMeterHoldMapNs, none while no display is open; set in
+//               the constructor, removed in the destructor). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17: a playback failure's disable that cannot be sent (the old
 //               peer not ready while the Core moves) is still owed
 //               (audioDisableUnsent) and the move sends it; before, a
@@ -2133,6 +2138,18 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
                                        / 1000.0)));
     });
     d->audio = std::make_unique<RemoteAudioReceiver>(model->audioEngine());
+    // RX meter stamps: the client holds RX meter readings until their audio
+    // plays, by the clock and map the display is presented by.
+    if (d->client) {
+        const QPointer<RemoteMediaController> self(this);
+        d->client->setRxMeterHoldClock(
+            [self]() -> qint64 {
+                return self && self->d->audio ? self->d->audio->nowNs() : 0;
+            },
+            [self]() -> std::optional<qint64> {
+                return self ? self->rxMeterHoldMapNs() : std::nullopt;
+            });
+    }
     d->selectedOutput = selectedSpeakerOutput();
     d->audioQualityChoice = storedAudioQualityChoice();
     d->audioProfileChoice = d->audioQualityChoice == RemoteAudioQualityChoice::Lossless
@@ -2606,6 +2623,8 @@ RemoteMediaController::~RemoteMediaController()
     d->destroying = true;
     // Task 37: the transmit client falls back to the session.
     if (d->client) {
+        // RX meter stamps: readings apply on arrival again.
+        d->client->setRxMeterHoldClock({}, {});
         if (RemoteTransmitClient* transmit = d->client->remoteTransmit()) {
             transmit->setChannelKeepalive({});
         }
@@ -8533,6 +8552,24 @@ bool RemoteMediaController::displayClockNegotiated() const
 {
     return audioClockNegotiated()
         && d->client->capabilities().displayClockVersion >= 1;
+}
+
+std::optional<qint64> RemoteMediaController::rxMeterHoldMapNs() const
+{
+    return rxMeterHoldMapFor(displayClockNegotiated(), !d->bindings.empty(),
+                             d->displayDelay.mapNs());
+}
+
+std::optional<qint64> RemoteMediaController::rxMeterHoldMapFor(
+    bool displayClockNegotiated, bool displayOpen, std::optional<qint64> followerMapNs)
+{
+    // An older Core: readings show on arrival, as its frames are drawn.
+    // No display open: nothing presents frames, so the map is not measured
+    // and may be stale; readings show on arrival.
+    if (!displayClockNegotiated || !displayOpen) {
+        return std::nullopt;
+    }
+    return followerMapNs;
 }
 
 std::optional<qint64> RemoteMediaController::displayMapNs()
