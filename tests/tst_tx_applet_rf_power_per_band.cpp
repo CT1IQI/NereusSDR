@@ -55,6 +55,10 @@
 // window, and that TUNE follows the chosen source across a band change
 // whichever slider moved last. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+//
+// 2026-10-21: a grayed power slider's accessible description is the drive
+// source gate's reason, as the transmit gates set theirs. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -669,6 +673,78 @@ private slots:
         applet.setTransmitChainSettingsPermitted(true);
         QVERIFY(!tune->isEnabled());
         QVERIFY(tune->toolTip().contains(QStringLiteral("Setup > Transmit > Power")));
+    }
+
+    // The drive source gate's reason is the grayed slider's accessible
+    // description too, as the transmit gates set theirs (gateTransmitControl),
+    // and the description clears when the slider is live again; under a
+    // remote window's transmit settings gate it comes back with the slider.
+    void driveSourceGate_setsAccessibleDescription()
+    {
+        RadioModel rm;
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        auto* rf = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(rf != nullptr);
+        QVERIFY(tune != nullptr);
+
+        const QString neither = QStringLiteral(
+            "Neither TUNE nor the two-tone test uses this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+        QVERIFY(rf->accessibleDescription().isEmpty());
+        QCOMPARE(tune->accessibleDescription(), neither);
+        QVERIFY(tune->toolTip().endsWith(neither));
+
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(tune->accessibleDescription().isEmpty());
+        tx.setTune(true);
+        const QString tuneNotUsing = QStringLiteral(
+            "TUNE is not using this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+        QCOMPARE(rf->accessibleDescription(), tuneNotUsing);
+        QVERIFY(rf->toolTip().endsWith(tuneNotUsing));
+        QVERIFY(tune->accessibleDescription().isEmpty());
+        tx.setTune(false);
+        QVERIFY(rf->accessibleDescription().isEmpty());
+
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::Fixed);
+        tx.setTwoToneActive(true);
+        const QString twoToneNotUsing = QStringLiteral(
+            "The two-tone test is not using this slider. The two-tone test's "
+            "drive source is chosen in Setup > Test > Two-Tone IMD.");
+        QCOMPARE(rf->accessibleDescription(), twoToneNotUsing);
+        QCOMPARE(tune->accessibleDescription(), twoToneNotUsing);
+        tx.setTwoToneActive(false);
+        QVERIFY(rf->accessibleDescription().isEmpty());
+        QVERIFY(tune->accessibleDescription().isEmpty());
+    }
+
+    void driveSourceGate_accessibleDescriptionUnderTransmitSettingsGate()
+    {
+        RadioModel rm(RadioModel::Role::Remote);
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(tune != nullptr);
+        const QString neither = QStringLiteral(
+            "Neither TUNE nor the two-tone test uses this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(tune->isEnabled());
+        QVERIFY(tune->accessibleDescription().isEmpty());
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(!tune->isEnabled());
+        QCOMPARE(tune->accessibleDescription(), neither);
     }
 };
 

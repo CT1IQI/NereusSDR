@@ -258,6 +258,9 @@
 //               the slider TUNE or the two-tone test is not using, from
 //               Thetis setupTuneDriveSlider, grayed where Thetis hides.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-21  J.J. Boyd (KG4VCF): the drive source gate sets a grayed
+//               power slider's accessible description to its reason, as
+//               the transmit gates do. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -424,6 +427,7 @@ QString monitorHeadphonesCaption() { return QStringLiteral("PHONES"); }
 // (setTransmitPermitted) disabled it, given back when permission returns.
 constexpr auto kTransmitSavedTooltip = "TxAppletSavedTransmitTooltip";
 constexpr auto kTransmitSavedEnabled = "TxAppletSavedTransmitEnabled";
+constexpr auto kTransmitSavedDescription = "TxAppletSavedTransmitDescription";
 
 // Disable a control with `reason` as its tooltip, remembering what it had,
 // or put back what it had. Shared by the keying gate and the transmit
@@ -437,7 +441,7 @@ void gateTransmitControl(QWidget* control, bool permitted, const QString& reason
     if (!control) { return; }
 
     static constexpr auto kSavedTooltip = kTransmitSavedTooltip;
-    static constexpr auto kSavedDescription = "TxAppletSavedTransmitDescription";
+    static constexpr auto kSavedDescription = kTransmitSavedDescription;
     static constexpr auto kSavedEnabled = kTransmitSavedEnabled;
     if (!permitted) {
         if (!control->property(kSavedTooltip).isValid()) {
@@ -471,20 +475,26 @@ constexpr auto kTunePowerTooltip =
     "Tune and/or 2Tone Drive - relative value, not watts unless the "
     "PA profile is configured with MAX watts @ 100%";
 
-// The drive source gate's enabled state and tooltip for a power slider.
+// The drive source gate's enabled state, tooltip and accessible
+// description for a power slider: the description is the gate's reason,
+// as gateTransmitControl sets it, and empty while the slider is live.
 // While a transmit permission gate holds the slider (a remote window that
 // may not change it), the gate's saved state takes them, so the slider
 // comes back as the source says when permission returns.
-void setDriveSourceEnabled(QWidget* control, bool enabled, const QString& tooltip)
+void setDriveSourceEnabled(QWidget* control, bool enabled, const QString& tooltip,
+                           const QString& reason)
 {
     if (!control) { return; }
+    const QString description = enabled ? QString() : reason;
     if (control->property(kTransmitSavedTooltip).isValid()) {
         control->setProperty(kTransmitSavedEnabled, enabled);
         control->setProperty(kTransmitSavedTooltip, tooltip);
+        control->setProperty(kTransmitSavedDescription, description);
         return;
     }
     control->setEnabled(enabled);
     control->setToolTip(tooltip);
+    control->setAccessibleDescription(description);
 }
 
 } // namespace
@@ -2514,8 +2524,8 @@ void TxApplet::applyDriveSourceGate()
     const QString rfTooltip = QString::fromLatin1(kRfPowerTooltip);
     const QString tuneTooltip = QString::fromLatin1(kTunePowerTooltip);
     if (!m_model) {
-        setDriveSourceEnabled(m_rfPowerSlider, true, rfTooltip);
-        setDriveSourceEnabled(m_tunePwrSlider, true, tuneTooltip);
+        setDriveSourceEnabled(m_rfPowerSlider, true, rfTooltip, QString());
+        setDriveSourceEnabled(m_tunePwrSlider, true, tuneTooltip, QString());
         return;
     }
     const TransmitModel& tx = m_model->transmitModel();
@@ -2553,10 +2563,12 @@ void TxApplet::applyDriveSourceGate()
     }
 
     setDriveSourceEnabled(m_rfPowerSlider, rfOn,
-                          rfOn ? rfTooltip : rfTooltip + QStringLiteral("\n\n") + rfReason);
+                          rfOn ? rfTooltip : rfTooltip + QStringLiteral("\n\n") + rfReason,
+                          rfReason);
     setDriveSourceEnabled(m_tunePwrSlider, tuneOn,
                           tuneOn ? tuneTooltip
-                                 : tuneTooltip + QStringLiteral("\n\n") + tuneReason);
+                                 : tuneTooltip + QStringLiteral("\n\n") + tuneReason,
+                          tuneReason);
 }
 
 // From mi0bot-Thetis console.cs:29245-29274 [v2.10.3.13-beta2]
