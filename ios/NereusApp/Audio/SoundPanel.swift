@@ -188,10 +188,8 @@ private struct SoundPanelRadioSpeaker: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(SoundPanel.rowText)
             }
-            .tint(SoundPanel.radioAmber)
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
-            .opacity(speaker.isEnabled ? 1 : SoundPanel.greyed)
             .accessibilityIdentifier("radioSpeakerMute")
             if let words = speaker.reason ?? speaker.note {
                 Text(words)
@@ -258,7 +256,6 @@ private struct SoundPanelCoreSpeaker: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 44)
-                    .opacity(speaker.isEnabled ? 1 : SoundPanel.greyed)
                     .accessibilityIdentifier("coreSpeakerMute")
                 }
                 .disabled(!speaker.isEnabled)
@@ -307,7 +304,7 @@ private struct SoundPanelRoutes: View {
                 .foregroundStyle(SoundPanel.rowText)
                 .padding(.horizontal, 12)
                 .frame(height: 44)
-                .background(row.isCurrent ? SoundPanel.currentFill : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .background(row.isCurrent ? SoundPanel.currentFill : .clear, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
