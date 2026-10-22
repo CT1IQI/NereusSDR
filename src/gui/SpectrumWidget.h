@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 imdMarkersDrawn(), sameImdMarkers() and
+//                 m_overlayRowPeriodMs, so the static overlay is marked
+//                 only when the IMD markers or the time scale change.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -3454,6 +3458,11 @@ private:
     void drawImdOverlay(QPainter& p, const QRect& specRect);
     ImdInputContext imdInputContext(quint64 sequence, bool sourceEligible) const;
     void acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligible);
+    // The show condition plus an eligible frame: IMD markers are in the
+    // static overlay. sameImdMarkers() compares what they are drawn from.
+    bool imdMarkersDrawn() const;
+    static bool sameImdMarkers(const ImdMeasurementFrame& a,
+                               const ImdMeasurementFrame& b);
     void invalidateImdMeasurement();
     qint64 imdFreshnessTimeoutMs() const;
     void checkImdFreshness(qint64 nowMs);
@@ -4256,6 +4265,10 @@ private:
     int    m_fpsFrameCount{0};
     qint64 m_fpsLastUpdateMs{0};
     float  m_fpsDisplayValue{0.0f};
+
+    // The row period the waterfall time scale was last marked for
+    // (applyWaterfallTickerPeriod); 0 until the first.
+    double m_overlayRowPeriodMs{0.0};
 
     // Toggle for the in-spectrum perf overlay (drawn in a corner showing
     // paint/gap/fft/overlay-rebuild timings + audio underruns + memory
