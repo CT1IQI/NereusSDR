@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  The stall test also checks the pan's
+//                                    own keyframe waits and blended and
+//                                    repeated rows. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  The same with the Core folding the
 //                                    higher receiver's slice down onto the
 //                                    lower one; the rejoin rows install a
@@ -7967,6 +7971,12 @@ private slots:
         QCOMPARE(display.keyframeRequests, quint64(keyframesAtStart + 1));
         QCOMPARE(display.rowsBlended + display.rowsRepeated, quint64(7));
         QVERIFY(display.rowsBlended > 0);
+        // The one pan's own counts are the totals.
+        QCOMPARE(display.pans.size(), 1);
+        QCOMPARE(display.pans.firstKey(), QStringLiteral("pan-0"));
+        QCOMPARE(display.pans.first(),
+                 (RemoteDisplayPanTelemetry{display.keyframeWaits, display.rowsBlended,
+                                            display.rowsRepeated}));
         // One row per slot: 40 before, 20 slots after (13 frames, 7 filled).
         QCOMPARE(widget->remoteRowsPushedForTest(), quint64(60));
         QCOMPARE(frames.count(), 40 + 13);

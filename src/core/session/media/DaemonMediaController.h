@@ -8,6 +8,11 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: Bench setting DisplayKeyframeEveryFrame (JJ approved
+//               2026-10-22, option C of the waterfall loss study): every
+//               display frame goes as a keyframe; the display diagnostics
+//               count frames, keyframes and bytes sent. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-16: sendWaveformsOnStationThread: the RADE waveforms stay on
 //               the station thread while the display thread sends the
 //               displays. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -303,6 +308,15 @@ struct DaemonDisplayDiagnostics {
     /// message), and those refused by the five-a-second limit.
     quint64 displayKeyframeRequests = 0;
     quint64 displayKeyframeRequestsRefused = 0;
+    /// Spectrum frames (receive and transmit displays) the transport took,
+    /// those of them that were keyframes, and their bytes all together:
+    /// the line's mean frame size is displayBytesSent / displayFramesSent.
+    quint64 displayFramesSent = 0;
+    quint64 displayKeyframesSent = 0;
+    quint64 displayBytesSent = 0;
+    /// Whether the bench setting DisplayKeyframeEveryFrame was on for this
+    /// media peer (every display frame sent as a keyframe).
+    bool displayKeyframeEveryFrame = false;
     /// Frames a newer frame replaced before they were sent, by where they
     /// waited; each place holds one frame. At the source: frames an FFT
     /// engine finished for a source one of this peer's pans is sending
@@ -327,6 +341,14 @@ struct DaemonDisplayDiagnostics {
 /// The periodic journal line for these diagnostics, e.g.
 /// "largestKeyframe=2977 bytes/4 fragments largestDelta=... ".
 QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics);
+
+/// Bench setting (JJ approved 2026-10-22, option C of the waterfall loss
+/// study): with "True" in the Core's own AppSettings, every frame of every
+/// display stream goes as a keyframe (absolute planes, NSDC v1 unchanged),
+/// so each row a window receives decodes alone. Default off. Read once
+/// when the Core starts its station host (StationHost::start); a Core-only
+/// key the settings proxy never carries (SettingsScope OperatorLocal).
+inline constexpr char kDisplayKeyframeEveryFrameSettingsKey[] = "DisplayKeyframeEveryFrame";
 
 /// Owns one authenticated daemon media session: strict control validation,
 /// actual RadioModel I/Q to bounded source, per-endpoint reduction/codec and
@@ -474,6 +496,12 @@ public:
     /// peer and request.
     void setAudioLosslessAllowed(bool allowed) { m_audioLosslessAllowed = allowed; }
     bool audioLosslessAllowed() const noexcept { return m_audioLosslessAllowed; }
+    /// Bench setting kDisplayKeyframeEveryFrameSettingsKey: every display
+    /// frame (receive and transmit) is encoded as a keyframe. Takes effect
+    /// on the next frame encoded. A keyframe request from the window is
+    /// still counted and honoured; it never sends a second frame.
+    void setDisplayKeyframeEveryFrame(bool on);
+    bool displayKeyframeEveryFrame() const noexcept { return m_displayKeyframeEveryFrame.load(); }
     /// The profile the Core's audio runs for the current peer (R-R3-23).
     RemoteAudioProfile audioProfile() const noexcept { return m_audioActiveProfile; }
     /// R-R3-43: receiver streams sending now (enabled receiver contexts).
@@ -1154,6 +1182,9 @@ private:
     // the profile in its media start (the offer then carries L16) and in its
     // audio control (contexts then carry the profile shape).
     bool m_audioLosslessAllowed{true};
+    // Bench setting DisplayKeyframeEveryFrame; written on the main thread,
+    // read by whichever thread sends the displays.
+    std::atomic<bool> m_displayKeyframeEveryFrame{false};
     bool m_audioProfileNegotiated{false};
     RemoteAudioProfile m_audioRequestedProfile{RemoteAudioProfile::Opus};
     RemoteAudioProfile m_audioActiveProfile{RemoteAudioProfile::Opus};
@@ -1352,6 +1383,10 @@ public:
     /// Applied to every controller now and later (R-R3-23).
     void setAudioTargetBitrate(int bitsPerSecond);
     void setAudioLosslessAllowed(bool allowed);
+    /// Bench setting kDisplayKeyframeEveryFrameSettingsKey, applied to
+    /// every controller now and later.
+    void setDisplayKeyframeEveryFrame(bool on);
+    bool displayKeyframeEveryFrame() const noexcept { return m_displayKeyframeEveryFrame; }
     /// The controller for a media session, or null.
     DaemonMediaController* controllerFor(quint64 epoch) const;
     QList<DaemonMediaController*> controllers() const;
@@ -1374,6 +1409,7 @@ private:
     std::map<quint64, std::unique_ptr<DaemonMediaController>> m_controllers;
     std::optional<int> m_audioTargetBitrate;
     std::optional<bool> m_audioLosslessAllowed;
+    bool m_displayKeyframeEveryFrame{false};
 };
 
 } // namespace NereusSDR
