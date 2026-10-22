@@ -660,30 +660,35 @@ extension SetupStepperRow where Label == Text {
 
 // MARK: Sliders
 
-/// A Setup slider: the stock slider, tinted with the workspace accent.
-/// It behaves exactly as the stock one does, which a drawn slider could not
-/// promise: the value moves only while the thumb is dragged, a tap on the
-/// track changes nothing and sends nothing, a vertical drag scrolls the
-/// page, and VoiceOver adjusts it. Spec section 7.1 asks for the inset
-/// track and a raised thumb; the system slider keeps its own track and
-/// thumb ("System shapes stay Apple's", W11), the filled part in the accent.
-struct SetupSlider: View {
+/// A Setup slider: a UISlider in the workspace look (spec section 7.1,
+/// "Sliders": the track in the inset, the filled part in kGlassSelBorder, a
+/// light raised thumb). It is UIKit's slider underneath so it behaves as the
+/// stock one does, which a drawn slider could not promise: the value moves
+/// only while the thumb is dragged, a tap on the track changes nothing and
+/// sends nothing, a vertical drag scrolls the page, and VoiceOver adjusts it.
+/// Its greying is the row's (`setupGreyed`), so it is never greyed twice.
+struct SetupSlider: UIViewRepresentable {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double
     /// Called with true when a drag starts and false when it ends, as `Slider` does.
     var onEditingChanged: (Bool) -> Void = { _ in }
 
-    var body: some View {
-        Group {
-            // A step of 0 is a slider without steps; the stock slider traps on it.
-            if step > 0 {
-                Slider(value: $value, in: range, step: step, onEditingChanged: onEditingChanged)
-            } else {
-                Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
-            }
-        }
-        .tint(WorkspacePalette.accentFill)
+    func makeUIView(context: Context) -> SetupUISlider {
+        let slider = SetupUISlider(frame: .zero)
+        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        slider.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return slider
+    }
+
+    func updateUIView(_ slider: SetupUISlider, context: Context) {
+        let binding = $value
+        slider.range = range
+        slider.step = step
+        slider.onMove = { binding.wrappedValue = $0 }
+        slider.onEditingChanged = onEditingChanged
+        slider.isEnabled = context.environment.isEnabled
+        slider.show(value)
     }
 }
 

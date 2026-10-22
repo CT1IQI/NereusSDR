@@ -70,47 +70,181 @@ struct SetupWorkspaceShotTests {
         }
     }
 
-    /// I2 of the final review: a Setup slider is the stock slider, so the
-    /// value moves only while its thumb is dragged, a tap on the track
-    /// changes nothing, a vertical drag scrolls the page and VoiceOver
-    /// adjusts it, all as the system slider does. Through the fake Core
-    /// (the request seam): a tap on the slider (its activation) sends no
-    /// request, and a VoiceOver adjust sends the value it moves to.
-    @Test("A Setup slider is the stock slider: a tap sends no request, a VoiceOver adjust sends its value")
+    /// I2 of the final review, and M-a and M-b of its re-review: a Setup
+    /// slider is UIKit's slider in the workspace look, so the value moves
+    /// only while its thumb is dragged, a tap on the track changes nothing, a
+    /// vertical drag scrolls the page and VoiceOver adjusts it, all as the
+    /// system slider does. Through the fake Core (the request seam):
+    /// accessibility activation (VoiceOver's double tap, not a finger tap)
+    /// sends no request, and one VoiceOver adjust sends exactly one. A finger
+    /// tap is UISlider's own touch handling, which no hosted test can send.
+    @Test("A Setup slider: accessibility activation sends no request, one VoiceOver adjust sends exactly one")
     func sliderSendsOnlyWhenMoved() async throws {
-        let rig = try await Described.connected()
+        let rig = try await Self.sliderRig()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
-        await rig.station.deliverSetup(try Described.coreCategories())
-        let app = rig.app
-        #expect(await Described.settle { app.setupPages.isCurrent && app.setupFeed.description(for: "dsp") != nil })
-        let isSliderWrite: @Sendable (LinkMessage) -> Bool = { message in
-            guard case .propertyWrite(let write) = message else { return false }
-            return write.properties.contains { $0.name == "txLevelerMaxGain" }
-        }
         let accessibility = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)
         defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
-        try await Self.hosted(rig: rig, path: Self.agcAlc) { window in
-            // The TX Leveler's Max Gain: editable with no slice chosen.
-            let slider = try #require(Self.adjustable("dsp.agcAlc.txLevelerMaxGain", in: window),
-                                      "AGC/ALC draws no adjustable slider for the TX Leveler's Max Gain")
+        try await Self.hosted(rig: rig, path: Self.sliderRoute) { window in
+            // The UISlider is its own accessibility element, the one VoiceOver focuses.
+            let slider = try #require(await Self.firstSlider(in: window, under: Self.sliderId),
+                                      "the page draws no workspace slider")
+            #expect(slider.isAccessibilityElement && slider.accessibilityTraits.contains(.adjustable),
+                    "the workspace slider is not an adjustable accessibility element")
             let before = slider.accessibilityValue
 
-            // A tap on the slider gives it no value and sends nothing.
+            // Accessibility activation gives it no value and sends nothing.
             _ = slider.accessibilityActivate()
             await ShotWait.laidOut(window)
-            #expect(await rig.station.waitForMessage(within: .seconds(2), matching: isSliderWrite) == nil,
-                    "a tap on the slider sent a request")
-            #expect(slider.accessibilityValue == before, "a tap on the slider moved it")
+            #expect(await rig.station.waitForMessage(within: .seconds(2), matching: Self.isSliderWrite) == nil,
+                    "accessibility activation of the slider sent a request")
+            #expect(slider.accessibilityValue == before, "accessibility activation of the slider moved it")
 
-            // VoiceOver's adjust moves it one step and sends that value.
+            // VoiceOver's adjust moves it one step and sends that value, once:
+            // up, or down when it is already at the top.
             slider.accessibilityIncrement()
-            if slider.accessibilityValue == before {
+            if await rig.station.waitForMessage(within: .seconds(2), matching: Self.isSliderWrite) == nil {
                 slider.accessibilityDecrement()
             }
-            let sent = await rig.station.waitForMessage(within: .seconds(10), matching: isSliderWrite)
-            #expect(sent != nil, "a VoiceOver adjust of the slider sent no request")
+            try await Self.expectOneWrite(rig, "a VoiceOver adjust of the slider")
         }
+    }
+
+    /// M-a of the re-review: an edit (the thumb taken, moved through several
+    /// steps and let go) sends exactly one request, with the value it was let
+    /// go at, as DescribedControl sends on the edit's end.
+    @Test("A Setup slider: one edit through several steps sends exactly one request")
+    func sliderEditSendsOneRequest() async throws {
+        let rig = try await Self.sliderRig()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        try await Self.hosted(rig: rig, path: Self.sliderRoute) { window in
+            let slider = try #require(await Self.firstSlider(in: window, under: Self.sliderId),
+                                      "the page draws no workspace slider")
+            let start = Double(slider.value)
+            let step = slider.step > 0 ? slider.step : 1
+            let direction: Double = Double(slider.maximumValue) - start >= 3 * step ? 1 : -1
+            slider.editingBegan()
+            for moved in 1...3 {
+                slider.value = Float(start + direction * Double(moved) * step)
+                slider.valueMoved()
+                await ShotWait.laidOut(window)
+            }
+            #expect(await rig.station.waitForMessage(within: .seconds(1), matching: Self.isSliderWrite) == nil,
+                    "the slider sent a request before its edit ended")
+            slider.editingEnded()
+            let sent = try await Self.expectOneWrite(rig, "an edit of the slider")
+            guard case .propertyWrite(let write) = sent,
+                  let property = write.properties.first(where: { $0.name == "power" }) else {
+                Issue.record("the slider's write carries no power")
+                return
+            }
+            let letGo = start + direction * 3 * step
+            let number: Double? = switch property.value {
+            case .i64(let whole): Double(whole)
+            case .f64(let decimal): decimal
+            default: nil
+            }
+            #expect(number.map { abs($0 - letGo) < 1e-9 } == true,
+                    "the slider sent \(property.value), not \(letGo), the value it was let go at")
+        }
+        // A picture of the slider in the workspace look (spec section 7.1).
+        _ = try await Self.shoot("setup-ws-slider", rig: rig, path: Self.sliderRoute, dynamicType: .large)
+    }
+
+    @Test("A Setup slider snaps to its step and stays inside its range")
+    func sliderSnapsToItsStep() {
+        #expect(SetupUISlider.snapped(4.4, range: 0...10, step: 1) == 4)
+        #expect(SetupUISlider.snapped(4.6, range: 0...10, step: 1) == 5)
+        #expect(SetupUISlider.snapped(12, range: 0...10, step: 1) == 10)
+        #expect(SetupUISlider.snapped(-3, range: 0...10, step: 0) == 0)
+        #expect(SetupUISlider.snapped(3.3, range: 0...10, step: 0) == 3.3)
+        #expect(SetupUISlider.snapped(-14, range: -20...20, step: 5) == -15)
+    }
+
+    /// A page with one described slider, the transmit power (kind slider,
+    /// 0 to 100 in steps of 1), which the fake Core's mirror holds and lets
+    /// the phone edit with no slice chosen.
+    static let sliderId = "general.sliders.power"
+    static let sliderRoute: [SetupTree.Route] = [.category("General"),
+                                                 .described(category: "general", page: "general.sliders")]
+    static let sliderPage = #"{"version":3,"category":{"id":"general","title":"General","where":"mixed"},"pages":[{"id":"general.sliders","title":"Sliders","where":"station","sections":[{"title":"Sample","controls":[{"id":"general.sliders.power","label":"Sample power","tooltip":"","kind":"slider","binding":{"property":{"object":"transmit","name":"power"}},"applies":"live","min":0,"max":100,"step":1,"unit":"W"}]}]}]}"#
+
+    /// A connected phone whose General category is ``sliderPage``.
+    static func sliderRig() async throws -> Described.Rig {
+        let rig = try await Described.connected()
+        var categories = try Described.coreCategories()
+        categories.removeAll { $0.id == "general" }
+        categories.insert(("general", sliderPage), at: 0)
+        await rig.station.deliverSetup(categories)
+        let app = rig.app
+        #expect(await Described.settle { app.setupPages.isCurrent && app.setupFeed.description(for: "general") != nil })
+        return rig
+    }
+
+    /// A write of the slider's property, the transmit power.
+    nonisolated static let isSliderWrite: @Sendable (LinkMessage) -> Bool = { message in
+        guard case .propertyWrite(let write) = message else { return false }
+        return write.key == "transmit" && write.properties.contains { $0.name == "power" }
+    }
+
+    /// Waits for one Max Gain write, then expects no second one; returns the write.
+    @discardableResult
+    static func expectOneWrite(_ rig: Described.Rig, _ what: String) async throws -> LinkMessage {
+        let sent = try #require(await rig.station.waitForMessage(within: .seconds(10), matching: isSliderWrite),
+                                "\(what) sent no request")
+        let station = rig.station
+        let isWrite = isSliderWrite
+        _ = await station.waitUntil(within: .seconds(2)) {
+            station.messages.filter(isWrite).count > 1
+        }
+        #expect(rig.station.messages.filter(isSliderWrite).count == 1, "\(what) sent more than one request")
+        return sent
+    }
+
+    /// The workspace UISlider of the described row with `id`: the slider
+    /// under the row's title, scrolled into the window first, since a list
+    /// builds only the rows on screen. (The row's identifier lands on its
+    /// title; the UISlider is an accessibility element of its own.)
+    static func firstSlider(in window: UIWindow, under id: String) async -> SetupUISlider? {
+        guard let title = SetupTypedEntryTests.element(id, in: window) else {
+            return nil
+        }
+        let frame = title.accessibilityFrame
+        if frame.maxY > window.bounds.maxY - 160 || frame.minY < 120,
+           let scroll = views(in: window).compactMap({ $0 as? UIScrollView })
+               .max(by: { $0.contentSize.height < $1.contentSize.height }) {
+            let target = scroll.contentOffset.y + frame.midY - window.bounds.midY
+            let limit = max(scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height,
+                            -scroll.adjustedContentInset.top)
+            scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x,
+                                            y: min(max(target, -scroll.adjustedContentInset.top), limit)),
+                                    animated: false)
+            await ShotWait.laidOut(window)
+        }
+        guard let shown = SetupTypedEntryTests.element(id, in: window)?.accessibilityFrame else {
+            return nil
+        }
+        return views(in: window).compactMap { $0 as? SetupUISlider }
+            .filter { slider in
+                let box = slider.convert(slider.bounds, to: nil)
+                return box.minY >= shown.minY && box.minY - shown.maxY < 60
+                    && box.maxX > shown.minX && box.minX < shown.maxX
+            }
+            .min { $0.convert($0.bounds, to: nil).minY < $1.convert($1.bounds, to: nil).minY }
+    }
+
+    /// Every view under `root`.
+    static func views(in root: UIView) -> [UIView] {
+        var found: [UIView] = []
+        var stack = [root]
+        while let view = stack.popLast() {
+            found.append(view)
+            stack += view.subviews
+        }
+        return found
     }
 
     @Test("A swipe to delete starts only outside the row's fields (final review, Minor 4)")
