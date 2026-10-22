@@ -20,7 +20,7 @@ enum SpotColours {
     static let sheet = WorkspacePalette.appBg
     static let sheetBorder = WorkspacePalette.border
     static let sheetHead = WorkspacePalette.titleText
-    static let rowDivider = WorkspacePalette.rgb(0x1A1A1E)
+    static let rowDivider = WorkspacePalette.buttonBg
     static let dim = Color.black.opacity(0.45)
     /// A frequency, the flag's cyan.
     static let frequency = WorkspacePalette.rgb(0x00E5FF) // kept (W2)

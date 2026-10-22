@@ -29,6 +29,7 @@ enum WorkspacePalette {
     static let textScale = rgb(0x7E7E85) // kTextScale, WorkspacePalette.h:153; From Longpath src/gui/StyleConstants.h:182 [@551576e3]
     static let textInactive = rgb(0x58585E) // kTextInactive, WorkspacePalette.h:154; From Longpath src/gui/StyleConstants.h:183 [@551576e3]
     static let titleText = rgb(0xC4C4CA) // kTitleText, WorkspacePalette.h:163; From Longpath src/gui/StyleConstants.h:192 [@551576e3]
+    static let buttonBg = rgb(0x1A1A1E) // kButtonBg, WorkspacePalette.h:173; From Longpath src/gui/StyleConstants.h:200 [@551576e3]
     static let border = rgb(0x2C2C31) // kBorder, WorkspacePalette.h:179; From Longpath src/gui/StyleConstants.h:203 [@551576e3]
     static let borderSubtle = rgb(0x1F1F23) // kBorderSubtle, WorkspacePalette.h:181; From Longpath src/gui/StyleConstants.h:204 [@551576e3]
     static let borderMuted = rgb(0x3D3D41) // kBorderMuted, WorkspacePalette.h:185; From Longpath src/gui/StyleConstants.h:208 [@551576e3]

@@ -49,7 +49,7 @@ def load_colours_check():
 TOKENS = (
     "appBg", "panelBg", "statusBarBg", "statusBarBorder",
     "textPrimary", "textSecondary", "textTertiary", "textScale", "textInactive",
-    "titleText", "border", "borderSubtle", "borderMuted", "insetBg", "insetBorder",
+    "titleText", "buttonBg", "border", "borderSubtle", "borderMuted", "insetBg", "insetBorder",
     "greenBg", "liveGreen", "amberBg", "amberText", "amberBorder", "dspToggleBorder",
     "badgeTxBg", "txRed", "redBg", "redText", "redBorder", "gaugeDanger",
     "glassPanelTop", "glassPanelBot", "glassBtnTop", "glassBtnBot", "glassSelTop",
@@ -119,7 +119,8 @@ def check(header: Path, swift: Path) -> List[str]:
 
 class WorkspacePaletteDriftTest(unittest.TestCase):
     def test_every_desktop_token_is_carried(self) -> None:
-        self.assertEqual(len(TOKENS), 35)
+        # The spec's 35, and kButtonBg for the Spot Hub's row divider (final review, Minor 3).
+        self.assertEqual(len(TOKENS), 36)
         desktop = read_header(HEADER)
         for name in TOKENS:
             with self.subTest(name=name):
