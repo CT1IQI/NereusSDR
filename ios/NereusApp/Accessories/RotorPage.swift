@@ -113,8 +113,8 @@ struct RotorPage: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(ChromeColours.accentText)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(ChromeColours.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.accent, lineWidth: 1))
+                .background(ChromeColours.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.accent, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -74,8 +74,8 @@ enum ToolPageParts {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: width, height: 28)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         }
     }
 

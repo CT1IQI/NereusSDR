@@ -44,8 +44,8 @@ struct FreeDVStationDetails: View {
             .font(.system(size: 12.5))
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
             let tuneReason = freedv.tuneReason(station)
             let qsyReason = freedv.qsyReason
             HStack(spacing: 8) {

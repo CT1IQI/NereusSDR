@@ -51,8 +51,8 @@ enum FreeDVChrome {
                     .frame(maxWidth: .infinity, minHeight: 42)
                     .background(!enabled ? ChromeColours.buttonOff
                                 : (primary ? ChromeColours.buttonOnBlue : ChromeColours.button),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(!enabled ? ChromeColours.buttonOffBorder
                                       : (primary ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder),
                                       lineWidth: 1))
@@ -83,8 +83,8 @@ enum FreeDVChrome {
                     .frame(maxWidth: .infinity)
                     .background(!enabled ? ChromeColours.buttonOff
                                 : (chosen ? ChromeColours.buttonOnBlue : ChromeColours.button),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(!enabled ? ChromeColours.buttonOffBorder
                                       : (chosen ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder),
                                       lineWidth: 1))
