@@ -138,11 +138,10 @@ struct IPadShotTests {
             TabBar(selection: .constant(.setup), sideways: onItsSide, iPad: iPad)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
-        .toggleStyle(WorkspaceSwitchStyle())
         .environment(\.horizontalSizeClass, widthClass)
         .environment(\.setupLayoutProbe, probe)
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if onItsSide {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
         }
@@ -190,7 +189,7 @@ struct IPadShotTests {
         let root = IPadShotRoot(model: model, columnShown: screen.columnShown)
             .environment(\.horizontalSizeClass, .regular)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if screen.onItsSide {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
         }

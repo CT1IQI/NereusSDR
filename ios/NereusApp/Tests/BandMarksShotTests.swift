@@ -110,7 +110,7 @@ struct BandMarksShotTests {
             }
             .background(ChromeColours.bar.ignoresSafeArea())
             .preferredColorScheme(.dark)
-            host = UIHostingController(rootView: AnyView(root))
+            host = UIHostingController(rootView: AnyView(ShotHosting.wrap(root)))
             host.view.frame = CGRect(origin: .zero, size: size)
             window.rootViewController = host
             window.isHidden = false

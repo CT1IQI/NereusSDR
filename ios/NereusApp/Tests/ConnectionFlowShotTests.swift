@@ -609,7 +609,7 @@ struct ConnectionFlowShotTests {
             .preferredColorScheme(.dark)
         // Large type: the accessibility size the other large-type shots use.
         let root = largeType ? AnyView(view.environment(\.dynamicTypeSize, .accessibility2)) : AnyView(view)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }

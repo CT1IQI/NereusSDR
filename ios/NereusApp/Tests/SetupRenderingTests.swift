@@ -555,10 +555,8 @@ struct SetupRenderingTests {
             TabBar(selection: .constant(.setup), sideways: false)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
-        // Every switch as the app's root gives it (RootView).
-        .toggleStyle(WorkspaceSwitchStyle())
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

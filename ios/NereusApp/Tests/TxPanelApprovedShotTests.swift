@@ -136,7 +136,7 @@ struct TxPanelApprovedShotTests {
         }
         .preferredColorScheme(dark ? .dark : .light)
         .dynamicTypeSize(large ? .accessibility3 : .large)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = window.bounds
         let wasAccessible = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)
@@ -365,7 +365,7 @@ extension TxPanelApprovedShotTests {
                             modes: main.modes, meters: main.band.catalog?.meters, width: nil,
                             modMonitor: main.modMonitor, take: main.take)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: panel)
+        let host = ShotHosting.host(panel)
         host.view.frame = window.bounds
         window.rootViewController = host
         window.isHidden = false

@@ -340,7 +340,7 @@ struct FreeDVReporterTests {
         let freedv = model.freedv
         #expect(await settle { freedv.statusText == "QRV RADE on 40m" })
         let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 900))
-        let host = UIHostingController(rootView: StatusMessageEditor(freedv: freedv).preferredColorScheme(.dark))
+        let host = ShotHosting.host(StatusMessageEditor(freedv: freedv).preferredColorScheme(.dark))
         host.view.frame = window.bounds
         let wasOn = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)
@@ -710,7 +710,7 @@ struct FreeDVReporterTests {
         }
         .background(ChromeColours.page)
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
