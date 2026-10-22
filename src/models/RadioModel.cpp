@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - A lone slice that tunes well inside another receiver of its
+//                pan goes back onto that receiver instead of moving its own
+//                (bindSliceToStream, rejoinCandidateStreams; JJ's ruling
+//                2026-10-22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
 //                checkbox sum) are named by the XVTR label, and a slice's
 //                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
@@ -14551,6 +14556,74 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
         m_streamAllocator.streamSampleRateHz(streamIndex));
 }
 
+QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
+                                                int currentStream,
+                                                double frequencyHz) const
+{
+    QVector<int> candidates;
+    if (slice == nullptr || currentStream < 0 || slice->diversityEnabled()) {
+        return candidates;
+    }
+    // An empty pan key is pan 0, as restore and recovery read it.
+    const auto panOf = [](const SliceModel* s) {
+        return s->panKey().isEmpty() ? QStringLiteral("pan-0") : s->panKey();
+    };
+    const QString pan = panOf(slice);
+    const Band newBand = bandFromFrequency(frequencyHz);
+    const bool pinned = streamCtunPinned(currentStream);
+    const QByteArray subject = m_sliceOwnership != nullptr
+        ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        if (st == currentStream || !m_streamAllocator.isStreamActive(st)) {
+            continue;
+        }
+        // Each pan keeps its own receivers: joining another pan's would
+        // couple the two pans (the 2026-07-30 and 2026-08-01 bench reports
+        // behind SliceStreamAllocator::placeSlice's preferOwnStream).
+        //
+        // The same receive antenna as every slice there, compared on the
+        // labels the codec reads (buildStreamConfigsForCodec takes a stream's
+        // antenna from its first slice in m_slices order, which may become
+        // this one), so the receiver's ADC cannot move under its slices.
+        // Diversity on the receiver would change which DDC pair carries it.
+        bool qualifies = false;
+        for (const SliceModel* other : m_slices) {
+            if (other == nullptr || other == slice || other->streamIndex() != st) {
+                continue;
+            }
+            if (panOf(other) != pan || other->rxAntenna() != slice->rxAntenna()
+                || other->diversityEnabled()) {
+                qualifies = false;
+                break;
+            }
+            qualifies = true;
+        }
+        if (!qualifies) {
+            continue;
+        }
+        // C-Tune: the slice keeps the pin it had, and the receiver's is not
+        // touched, so neither slice's C-Tune changes.
+        if (streamCtunPinned(st) != pinned) {
+            continue;
+        }
+        // The slice's labels are refreshed for its new band only after this
+        // bind (crossBandForSlice runs later in the same frequencyChanged), so
+        // the band's Alex receive antenna is compared too: once the labels
+        // catch up they must still match the receiver's.
+        if (receiveAntennaDiffers(newBand,
+                                  bandFromFrequency(m_streamAllocator.streamCentreHz(st)))) {
+            continue;
+        }
+        // Several devices on one Core: a receiver anchored by another device
+        // stays that device's.
+        if (m_sliceOwnership != nullptr && m_sliceOwnership->anchorOf(st) != subject) {
+            continue;
+        }
+        candidates.append(st);
+    }
+    return candidates;
+}
+
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                     bool preferOwnStream, int requiredStream)
 {
@@ -14626,7 +14699,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // it (a confirmed pan move taking its slices to another receiver,
     // moveSlicesToStream); every other caller leaves requiredStream -1 on
     // a retune, as before.
-    const auto placement =
+    auto placement =
         (previousStream < 0 || (requiredStream >= 0 && requiredStream != previousStream))
             ? (requiredStream >= 0
                 ? m_streamAllocator.joinStream(requiredStream, frequencyHz)
@@ -14635,6 +14708,33 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                             ddcPinned, frequencyHz);
 
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
+
+    // JJ's ruling 2026-10-22: a slice alone on its receiver that tunes well
+    // inside another receiver of its pan goes back onto that receiver,
+    // freeing its own, instead of dragging its own receiver along. STRIX,
+    // 2026-10-22: the Core restored A on 80 m and B on 40 m on two
+    // receivers; A was then tuned to 7.268 MHz, 6 kHz from B, and stayed
+    // alone (RetunedStream), so the window's pan cleared on every A/B click.
+    //
+    // Only where the retune would move this slice's own receiver
+    // (RetunedStream). A C-Tune-pinned slice still inside its own window
+    // gets JoinedExisting on that window instead and is left there: joining
+    // another receiver would move the pan under it, which is what C-Tune
+    // exists to prevent. The other receiver's centre and rate stay as they
+    // are (rejoinStream joins at a shift only), so the slices on it hear
+    // nothing new; the moving slice gets one short gap as its channel
+    // changes receivers, in place of the one its own receiver's retune
+    // would have cost.
+    bool rejoined = false;
+    if (placement.outcome == Outcome::RetunedStream && previousStream >= 0
+        && placement.streamIndex == previousStream) {
+        if (const auto rejoin = m_streamAllocator.rejoinStream(
+                previousStream, frequencyHz,
+                rejoinCandidateStreams(slice, previousStream, frequencyHz))) {
+            placement = *rejoin;
+            rejoined = true;
+        }
+    }
 
     // Placement diagnostic. Added 2026-08-01 chasing a bench report that a
     // second pan sometimes lands on the same DDC as the first, so tuning one
@@ -14663,7 +14763,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             << " stream=" << placement.streamIndex
             << " shift=" << placement.shiftOffsetHz
             << " newCentre=" << (placement.newStreamCentreHz / 1.0e6)
-            << " occupantsBefore=" << occupants;
+            << " occupantsBefore=" << occupants
+            << (rejoined ? qPrintable(QStringLiteral(" (rejoined, receiver %1 freed)")
+                                          .arg(previousStream))
+                         : "");
     }
 
     if (placement.outcome == Outcome::Rejected) {

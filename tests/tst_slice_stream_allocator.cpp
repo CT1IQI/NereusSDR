@@ -12,6 +12,10 @@
 //               plans a pan move without touching the live one. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-22: rejoinStream, a lone slice going back onto another
+//               receiver that covers it well inside its window (JJ's
+//               ruling 2026-10-22). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include "core/SliceStreamAllocator.h"
@@ -312,6 +316,80 @@ private slots:
         QVERIFY(!live.isStreamActive(1));
         QCOMPARE(live.placeSlice(7150000.0).outcome,
                  SliceStreamAllocator::Outcome::JoinedExisting);
+    }
+
+    // ── rejoinStream (JJ's ruling 2026-10-22) ─────────────────────────────
+    //
+    // STRIX 2026-10-22: A on 3.87 MHz and B on 7.262 MHz on two receivers;
+    // A tuned to 7.268 MHz, inside B's window, and kept its own receiver.
+    void a_lone_slice_rejoins_the_receiver_that_covers_it()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(2, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+
+        const auto r = alloc.rejoinStream(0, 7268000.0, {1});
+
+        QVERIFY(r.has_value());
+        QCOMPARE(r->outcome, SliceStreamAllocator::Outcome::JoinedExisting);
+        QCOMPARE(r->streamIndex, 1);
+        QCOMPARE(r->shiftOffsetHz, 6000.0);
+        // A join at a shift: the other receiver's centre and rate stay.
+        QCOMPARE(alloc.streamCentreHz(1), 7262000.0);
+        QCOMPARE(alloc.streamSampleRateHz(1), 192000);
+    }
+
+    void a_frequency_outside_the_other_window_does_not_rejoin()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(2, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+
+        QVERIFY(!alloc.rejoinStream(0, 7400000.0, {1}).has_value());
+        // Its own stream is never a candidate, and an idle one never is.
+        QVERIFY(!alloc.rejoinStream(0, 3871000.0, {0}).has_value());
+        alloc.deactivateStream(1);
+        QVERIFY(!alloc.rejoinStream(0, 7268000.0, {1}).has_value());
+    }
+
+    // Anti-flap: a slice leaves a shared window at its edge, and rejoins only
+    // inside the inner 80% of it, so tuning across the edge one step at a
+    // time cannot bounce it between receivers.
+    void a_slice_rejoins_only_well_inside_the_other_window()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(2, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+        // Half window 96 kHz; the rejoin limit is 0.8 of it, 76.8 kHz.
+        QCOMPARE(SliceStreamAllocator::kRejoinHalfWindowFraction, 0.8);
+
+        // Inside the window, outside the inner span: no rejoin, both sides.
+        QVERIFY(!alloc.rejoinStream(0, 7262000.0 + 80000.0, {1}).has_value());
+        QVERIFY(!alloc.rejoinStream(0, 7262000.0 - 80000.0, {1}).has_value());
+        // A shared slice there would still stay (it has not left the window).
+        QCOMPARE(alloc.retuneSlice(1, false, false, 7262000.0 + 80000.0).streamIndex, 1);
+        // Inside the inner span: rejoin.
+        const auto r = alloc.rejoinStream(0, 7262000.0 + 76000.0, {1});
+        QVERIFY(r.has_value());
+        QCOMPARE(r->streamIndex, 1);
+    }
+
+    void a_receiver_at_another_rate_is_not_rejoined()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(3, 5);
+        alloc.activateStream(0, 3870000.0, 96000);
+        alloc.activateStream(1, 7262000.0, 192000);
+        alloc.activateStream(2, 7262000.0, 96000);
+
+        // The first candidate at the slice's own rate wins.
+        const auto r = alloc.rejoinStream(0, 7268000.0, {1, 2});
+        QVERIFY(r.has_value());
+        QCOMPARE(r->streamIndex, 2);
+        QVERIFY(!alloc.rejoinStream(0, 7268000.0, {1}).has_value());
     }
 };
 

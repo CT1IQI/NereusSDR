@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may go
+//                back onto when it tunes into their range (JJ's ruling
+//                2026-10-22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -7328,6 +7332,18 @@ public:
     /// already owns a stream.
     bool bindSliceToStream(SliceModel* slice, double frequencyHz,
                            bool preferOwnStream = false, int requiredStream = -1);
+
+    /// JJ's ruling 2026-10-22: the other receivers `slice`, alone on
+    /// `currentStream` and retuning to `frequencyHz`, may go back onto
+    /// (SliceStreamAllocator::rejoinStream decides which one covers it).
+    /// A receiver qualifies only when the move changes nothing for anyone
+    /// already on it: every slice there is on the same pan, has the same
+    /// receive antenna, and is not in Diversity; it has the same C-Tune pin
+    /// as `currentStream`; the Alex receive antenna for the slice's new band
+    /// is the one for that receiver's band; and, where slices have owners,
+    /// the receiver's anchoring device is the slice's own.
+    QVector<int> rejoinCandidateStreams(const SliceModel* slice, int currentStream,
+                                        double frequencyHz) const;
 
     /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
     /// which is what decides whether that hardware DDC's samples are forwarded

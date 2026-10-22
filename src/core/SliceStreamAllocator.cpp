@@ -218,6 +218,39 @@ SliceStreamAllocator::retuneSlice(int currentStream,
     return placeSlice(frequencyHz);
 }
 
+std::optional<SliceStreamAllocator::Placement>
+SliceStreamAllocator::rejoinStream(int currentStream, double frequencyHz,
+                                   const QVector<int>& candidateStreams) const
+{
+    if (currentStream < 0 || currentStream >= m_streams.size()
+        || !m_streams.at(currentStream).active) {
+        return std::nullopt;
+    }
+    const int rateHz = m_streams.at(currentStream).sampleRateHz;
+    for (const int candidate : candidateStreams) {
+        if (candidate == currentStream || candidate < 0 || candidate >= m_streams.size()) {
+            continue;
+        }
+        const Stream& s = m_streams.at(candidate);
+        // The same rate, so the slice's channel keeps its geometry and the
+        // pan its width; a different rate keeps today's own-receiver retune.
+        if (!s.active || s.sampleRateHz <= 0 || s.sampleRateHz != rateHz) {
+            continue;
+        }
+        const double inner =
+            static_cast<double>(s.sampleRateHz) / 2.0 * kRejoinHalfWindowFraction;
+        const double offset = frequencyHz - s.centreHz;
+        if (offset > -inner && offset < inner) {
+            Placement p;
+            p.outcome       = Outcome::JoinedExisting;
+            p.streamIndex   = candidate;
+            p.shiftOffsetHz = offset;
+            return p;
+        }
+    }
+    return std::nullopt;
+}
+
 int SliceStreamAllocator::activeStreamCount() const
 {
     int n = 0;
