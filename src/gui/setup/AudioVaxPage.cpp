@@ -76,6 +76,9 @@
 //               AI-assisted transformation via Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): return at once when the ASIO question's
+//               event loop took this card with it. With AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -105,6 +108,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QStandardItemModel>
 #include <QTimer>
@@ -1298,7 +1302,10 @@ void VaxChannelCard::onCataloguePick(int index)
     if (asio && m_engine) {
         plan = m_engine->planAsioSwitchFor(vaxRole(), id,
                                            AudioChannelPair{first, channels > 0 ? channels : 2});
+        // The ASIO question runs the event loop, and the card can die in it.
+        const QPointer<VaxChannelCard> self(this);
         if (!askAsioSwitchAll(plan, vaxRole(), name.isEmpty() ? id : name, this)) {
+            if (!self) { return; }
             fillPicker();
             return;
         }

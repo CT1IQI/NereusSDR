@@ -21,9 +21,13 @@
 //               both ended the test process: the menu lived on the stack
 //               and was freed twice.
 //   2026-10-22  J.J. Boyd (KG4VCF): dialogs too. A case closes the
-//               gradient picker's window while its colour dialog is open,
+//               gradient picker's window while its color dialog is open,
 //               and one checks the owner forwards constructor arguments.
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the S-meter's heap menu too, and the
+//               close-while-open cases now assert the window died inside
+//               exec() and the menu or dialog is gone. AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 //
 // --- From tst_scoped_child_widget.cpp ---
@@ -63,6 +67,7 @@
 #include <memory>
 
 #include "gui/ScopedChildWidget.h"
+#include "gui/SMeterWidget.h"
 #include "gui/widgets/GradientPickerWidget.h"
 #include "gui/widgets/RotorDialWidget.h"
 #include "gui/widgets/VfoWidget.h"
@@ -76,24 +81,36 @@ namespace {
 constexpr int kPollIntervalMs = 10;
 constexpr int kMaxPolls = 300;
 
+// NereusSDR: what a close-while-open run saw.
+struct CloseWhileOpenResult {
+    bool sawOpen = false;          // the popup or dialog came up
+    bool windowDiedInLoop = false; // the window was deleted inside exec()
+    bool openOneGone = false;      // the popup or dialog no longer exists
+};
+
 // NereusSDR: runs `open` (which enters a nested exec() loop) and, once
-// `isOpen` reports the popup or dialog up, deletes `window` (the target's
+// `currentOpen` returns the popup or dialog, deletes `window` (the target's
 // top level), the way a closed pan or a torn-down floating window takes its
-// children with it. Returns true when the popup or dialog was seen open.
-bool closeWindowWhileOpen(QWidget* window, const std::function<bool()>& isOpen,
-                          const std::function<void()>& open)
+// children with it. Reports, once exec() has returned, whether the window
+// died inside the loop and whether the popup or dialog is gone.
+CloseWhileOpenResult closeWindowWhileOpen(QWidget* window,
+                                          const std::function<QWidget*()>& currentOpen,
+                                          const std::function<void()>& open)
 {
     QPointer<QWidget> watchWindow(window);
-    bool sawIt = false;
+    QPointer<QWidget> watchOpen;
+    CloseWhileOpenResult result;
     int polls = 0;
     QTimer poll;
     poll.setInterval(kPollIntervalMs);
     QObject::connect(&poll, &QTimer::timeout, &poll, [&]() {
         ++polls;
-        if (isOpen()) {
-            sawIt = true;
+        if (QWidget* up = currentOpen()) {
+            result.sawOpen = true;
+            watchOpen = up;
             poll.stop();
             delete watchWindow.data();
+            result.windowDiedInLoop = watchWindow.isNull();
             return;
         }
         if (polls >= kMaxPolls) {
@@ -109,16 +126,17 @@ bool closeWindowWhileOpen(QWidget* window, const std::function<bool()>& isOpen,
     poll.start();
     open();
     poll.stop();
-    return sawIt;
+    result.openOneGone = result.sawOpen && watchOpen.isNull();
+    return result;
 }
 
 // NereusSDR: the same for `target`'s right-click menu, delivered the way Qt
 // delivers it.
-bool closeWindowWhileMenuIsOpen(QWidget* window, QWidget* target)
+CloseWhileOpenResult closeWindowWhileMenuIsOpen(QWidget* window, QWidget* target)
 {
     return closeWindowWhileOpen(
         window,
-        [] { return qobject_cast<QMenu*>(QApplication::activePopupWidget()) != nullptr; },
+        []() -> QWidget* { return qobject_cast<QMenu*>(QApplication::activePopupWidget()); },
         [target] {
             const QPoint local(10, 10);
             QContextMenuEvent ev(QContextMenuEvent::Mouse, local, target->mapToGlobal(local));
@@ -133,7 +151,7 @@ class TstScopedChildWidget : public QObject {
 
 private slots:
 
-    // From Longpath tests/tst_scoped_child_widget.cpp:33-44 [@383f058]
+    // From Longpath tests/tst_scoped_child_widget.cpp:33-45 [@383f058]
     void normalScopeExitDestroysTheChild()
     {
         QWidget parent;
@@ -148,7 +166,7 @@ private slots:
         QVERIFY2(watch.isNull(), "The child outlived the scope");
     }
 
-    // From Longpath tests/tst_scoped_child_widget.cpp:46-63 [@383f058]
+    // From Longpath tests/tst_scoped_child_widget.cpp:47-66 [@383f058]
     void theParentMayTakeTheChildFirst()
     {
         QPointer<QMenu> watch;
@@ -173,7 +191,7 @@ private slots:
     // Der Halter ist zugleich die Auskunft "hat mein Elternteil das
     // ueberlebt?" — genau die Frage, die jede Stelle nach exec() stellt,
     // bevor sie wieder an `this` fasst.
-    // From Longpath tests/tst_scoped_child_widget.cpp:65-76 [@383f058]
+    // From Longpath tests/tst_scoped_child_widget.cpp:68-78 [@383f058]
     void theOwnerAnswersWhetherTheParentSurvived()
     {
         auto parent = std::make_unique<QWidget>();
@@ -183,7 +201,7 @@ private slots:
         QVERIFY2(!owner, "After the parent dies the owner must report empty");
     }
 
-    // From Longpath tests/tst_scoped_child_widget.cpp:78-87 [@383f058]
+    // From Longpath tests/tst_scoped_child_widget.cpp:80-89 [@383f058]
     void theChildStaysUsableWhileTheParentLives()
     {
         QWidget parent;
@@ -208,12 +226,13 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window.get()));
 
         QWidget* raw = window.release();  // the poll deletes it mid-menu
-        const bool sawMenu = closeWindowWhileMenuIsOpen(raw, dial);
+        const CloseWhileOpenResult run = closeWindowWhileMenuIsOpen(raw, dial);
         if (!watchWindow.isNull()) {
             delete watchWindow.data();
         }
-        QVERIFY2(sawMenu, "The dial's right-click menu never opened");
-        QVERIFY(watchWindow.isNull());
+        QVERIFY2(run.sawOpen, "The dial's right-click menu never opened");
+        QVERIFY2(run.windowDiedInLoop, "The window was not deleted while the menu was open");
+        QVERIFY2(run.openOneGone, "The menu outlived its window");
     }
 
     // NereusSDR: the same for the VFO flag's right-click menu, a
@@ -228,15 +247,42 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window.get()));
 
         QWidget* raw = window.release();  // the poll deletes it mid-menu
-        const bool sawMenu = closeWindowWhileMenuIsOpen(raw, flag);
+        const CloseWhileOpenResult run = closeWindowWhileMenuIsOpen(raw, flag);
         if (!watchWindow.isNull()) {
             delete watchWindow.data();
         }
-        QVERIFY2(sawMenu, "The VFO flag's right-click menu never opened");
-        QVERIFY(watchWindow.isNull());
+        QVERIFY2(run.sawOpen, "The VFO flag's right-click menu never opened");
+        QVERIFY2(run.windowDiedInLoop, "The window was not deleted while the menu was open");
+        QVERIFY2(run.openOneGone, "The menu outlived its window");
     }
+
+    // NereusSDR: the same for a heap menu freed by hand after exec(): the
+    // S-meter's right-click menu. Freeing it after the window took it along
+    // ended the process.
+    void sMeterSurvivesItsWindowClosingDuringTheMenu()
+    {
+        auto window = std::make_unique<QWidget>();
+        QPointer<QWidget> watchWindow(window.get());
+        auto* meter = new SMeterWidget(window.get());
+        meter->resize(200, 100);
+        window->resize(240, 140);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window.get()));
+
+        QWidget* raw = window.release();  // the poll deletes it mid-menu
+        const CloseWhileOpenResult run = closeWindowWhileMenuIsOpen(raw, meter);
+        if (!watchWindow.isNull()) {
+            delete watchWindow.data();
+        }
+        QVERIFY2(run.sawOpen, "The S-meter's right-click menu never opened");
+        QVERIFY2(run.windowDiedInLoop, "The window was not deleted while the menu was open");
+        QVERIFY2(run.openOneGone, "The menu outlived its window");
+        // deleteLater() on a freed menu would land here.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+
     // NereusSDR: the same for a dialog built on the stack and exec()ed: the
-    // gradient picker's colour dialog (double-click a stop), whose window is
+    // gradient picker's color dialog (double-click a stop), whose window is
     // closed while the dialog is open.
     void gradientPickerSurvivesItsWindowClosingDuringTheColorDialog()
     {
@@ -251,9 +297,9 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window.get()));
 
         QWidget* raw = window.release();  // the poll deletes it mid-dialog
-        const bool sawDialog = closeWindowWhileOpen(
+        const CloseWhileOpenResult run = closeWindowWhileOpen(
             raw,
-            [] { return qobject_cast<QColorDialog*>(QApplication::activeModalWidget()) != nullptr; },
+            []() -> QWidget* { return qobject_cast<QColorDialog*>(QApplication::activeModalWidget()); },
             [picker] {
                 const QPointF local(GradientPickerWidget::kPaddingPx, 12);
                 QMouseEvent ev(QEvent::MouseButtonDblClick, local, picker->mapToGlobal(local),
@@ -263,8 +309,9 @@ private slots:
         if (!watchWindow.isNull()) {
             delete watchWindow.data();
         }
-        QVERIFY2(sawDialog, "The picker's colour dialog never opened");
-        QVERIFY(watchWindow.isNull());
+        QVERIFY2(run.sawOpen, "The picker's color dialog never opened");
+        QVERIFY2(run.windowDiedInLoop, "The window was not deleted while the dialog was open");
+        QVERIFY2(run.openOneGone, "The color dialog outlived its window");
     }
 
     // NereusSDR: the owner forwards constructor arguments (a QMessageBox

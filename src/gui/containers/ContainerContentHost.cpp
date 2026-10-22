@@ -1368,7 +1368,7 @@ bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
                 mime->setData(ContainerArrangeController::kMimeType, m_arrange->mimeData(entry));
                 drag.setMimeData(mime);
                 drag.exec(Qt::MoveAction);
-                // The parent may have died in exec() and taken the dialog with it.
+                // The parent may have died in exec() and taken the drag with it.
                 if (!dragOwner) { return true; }
                 // IgnoreAction includes Escape, invalid/blocked targets and outside
                 // drops: cancellation never creates a pop-out or writes geometry.
