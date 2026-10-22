@@ -27,6 +27,12 @@ meters run 100 to 150 ms ahead of what he hears.
   each meter separately, and the lane's refresh, which the first read asks
   for, often landed in the middle. The S-meter then came from one refresh
   and the ADC and AGC readings from the next, 100 ms apart.
+- A read that finds the lane mid-write on all eight attempts returns the
+  last whole read and logs one warning; it never returns a torn one. No
+  test proves the mixed-refresh fix itself (the S-meter from one refresh
+  and the ADC and AGC readings from the next): the lane's timing cannot be
+  forced in a test. The tests check that the pump's readings and stamp
+  match one snapshot.
 - `SliceMeterPump::poll()` reads that snapshot and writes each slice's new
   `meterReadingNs` along with its readings. The no-reading clears (link not
   Connected, no channel, the cache not ready yet) are stamped with the

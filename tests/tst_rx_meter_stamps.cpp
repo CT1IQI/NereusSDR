@@ -32,6 +32,8 @@
 
 #include <QSignalSpy>
 
+#include <cmath>
+
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
 #include "core/meters/SliceMeterPump.h"
@@ -219,16 +221,40 @@ private slots:
         pump->poll();
         QTRY_VERIFY(ch->meterReadingReady());
         QTRY_VERIFY(ch->meterReadings().readNs > before);
-        pump->poll();
+        // The pump's poll asks the lane for its next refresh, and so does
+        // this test's read, so the lane may refresh between them. Poll and
+        // read until it did not: the test then holds the snapshot the pump
+        // wrote.
+        RxChannel::MeterReadings readings;
+        bool samePoll = false;
+        for (int attempt = 0; attempt < 50 && !samePoll; ++attempt) {
+            pump->poll();
+            readings = ch->meterReadings();
+            samePoll = readings.readNs == slice->meterReadingNs();
+            if (!samePoll) {
+                QTest::qWait(5);
+            }
+        }
+        QVERIFY(samePoll);
         const qint64 after = RxChannel::meterClockNs();
         const qint64 first = slice->meterReadingNs();
         QVERIFY2(first > before && first <= after,
                  qPrintable(QStringLiteral("%1 not in (%2, %3]").arg(first).arg(before).arg(after)));
-        // The readings the pump wrote are the snapshot's.
-        const RxChannel::MeterReadings readings = ch->meterReadings();
+        // The readings the pump wrote are the snapshot's: the ADC and AGC
+        // readings as read (AGC gain as Thetis shows it), and both signal
+        // readings with the same slice offset.
         QCOMPARE(slice->adcPeakDbfs(), readings.value(RxMeterType::AdcPeak));
+        QCOMPARE(slice->adcAverageDbfs(), readings.value(RxMeterType::AdcAvg));
         QCOMPARE(slice->agcGainDb(),
                  SliceMeterPump::thetisAgcGainReading(readings.value(RxMeterType::AgcGain)));
+        QCOMPARE(slice->agcPeakDb(), readings.value(RxMeterType::AgcPeak));
+        QCOMPARE(slice->agcAverageDb(), readings.value(RxMeterType::AgcAvg));
+        const double peakOffsetDb = slice->signalPeakDbm() - readings.value(RxMeterType::SignalPeak);
+        const double averageOffsetDb =
+            slice->signalAverageDbm() - readings.value(RxMeterType::SignalAvg);
+        QVERIFY2(std::abs(peakOffsetDb - averageOffsetDb) < 1e-9,
+                 qPrintable(QStringLiteral("peak offset %1, average offset %2")
+                                .arg(peakOffsetDb).arg(averageOffsetDb)));
         // The lane's next refresh moves the stamp.
         QTRY_VERIFY(ch->meterReadings().readNs > first);
         pump->poll();

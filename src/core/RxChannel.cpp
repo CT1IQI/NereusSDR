@@ -71,7 +71,9 @@
 //                 2026-10-15: n moved into fmsqScaleValue so
 //                 Setup > DSP > FM can show the number Thetis shows.
 //   2026-10-22 - RX meter stamps: the lane publishes each meter refresh
-//                 whole, with its read time (meterReadings, meterClockNs).
+//                 whole, with its read time (meterReadings, meterClockNs);
+//                 a read that finds it mid-write every time returns the
+//                 last whole one and warns once.
 //                 NereusSDR-original, by J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
@@ -3138,7 +3140,8 @@ RxChannel::MeterReadings RxChannel::meterReadings() const
         // The lane's write window holds no WDSP call, so a torn read is
         // rare and a retry finds the refresh whole.
         constexpr int kSnapshotAttempts = 8;
-        for (int attempt = 0; attempt < kSnapshotAttempts; ++attempt) {
+        bool whole = false;
+        for (int attempt = 0; attempt < kSnapshotAttempts && !whole; ++attempt) {
             const quint64 before = m_meterCacheSequence.load(std::memory_order_acquire);
             for (int index = 0; index < kRxMeterTypes; ++index) {
                 readings.values[static_cast<std::size_t>(index)] =
@@ -3146,12 +3149,21 @@ RxChannel::MeterReadings RxChannel::meterReadings() const
             }
             readings.readNs = m_meterCacheReadNs.load(std::memory_order_acquire);
             std::atomic_thread_fence(std::memory_order_acquire);
-            if ((before & 1U) == 0U
-                && m_meterCacheSequence.load(std::memory_order_relaxed) == before) {
-                break;
-            }
+            whole = (before & 1U) == 0U
+                && m_meterCacheSequence.load(std::memory_order_relaxed) == before;
         }
-        return readings;
+        const std::lock_guard<std::mutex> lock(m_lastMeterReadingsMutex);
+        if (whole) {
+            m_lastMeterReadings = readings;
+            return readings;
+        }
+        if (!m_tornMeterReadWarned.exchange(true)) {
+            qCWarning(lcDsp) << "RX meter readings on channel" << m_channelId
+                             << "found the receive lane mid-write" << kSnapshotAttempts
+                             << "times; the last whole read is used (warned once)";
+        }
+        // No whole read yet: the torn one, as getMeter's separate reads were.
+        return m_lastMeterReadings.value_or(readings);
     }
     for (int index = 0; index < kRxMeterTypes; ++index) {
         readings.values[static_cast<std::size_t>(index)] =

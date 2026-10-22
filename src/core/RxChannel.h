@@ -76,7 +76,8 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - RX meter stamps: meterReadings() returns every meter from
 //                 one lane refresh with the time the lane read them, on the
-//                 producer clock (meterClockNs). NereusSDR-original, by
+//                 producer clock (meterClockNs), or the last whole read
+//                 if every attempt finds the lane mid-write. NereusSDR-original, by
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
 // =================================================================
@@ -1158,6 +1159,8 @@ public:
     // never do. readNs is meterClockNs() as the lane finished reading WDSP,
     // 0 before its first refresh; with no lane (or on the lane) it is the
     // time of this call. Off the lane this asks for a refresh, as getMeter.
+    // If every attempt finds the lane mid-write, it returns the last whole
+    // read (and warns once), never a torn one.
     struct MeterReadings {
         static constexpr int kCount = static_cast<int>(RxMeterType::AgcAvg) + 1;
         std::array<double, kCount> values{};
@@ -1354,6 +1357,11 @@ private:
     // can tell a whole refresh from a torn one; and when it read WDSP.
     mutable std::atomic<quint64> m_meterCacheSequence{0};
     mutable std::atomic<qint64> m_meterCacheReadNs{0};
+    // The last whole read meterReadings returned, for a read that finds the
+    // lane mid-write on every attempt. The lane never takes this mutex.
+    mutable std::mutex m_lastMeterReadingsMutex;
+    mutable std::optional<MeterReadings> m_lastMeterReadings;
+    mutable std::atomic<bool> m_tornMeterReadWarned{false};
     // NNR as the lane last read it, and the accepted tuning (the lane writes
     // what WDSP accepted). Guarded by m_nnrMutex: read on the owner's
     // thread, written on the lane.
