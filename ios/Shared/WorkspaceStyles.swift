@@ -216,11 +216,14 @@ extension View {
     /// The root of everything presented: the app's root, and the content of
     /// every sheet, popover and full-screen cover, which do not inherit the
     /// root's environment. Every switch draws as the workspace switch (W7),
-    /// and the workspace accent is the tint, so a control that reads the
-    /// tint never falls back to the system blue (W6).
+    /// and the workspace accent for text is the tint, so a control that reads
+    /// the tint never falls back to the system blue (W6). The tint is
+    /// accentText, not accentFill: the tint reaches text buttons (a toolbar's
+    /// Done), and accentFill is for fills and marks only (spec section 10).
+    /// Every fill that wants accentFill sets it itself.
     func workspacePresentationRoot() -> some View {
         toggleStyle(WorkspaceSwitchStyle())
-            .tint(WorkspacePalette.accentFill)
+            .tint(WorkspacePalette.accentText)
     }
 
     /// A panel: kGlassPanelTop to kGlassPanelBot, rim kBorder, radius 10

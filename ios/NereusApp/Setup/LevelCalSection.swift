@@ -60,6 +60,7 @@ enum LevelCalSection {
                 }
                 HStack(spacing: 10) {
                     ProgressView(value: Double(model.percent), total: 100)
+                        .tint(WorkspacePalette.accentFill)
                         .accessibilityLabel("Level calibration progress")
                     Text("\(model.percent)%")
                         .font(.footnote.monospacedDigit().bold())
