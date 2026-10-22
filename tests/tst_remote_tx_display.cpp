@@ -1286,10 +1286,13 @@ void TstRemoteTxDisplay::txStateCarriesTheHighSwrState()
     QCOMPARE(state.highSwr(), true);
     QCOMPARE(state.swrWindBackLatched(), radio.swrProt().windBackLatched());
     QVERIFY(!changed.isEmpty());
-    // Protection off clears it.
+    // Protection off clears HighSWR; an engaged wind-back holds until MOX
+    // off, as in Thetis (console.cs:26134-26138 [v2.10.3.15]).
     radio.swrProt().setEnabled(false);
     radio.swrProt().ingest(50.0f, 30.0f, false);
     QVERIFY(!state.highSwr());
+    QVERIFY(state.swrWindBackLatched());
+    radio.swrProt().onMoxOff();
     QVERIFY(!state.swrWindBackLatched());
     // The window side: a plain apply of the Core's values.
     TransmitState window;

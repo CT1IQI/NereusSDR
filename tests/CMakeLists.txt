@@ -1749,6 +1749,12 @@ nereus_add_test(tst_am_modulation_analyzer)
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)
 
+# ── Quit is not refused while a pan or an applet floats (Longpath PR 83) ──
+# Runs the real queued QApplication::quit() in a child process with a
+# floating pan and a floating applet up; a refused quit trips the child's
+# watchdog.
+nereus_add_test(tst_floating_window_quit)
+
 # ── Phase 3R Task K1: MicProfileManager "RADE" factory preset ──
 # Verifies the NereusSDR-native "RADE" factory profile is seeded on
 # first launch and that its EQ-off / Leveler-on / ALC-off /
@@ -4400,6 +4406,12 @@ target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_
 #   RX channel 0 and TX channel 1 co-exist without aliasing.
 #   Channel ID: WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 with single-RX layout.
 nereus_add_test(tst_wdsp_engine_tx_channel)
+
+# -- MaxBin hold above 0 dBm: the detector's hold falls again after a very
+#    strong signal instead of creeping toward 0 dBm for good (Thetis
+#    #2681). Ported from Longpath PR 215 (tests/tst_maxbin_hold_decay.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_maxbin_hold_decay)
 
 # ── Phase 3M-3a-iii Task 20: WdspEngine DEXP DSP-instance lifecycle ──────────
 # The bench-failing fix: before Task 20, pdexp[1] was permanently nullptr
