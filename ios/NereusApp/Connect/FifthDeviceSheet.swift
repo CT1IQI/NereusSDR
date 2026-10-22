@@ -110,11 +110,11 @@ struct FifthDeviceSheet: View {
         let red = device.state == .transmitting
         return Button { Task { await flow.answerHeld() } } label: {
             HStack {
-                if flow.heldBusy { ProgressView().tint(.white) }
+                if flow.heldBusy { ProgressView().tint(workspaceForeground(red ? .danger : .glass)) }
                 Text(Self.buttonTitle(for: device))
             }
             .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(workspaceForeground(red ? .danger : .glass))
             .frame(maxWidth: .infinity)
             .frame(height: 48)
             .background(red ? ConnectChrome.WideButton.stopFill : ChromeColours.buttonOnBlue,

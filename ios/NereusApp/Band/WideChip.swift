@@ -32,12 +32,6 @@ enum WideChip {
     /// sections 3 W4 and 5).
     static let look: WorkspaceLook = .litAmber
 
-    /// The desktop pill's colours (SpectrumStatusOverlay's WIDE): its
-    /// ground, its word and its edge.
-    static let ground = Color(red: 0x60 / 255, green: 0x40 / 255, blue: 0x00 / 255)
-    static let text = Color(red: 0xFF / 255, green: 0xB8 / 255, blue: 0x00 / 255)
-    static let edge = Color(red: 0x90 / 255, green: 0x60 / 255, blue: 0x00 / 255)
-
     /// The pill that shows: 46 by 20 points, 56 by 24 in large type (the board's).
     static func pillSize(large: Bool) -> CGSize {
         large ? CGSize(width: 56, height: 24) : CGSize(width: 46, height: 20)

@@ -191,14 +191,10 @@ struct TxStageMeters: View {
         .accessibilityIdentifier("txStageMeters")
     }
 
-    static let reasonFill = rgb(0x14, 0x1C, 0x28)
-    static let reasonBorder = rgb(0x30, 0x40, 0x50)
-    static let reasonText = rgb(0xD4, 0xE2, 0xEE)
-    static let noteText = rgb(0x90, 0xA4, 0xB6)
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let reasonFill = ChromeColours.reason
+    static let reasonBorder = ChromeColours.reasonEdge
+    static let reasonText = ChromeColours.text
+    static let noteText = ChromeColours.caption
 }
 
 /// One stage: its name, its bar with the scale's marks under it, and its reading.
@@ -312,7 +308,7 @@ private struct TxStageRow: View {
         }
     }
 
-    static let nameColour = Color(red: 0xB0 / 255.0, green: 0xC0 / 255.0, blue: 0xD0 / 255.0)
-    static let dimmedValue = Color(red: 0xA8 / 255.0, green: 0xB8 / 255.0, blue: 0xC8 / 255.0)
-    static let redGround = Color(red: 0x1E / 255.0, green: 0x0E / 255.0, blue: 0x12 / 255.0)
+    static let nameColour = WorkspacePalette.titleText
+    static let dimmedValue = WorkspacePalette.titleText
+    static let redGround = ChromeColours.gaugeRedZone
 }

@@ -16,7 +16,7 @@ struct DisplaySheetStackRows: View {
 
     /// The board's colours: a greyed row's reason in amber, Reset's words in
     /// the accent blue.
-    static let reasonColour = Color(red: 0xD8 / 255.0, green: 0xA8 / 255.0, blue: 0x60 / 255.0)
+    static let reasonColour = WorkspacePalette.amberText
 
     var body: some View {
         SheetCaption("View:")

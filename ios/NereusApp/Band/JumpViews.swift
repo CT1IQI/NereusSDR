@@ -23,8 +23,8 @@ struct JumpBar: View {
     static let inset: CGFloat = 4
     static let sidewaysInset: CGFloat = 66
     static let height: CGFloat = 44
-    static let ground = Color(red: 10 / 255, green: 10 / 255, blue: 20 / 255).opacity(0.92)
-    static let edge = Color(red: 0x30 / 255, green: 0x40 / 255, blue: 0x50 / 255)
+    static let ground = ChromeColours.bar.opacity(0.92)
+    static let edge = ChromeColours.panelEdge
 
     /// The bar's width before it is drawn, for keeping the flags clear:
     /// "Back to your band" and the slice's words at their size.

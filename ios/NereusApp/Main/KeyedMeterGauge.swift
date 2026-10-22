@@ -46,7 +46,7 @@ struct KeyedMeterGauge: View {
         if let stage = sample.stage {
             context.fill(Path(CGRect(x: inner.minX + inner.width * stage.midAt, y: inner.minY,
                                      width: inner.width * (1 - stage.midAt), height: inner.height)),
-                         with: .color(Color(red: 0.12, green: 0.055, blue: 0.07)))
+                         with: .color(ChromeColours.gaugeRedZone))
         }
         if let fill = sample.position {
             zone(&context, inner, from: 0, to: min(fill, yellow), colour: ChromeColours.gaugeNormal)

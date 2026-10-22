@@ -13,12 +13,19 @@ differs from the header's value for the k<Name> it names, when its
 Longpath cite differs from the header's (on the token's line or the line
 above it), or when one of the desktop tokens the phone
 carries is missing.
+
+WorkspaceColoursCheckTest covers scripts/verify-ios-workspace-colours.py,
+the navy check: it fails on an old navy chrome color written in an app
+view unless its KEPT table lists that file and value as a data color.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +34,16 @@ from typing import Dict, List, Tuple
 PROJECT = Path(__file__).resolve().parents[2]
 HEADER = PROJECT / "src" / "gui" / "styles" / "WorkspacePalette.h"
 SWIFT = PROJECT / "ios" / "Shared" / "WorkspacePalette.swift"
+COLOURS_SCRIPT = PROJECT / "scripts" / "verify-ios-workspace-colours.py"
+
+
+def load_colours_check():
+    """scripts/verify-ios-workspace-colours.py as a module (its name has hyphens)."""
+    spec = importlib.util.spec_from_file_location("verify_ios_workspace_colours", COLOURS_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 # The desktop tokens the phone carries, by the phone's names.
 TOKENS = (
@@ -143,6 +160,85 @@ class WorkspacePaletteDriftTest(unittest.TestCase):
             findings = check(HEADER, copy)
             self.assertEqual(len(findings), 1, findings)
             self.assertIn("appBg cites", findings[0])
+
+
+
+class WorkspaceColoursCheckTest(unittest.TestCase):
+    """The navy check (scripts/verify-ios-workspace-colours.py, R-IOS-49)."""
+
+    VIEW = "ios/NereusApp/Band/SomeView.swift"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.module = load_colours_check()
+
+    def tree(self, folder: str, files: Dict[str, str]) -> Path:
+        root = Path(folder)
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return root
+
+    def test_real_tree_passes(self) -> None:
+        self.assertEqual(self.module.check(PROJECT), [])
+        result = subprocess.run([sys.executable, str(COLOURS_SCRIPT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("ios/ chrome is in the workspace look", result.stdout)
+
+    def test_navy_in_a_view_fails_with_file_and_line(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: "import SwiftUI\n\nlet edge = rgb(0x1A, 0x2A, 0x3A)\n"})
+            self.assertEqual(self.module.check(root, kept={}),
+                             ["FAIL " + self.VIEW + ":3: #1a2a3a"])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL " + self.VIEW + ":3: #1a2a3a", result.stdout)
+
+    def test_every_written_form_is_read(self) -> None:
+        text = ("let a = WorkspacePalette.rgb(0x0F0F1A)\n"
+                "let b = \"#00B4D8\"\n"
+                "let c = Color(red: 0x30 / 255, green: 0x40 / 255, blue: 0x50 / 255)\n"
+                "let d = Color(red: 15 / 255.0, green: 15 / 255.0, blue: 26 / 255.0).opacity(0.9)\n"
+                "let e = Color(red: 0, green: 1, blue: 0x88 / 255)\n"
+                "let f = WorkspacePalette.rgb(0x0C0C0E)\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}), [
+                "FAIL " + self.VIEW + ":1: #0f0f1a",
+                "FAIL " + self.VIEW + ":2: #00b4d8",
+                "FAIL " + self.VIEW + ":3: #304050",
+                "FAIL " + self.VIEW + ":4: #0f0f1a",
+                "FAIL " + self.VIEW + ":5: #00ff88",
+            ])
+
+    def test_kept_file_and_value_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: "let zone = rgb(0x1A, 0x2A, 0x3A)\n",
+                                      "ios/NereusApp/Band/Other.swift": "let edge = rgb(0x1A, 0x2A, 0x3A)\n"})
+            kept = {(self.VIEW, "#1a2a3a"): "meter zone"}
+            self.assertEqual(self.module.check(root, kept=kept),
+                             ["FAIL ios/NereusApp/Band/Other.swift:1: #1a2a3a"])
+
+    def test_tests_and_kit_are_not_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {
+                "ios/NereusApp/Tests/SomeTests.swift": "let edge = rgb(0x1A, 0x2A, 0x3A)\n",
+                "ios/NereusApp/UITests/SomeUITests.swift": "let edge = rgb(0x1A, 0x2A, 0x3A)\n",
+                "ios/NereusKit/Sources/Kit/Some.swift": "let edge = rgb(0x1A, 0x2A, 0x3A)\n",
+            })
+            self.assertEqual(self.module.check(root, kept={}), [])
+
+    def test_kept_entries_name_scanned_files_with_reasons(self) -> None:
+        for (path, value), reason in self.module.KEPT.items():
+            with self.subTest(path=path, value=value):
+                self.assertIn(value, self.module.NAVY)
+                self.assertTrue(reason.strip())
+                self.assertTrue((PROJECT / path).is_file(), path)
+                text = (PROJECT / path).read_text(encoding="utf-8")
+                found = {v for line in text.splitlines() for v in self.module.colours(line)}
+                self.assertIn(value, found, "a KEPT entry that no longer matches")
 
 
 if __name__ == "__main__":

@@ -191,12 +191,12 @@ struct VfoFlagView: View {
     /// The owner row's hairlines, the board's.
     static let ownerHairline = Color.white.opacity(0.14)
     /// Take control's outline and words on the owner row, the board's.
-    static let takeEdge = Color(red: 160 / 255, green: 190 / 255, blue: 220 / 255).opacity(0.55)
+    static let takeEdge = WorkspacePalette.titleText.opacity(0.55)
     static let takeText = ChromeColours.textBright
     static let offText = BandColours.txBadgeOffText
     static let transmitOnText = BandColours.txBadgeOnText
     static let transmitOnLine = BandColours.txBadgeOnBorder
-    static let bypassText = Color(red: 0xFF / 255, green: 0xCC / 255, blue: 0x44 / 255)
+    static let bypassText = ChromeColours.buttonOnAmberText // RX bypass on, lit amber (W3)
     /// A listened flag's dashed edge.
     static let listenedDash: [CGFloat] = [4, 3]
 
@@ -480,7 +480,7 @@ struct VfoFlagView: View {
     }
 
     /// The ring on the TX button the first-key refusal points at, the board's amber.
-    static let hintRing = Color(red: 0xDD / 255, green: 0xBB / 255, blue: 0)
+    static let hintRing = ChromeColours.noticeWarn
 
     // MARK: The owner row
 
@@ -532,7 +532,7 @@ struct VfoFlagView: View {
     }
 
     /// The owner row's words' colour, the board's.
-    static let ownerText = Color(red: 0xC8 / 255, green: 0xD8 / 255, blue: 0xE8 / 255)
+    static let ownerText = ChromeColours.text
 
     // MARK: The frequency
 

@@ -56,7 +56,7 @@ struct ReceiverTakenOverlay: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 26)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 10 / 255, green: 12 / 255, blue: 20 / 255).opacity(0.784))
+        .background(ChromeColours.cover)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("receiverTakenCover")
     }

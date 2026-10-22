@@ -49,6 +49,11 @@ enum ChromeColours {
     static let panel = P.panelBg // panel treatment's flat ground
     static let panelEdge = P.border
     static let scrim = Color.black.opacity(0.35)
+    /// The cover over a band that cannot be used now (link lost, receiver taken).
+    static let cover = P.statusBarBg.opacity(0.784)
+    /// A reason or note box on a panel, and its edge.
+    static let reason = P.glassBtnBot
+    static let reasonEdge = P.border
     static let titleTop = P.rgb(0x26262B)
     static let titleMiddle = P.rgb(0x26262B)
     static let titleBottom = P.glassBtnBot
@@ -114,5 +119,7 @@ enum ChromeColours {
     static let gaugeNormal = P.accentFill
     static let gaugeWarn = P.noticeWarn
     static let gaugeRed = P.gaugeDanger // W5: over range is not transmit
+    /// Kept (W2), a meter zone: the dark red ground of a stage meter past its middle.
+    static let gaugeRedZone = P.rgb(0x1E0E12)
     static let refusalText = P.keyedRim
 }

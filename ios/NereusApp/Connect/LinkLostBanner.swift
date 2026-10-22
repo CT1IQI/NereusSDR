@@ -97,7 +97,7 @@ struct LinkLostBanner: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 10 / 255, green: 12 / 255, blue: 20 / 255).opacity(0.784))
+        .background(ChromeColours.cover)
         .accessibilityElement(children: .contain)
     }
 
@@ -145,7 +145,7 @@ struct LinkLostBanner: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(go ? Color.white : ChromeColours.revokeText)
+                .foregroundStyle(go ? workspaceForeground(.glass) : ChromeColours.revokeText)
                 .padding(.horizontal, 14)
                 .frame(height: 38)
                 .background(go ? ChromeColours.buttonOnBlue : ChromeColours.revoke,

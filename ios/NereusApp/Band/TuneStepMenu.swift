@@ -66,5 +66,5 @@ struct TuneStepMenu: View {
     }
 
     /// The lit step, the board's `.tustep__item.is-on`.
-    private static let lit = Color(red: 0x1A / 255.0, green: 0x5C / 255.0, blue: 0xA8 / 255.0)
+    private static let lit = ChromeColours.buttonOnBlue // glass, a picked choice (W3)
 }

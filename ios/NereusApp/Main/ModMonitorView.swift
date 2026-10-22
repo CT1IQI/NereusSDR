@@ -267,19 +267,19 @@ struct ModMonitorView: View {
 
     // MARK: Colours (the desktop's palette)
 
-    static let reasonGround = Color(red: 0x14 / 255, green: 0x1C / 255, blue: 0x28 / 255)
-    static let whyText = Color(red: 0x90 / 255, green: 0xA4 / 255, blue: 0xB6 / 255)
-    static let chipGround = Color(red: 0x0F / 255, green: 0x24 / 255, blue: 0x36 / 255)
-    static let chipText = Color(red: 0x9A / 255, green: 0xD0 / 255, blue: 0xEC / 255)
-    static let doneText = Color(red: 0x80 / 255, green: 0xD0 / 255, blue: 0xA0 / 255)
+    static let reasonGround = ChromeColours.reason
+    static let whyText = ChromeColours.caption
+    static let chipGround = ChromeColours.buttonOnBlue
+    static let chipText = ChromeColours.toolbarOpenText
+    static let doneText = ChromeColours.linkUp
     static let offLamp = ModMonitorLamp.Colours(ground: ChromeColours.inset, border: ChromeColours.insetBorder,
-                                      text: Color(red: 0x40 / 255, green: 0x50 / 255, blue: 0x60 / 255))
+                                      text: ChromeColours.iconMuted)
     static let redLamp = ModMonitorLamp.Colours(ground: ChromeColours.txRed, border: ChromeColours.gaugeRed, text: .white)
     static let amberLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnAmber, border: ChromeColours.buttonOnAmberBorder,
                                         text: ChromeColours.buttonOnAmberText)
-    static let greenLamp = ModMonitorLamp.Colours(ground: Color(red: 0, green: 0x60 / 255, blue: 0x40 / 255),
-                                        border: Color(red: 0, green: 0xA0 / 255, blue: 0x60 / 255),
-                                        text: Color(red: 0, green: 1, blue: 0x88 / 255))
+    static let greenLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnGreen,
+                                        border: ChromeColours.buttonOnGreenBorder,
+                                        text: ChromeColours.buttonOnGreenText)
 
     static func lampColours(_ lamp: ModMonitorModel.Lamp) -> ModMonitorLamp.Colours {
         switch lamp {
@@ -351,16 +351,14 @@ struct ModMonitorSegment: View {
 
     private var foreground: Color {
         if disabled {
-            return chosen ? Color(red: 0x78 / 255, green: 0x90 / 255, blue: 0xA8 / 255)
-                : Color(red: 0x50 / 255, green: 0x60 / 255, blue: 0x70 / 255)
+            return chosen ? ChromeColours.textDim : ChromeColours.iconMuted
         }
         return chosen ? .white : ChromeColours.text
     }
 
     private var background: Color {
         if disabled {
-            return chosen ? Color(red: 0x17 / 255, green: 0x30 / 255, blue: 0x48 / 255)
-                : Color(red: 0x12 / 255, green: 0x1A / 255, blue: 0x24 / 255)
+            return chosen ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff
         }
         return chosen ? ChromeColours.buttonOnBlue : ChromeColours.button
     }
@@ -438,7 +436,7 @@ struct ModMonitorPeakBar: View {
             HStack {
                 Text(label)
                     .font(.system(size: font, weight: .semibold))
-                    .foregroundStyle(Color(red: 0xB0 / 255, green: 0xC0 / 255, blue: 0xD0 / 255))
+                    .foregroundStyle(ChromeColours.icon)
                 Spacer(minLength: 4)
                 Text("percent")
                     .font(.system(size: font))
@@ -530,8 +528,7 @@ struct ModMonitorScope: View {
                 drawTrace(context, rect)
             }
             context.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
-                           with: .color(vintage ? Color(red: 0x6A / 255, green: 0x6A / 255, blue: 0x78 / 255)
-                                        : ChromeColours.insetBorder), lineWidth: 1)
+                           with: .color(vintage ? ChromeColours.iconMuted : ChromeColours.insetBorder), lineWidth: 1)
         }
     }
 
@@ -549,7 +546,7 @@ struct ModMonitorScope: View {
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y(line, height)))
             path.addLine(to: CGPoint(x: width, y: y(line, height)))
-            context.stroke(path, with: .color(Color(red: 0x20 / 255, green: 0x30 / 255, blue: 0x40 / 255)), lineWidth: 1)
+            context.stroke(path, with: .color(ChromeColours.sliderTrack), lineWidth: 1)
         }
         for line in [posFlash, -negFlash] {
             var path = Path()
@@ -558,7 +555,7 @@ struct ModMonitorScope: View {
             context.stroke(path, with: .color(ChromeColours.gaugeRed.opacity(0.8)),
                            style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         }
-        let label = Color(red: 0x70 / 255, green: 0x80 / 255, blue: 0x90 / 255)
+        let label = ChromeColours.caption
         for (line, words) in [(100.0, "+100"), (0, "0"), (-100, "-100")] {
             context.draw(Text(words).font(.system(size: 9)).foregroundStyle(label),
                          at: CGPoint(x: 4, y: y(line, height) - 3), anchor: .bottomLeading)
@@ -731,7 +728,7 @@ struct ModMonitorAsymmetryBar: View {
             let scale = min(size.width / 22, size.height / 96)
             context.translateBy(x: (size.width - 22 * scale) / 2, y: (size.height - 96 * scale) / 2)
             context.scaleBy(x: scale, y: scale)
-            let label = Color(red: 0x80 / 255, green: 0x90 / 255, blue: 0xA0 / 255)
+            let label = ChromeColours.textDim
             context.draw(Text("Pos").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 5))
             context.draw(Text("Neg").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 91))
             let track = Path(roundedRect: CGRect(x: 6, y: 10, width: 10, height: 76), cornerRadius: 2)
@@ -740,7 +737,7 @@ struct ModMonitorAsymmetryBar: View {
             var zero = Path()
             zero.move(to: CGPoint(x: 4, y: 48))
             zero.addLine(to: CGPoint(x: 18, y: 48))
-            context.stroke(zero, with: .color(Color(red: 0x60 / 255, green: 0x70 / 255, blue: 0x80 / 255)), lineWidth: 1)
+            context.stroke(zero, with: .color(ChromeColours.textFaint), lineWidth: 1)
             let length = lit ? CGFloat(min(abs(value), 40) / 40 * 38) : 0
             if length > 0 {
                 let top = value >= 0 ? 48 - length : 48

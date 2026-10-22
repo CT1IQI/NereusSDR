@@ -19,10 +19,10 @@ struct StackNotice: View {
     static let pausedText = "Paused while transmitting"
 
     /// The board's colours: the notice's card and edge, the chip's.
-    static let card = Color(red: 0x16 / 255.0, green: 0x22 / 255.0, blue: 0x2F / 255.0)
-    static let cardEdge = Color(red: 0x2C / 255.0, green: 0x4A / 255.0, blue: 0x66 / 255.0)
-    static let chip = Color(red: 20 / 255.0, green: 30 / 255.0, blue: 44 / 255.0).opacity(0.92)
-    static let chipEdge = Color(red: 0x40 / 255.0, green: 0x58 / 255.0, blue: 0x70 / 255.0)
+    static let card = ChromeColours.sheet
+    static let cardEdge = ChromeColours.panelEdge
+    static let chip = ChromeColours.bar.opacity(0.92)
+    static let chipEdge = WorkspacePalette.borderMuted
 
     var body: some View {
         GeometryReader { proxy in

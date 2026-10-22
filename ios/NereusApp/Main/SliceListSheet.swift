@@ -196,26 +196,23 @@ struct SliceListSheet: View {
 
 /// The list's colours, the board's.
 enum SliceListStyle {
-    static let rowRule = rgb(0x1A, 0x2A, 0x3A)
-    static let whereEdge = rgb(0x30, 0x40, 0x50)
-    static let whereText = rgb(0x8A, 0xA8, 0xC0)
-    static let hereEdge = rgb(0x20, 0x50, 0x70)
-    static let radeMode = rgb(0xB0, 0x70, 0xFF)
-    static let refusedGround = rgb(0x1A, 0x14, 0x10)
-    static let refusedEdge = rgb(0x5A, 0x40, 0x20)
-    static let refusedText = rgb(0xFF, 0xCC, 0x66)
-    static let greyed = rgb(0x1A, 0x1A, 0x2A)
-    static let greyedEdge = rgb(0x2A, 0x30, 0x40)
-    static let greyedText = rgb(0x6A, 0x78, 0x88)
-    static let muted = rgb(0xCC, 0x22, 0x22)
-    static let mutedEdge = rgb(0xFF, 0x44, 0x44)
-    static let valueEdge = rgb(0x20, 0x30, 0x40)
-    static let modesBlock = rgb(0x0E, 0x16, 0x24)
-    static let nudge = rgb(0xFF, 0xD8, 0x4A)
+    private typealias P = WorkspacePalette
 
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let rowRule = P.borderSubtle
+    static let whereEdge = P.border
+    static let whereText = P.titleText
+    static let hereEdge = P.glassSelBorder
+    static let radeMode = P.rgb(0xB070FF) // kept (W2): the RADE mode's violet
+    // A refusal reads in the amber set.
+    static let refusedGround = P.amberBg
+    static let refusedEdge = P.amberBorder
+    static let refusedText = P.amberText
+    // MUTE lit, as the phone's other MUTE buttons (lit green, W3).
+    static let muted = P.litGreenMid
+    static let mutedEdge = P.litGreenRim
+    static let valueEdge = P.borderSubtle
+    static let modesBlock = P.panelBg
+    static let nudge = P.amberText
 }
 
 /// One of the list's buttons (`.sll-btn`): 44 points tall at least, the

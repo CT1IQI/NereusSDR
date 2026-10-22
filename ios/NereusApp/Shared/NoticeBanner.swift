@@ -211,8 +211,8 @@ struct NoticeBanner: View {
     }
 
     /// A greyed button, as the board's disabled Take control.
-    static let greyedFill = Color(red: 0x1A / 255, green: 0x1A / 255, blue: 0x2A / 255)
-    static let greyedEdge = Color(red: 0x2A / 255, green: 0x30 / 255, blue: 0x40 / 255)
+    static let greyedFill = ChromeColours.buttonOff
+    static let greyedEdge = ChromeColours.buttonOffBorder
 
     /// The first sentence in bold, as the board sets a notice.
     static func styled(_ text: String) -> Text {

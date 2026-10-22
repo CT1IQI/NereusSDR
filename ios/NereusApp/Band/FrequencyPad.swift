@@ -145,14 +145,11 @@ struct FrequencyPad: View {
     }
 
     // The board's `.tupad` colours.
-    private static let entryBackground = rgb(0x07, 0x0C, 0x14)
-    private static let entryBorder = rgb(0x2A, 0x4A, 0x60)
-    private static let key = rgb(0x1A, 0x26, 0x36)
-    private static let keyBorder = rgb(0x2A, 0x3A, 0x4C)
-    private static let go = rgb(0x1A, 0x5C, 0xA8)
-    private static let goBorder = rgb(0x3A, 0x7C, 0xC8)
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    // The entry is an inset, a key is raised, Enter is glass (W3).
+    private static let entryBackground = ChromeColours.inset
+    private static let entryBorder = ChromeColours.insetBorder
+    private static let key = ChromeColours.button
+    private static let keyBorder = ChromeColours.buttonBorder
+    private static let go = ChromeColours.buttonOnBlue
+    private static let goBorder = ChromeColours.buttonOnBlueBorder
 }
