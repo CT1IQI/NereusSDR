@@ -225,6 +225,49 @@ private slots:
         QCOMPARE(tuned.at(1).first().toDouble(), kCenterHz);
     }
 
+    // A drag tunes by the cursor's pixel travel since the press, so a view
+    // that re-centers between the press and the move (selecting a receiver
+    // from another stream re-centers the pan) does not retune by the jump.
+    void view_recenter_mid_drag_does_not_jump()
+    {
+        Pan p;
+        p.receiver(0, kCenterHz, 0, 3000, true);
+        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        const int x = xForHz(kCenterHz + 1500.0);
+        press(&p.sw, x);
+        p.sw.setFrequencyRange(kCenterHz + 25000.0, kBandwidthHz);
+        moveTo(&p.sw, x + 10);
+        release(&p.sw, x + 10);
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(tuned.first().first().toDouble(), kCenterHz + 10 * kHzPerPx);
+    }
+
+    // Without CTUN the view scrolls to keep the receiver 10% inside its
+    // edges, and the drag goes on by its travel across that scroll.
+    void scroll_margin_follows_the_drag_without_ctun()
+    {
+        Pan p;
+        p.sw.setVfoFrequency(kCenterHz);
+        p.sw.setCtunEnabled(false);   // re-centers the view on the VFO
+        QCOMPARE(p.sw.centerFrequency(), kCenterHz);
+        p.receiver(0, kCenterHz, 0, 3000, true);
+        QObject::connect(&p.sw, &SpectrumWidget::frequencyClicked, &p.sw,
+                         [&p](double hz) { p.sw.setVfoFrequency(hz); });
+        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        QSignalSpy panned(&p.sw, &SpectrumWidget::centerChanged);
+        const int x = xForHz(kCenterHz + 1500.0);
+        press(&p.sw, x);
+        moveTo(&p.sw, x + 350);   // 35 kHz: into the right-hand 10%
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(tuned.last().first().toDouble(), kCenterHz + 35000.0);
+        QCOMPARE(panned.count(), 1);
+        // The receiver sits 10% (8 kHz) in from the new right edge.
+        QCOMPARE(p.sw.centerFrequency(), kCenterHz + 35000.0 - 40000.0 + 8000.0);
+        moveTo(&p.sw, x + 360);
+        release(&p.sw, x + 360);
+        QCOMPARE(tuned.last().first().toDouble(), kCenterHz + 36000.0);
+    }
+
     // The hover cursor uses the press's hit test: the drag cursor over a
     // receiver, the cross off it.
     void hover_cursor_follows_the_grab()

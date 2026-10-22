@@ -9,7 +9,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-//                 (Claude Opus 5.5): the center line wins within its strip.
+//                 (Claude Opus 5.5): the center line wins within its strip;
+//                 a drag tunes by its pixel travel from the press.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): every receiver this pan shows can be
 //                 grabbed (AetherSDR's 8 px edge zones with a 6 px body,
@@ -12561,13 +12562,18 @@ SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
 }
 
 void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz,
-                                       int pressX, const QRect& specRect)
+                                       int pressX)
 {
     // From AetherSDR src/gui/SpectrumWidget.cpp:9966-9967, 10004 [@1e0718ad]:
     // m_vfoDragOffsetHz = xToMhz(mx) - the slice's frequency.
+    // NereusSDR keeps the receiver's frequency and the press column instead
+    // (2026-10-21), so the drag moves by the cursor's travel whatever the
+    // view does in between: a pan that re-centers under the press (a
+    // receiver from another stream being selected) does not retune by the
+    // jump.
     m_receiverDrag.sliceIndex = sliceIndex;
     m_receiverDrag.viaFlag = viaFlag;
-    m_receiverDrag.offsetHz = xToHz(pressX, specRect) - centerHz;
+    m_receiverDrag.pressHz = centerHz;
     m_receiverDrag.pressX = pressX;
     m_receiverDrag.moved = false;
     int step = m_stepHz;
@@ -12601,8 +12607,15 @@ void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
     if (flag && (flag->isLocked() || flag->isListening())) {
         return;
     }
+    // The receiver's frequency at the press plus the cursor's travel since,
+    // at the view's current Hz per pixel. Without CTUN the view scrolls to
+    // keep the receiver 10% inside its edges (setVfoFrequency); the drag
+    // goes on by its travel across that scroll rather than chasing the
+    // cursor's new place in the moved view.
+    const double hzPerPx = m_bandwidthHz / std::max(1, specRect.width());
     const double step = m_receiverDrag.stepHz;
-    const double hz = std::round((xToHz(mx, specRect) - m_receiverDrag.offsetHz) / step) * step;
+    const double hz = std::round((m_receiverDrag.pressHz
+                                  + (mx - m_receiverDrag.pressX) * hzPerPx) / step) * step;
     if (m_receiverDrag.viaFlag) {
         if (flag) {
             flag->tuneFromDrag(hz);
@@ -13102,7 +13115,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             }
         }
         beginReceiverDrag(grab.marker.flag ? grab.marker.sliceIndex : -1, viaFlag,
-                          grab.marker.centreHz, mx, specRect);
+                          grab.marker.centreHz, mx);
         m_draggingVfo = true;
         setCursor(Qt::SizeHorCursor);
         return;
@@ -16294,10 +16307,8 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
         if (!flagRef) {
             return;
         }
-        const QRect specRect = spectrumLayout().spectrum;
         const int pressX = mapFromGlobal(QPoint(pressGlobalX, 0)).x();
-        beginReceiverDrag(flagRef->sliceIndex(), true, flagRef->frequency(), pressX,
-                          specRect);
+        beginReceiverDrag(flagRef->sliceIndex(), true, flagRef->frequency(), pressX);
         m_flagDragActive = true;
     });
     connect(w, &VfoWidget::flagDragMoved, this, [this, flagRef](int globalX) {

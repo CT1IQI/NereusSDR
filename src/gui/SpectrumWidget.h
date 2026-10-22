@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): a drag keeps the receiver's press
+//                 frequency, not an offset against the press-time view.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): receiver grab hit test, drag offset
 //                 state and the wheel step accumulator.
@@ -4611,23 +4614,23 @@ private:
     // From AetherSDR src/gui/SpectrumWidget.cpp:9952 [@1e0718ad]
     static constexpr int kReceiverCenterGrabPx = 8;
 
-    // One drag-to-tune, from the spectrum or from a flag. The offset
-    // between the press point and the receiver's center is kept, so the
-    // receiver moves by the cursor's travel and never jumps to the cursor.
+    // One drag-to-tune, from the spectrum or from a flag. The receiver's
+    // frequency and the press column are kept, so the receiver moves by the
+    // cursor's pixel travel at the current Hz per pixel and never jumps to
+    // the cursor, nor by a view change mid-drag (2026-10-21).
     // A receiver other than the selected one is tuned through its own flag
     // (VfoWidget::tuneFromDrag), the path the flag's wheel uses.
     struct ReceiverDrag {
         int    sliceIndex{-1};   // -1: the pan's own VFO, no flag
         bool   viaFlag{false};
-        double offsetHz{0.0};
+        double pressHz{0.0};     // the receiver's frequency at the press
         int    pressX{0};
         int    stepHz{1};
         bool   moved{false};     // a move has left the press column
     };
     ReceiverDrag m_receiverDrag;
     bool m_flagDragActive{false};
-    void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz,
-                           int pressX, const QRect& specRect);
+    void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz, int pressX);
     void moveReceiverDrag(int mx, const QRect& specRect);
 
     // Wheel and trackpad steps for every wheel branch (2026-10-18).
