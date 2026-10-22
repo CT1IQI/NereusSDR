@@ -21,6 +21,9 @@
 //              kMaxFilterWidthHz and limitFiltersToSidebands, ported from
 //              Thetis console.cs ConstrainFilter [v2.10.3.15] by J.J. Boyd
 //              (KG4VCF), with AI-assisted transformation via Claude Code.
+// 2026-10-22 - rxAntennaLabelFor, the receive-label rule of
+//              refreshAntennasFromAlex on its own. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 // 2026-10-22 - meterReadingNs, when the Core measured the RX meter readings,
 //              declared last (rxMeterStampsVersion 1). J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
@@ -1627,6 +1630,14 @@ public slots:
     void refreshAntennasFromAlex(const NereusSDR::AlexController& alex,
                                  NereusSDR::Band band,
                                  const NereusSDR::SkuUiProfile* sku = nullptr);
+
+    // The receive-antenna label refreshAntennasFromAlex gives a slice on
+    // `band` (the SKU's RX-only label when the bypass input is chosen,
+    // otherwise ANT1..ANT3). Unlike RadioModel::receiveAntennaLabel it does
+    // not follow useTxAntForRx, as the slice's own refresh does not.
+    static QString rxAntennaLabelFor(const NereusSDR::AlexController& alex,
+                                     NereusSDR::Band band,
+                                     const NereusSDR::SkuUiProfile* sku = nullptr);
 
 signals:
     void nnrDiagnosticsRequested(int testMode, int outputMode);

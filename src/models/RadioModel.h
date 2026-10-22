@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
+//                share with when it tunes into their range (JJ's ruling
+//                2026-10-22), compared on the slice's new-band label.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - receiveAdcForStream; rejoin candidates compare the ADC and
+//                the receivers' own C-Tune pins. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -4155,6 +4162,11 @@ public:
     /// its front panel): the key is stopped with these words.
     static QString ampOperatedUnderKeyText();
     static constexpr char kAmpOperatedUnderKeyStopCode[] = "ampOperatedUnderKey";
+    /// PR 604: the SWR protection saw an open antenna while keyed and
+    /// dropped MOX; Thetis's checkAntennaWarning words
+    /// (console.cs:26177-26185 [v2.10.3.15]), for local and remote windows.
+    static QString openAntennaStopText();
+    static constexpr char kOpenAntennaStopCode[] = "openAntenna";
     /// Task 77 fix round 4: a SmartSDR `amplifier set <key>=<value>` for
     /// the amp model `model` ("PowerGeniusXL" or "TunerGeniusXL"), relayed
     /// to its own connection. A Power Genius operate=1 is held while the
@@ -5187,6 +5199,14 @@ public:
         handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
                           userAdc0Raw, userAdc1Raw, supplyRaw);
         m_forceTxForTest = false;
+    }
+
+    // PR 604 fix wave: the same handler as the radio's own telemetry,
+    // without the TX override above, so a test can prove a sample that
+    // arrives while not keyed (after an unkey) leaves the SWR protection
+    // alone.
+    void handlePaTelemetryAsReceivedForTest(quint16 fwdRaw, quint16 revRaw) {
+        handlePaTelemetry(fwdRaw, revRaw, 0, 0, 0, 0);
     }
 
     // Drives the steady clock handlePaTelemetry reads (nanoseconds), so a
@@ -6557,10 +6577,10 @@ private slots:
     // Connected to TransmitModel::audioVolumeChanged so every call to
     // setPowerUsingTargetDbm (drive slider, TUNE-on, TUN-off restore,
     // two-tone) and any future audio_volume mutator pumps the wire byte +
-    // IQ scalar uniformly.  Also re-pumped on TransmitModel::
-    // swrProtectFactorChanged (mirrors console.cs:26102-26109 [v2.10.3.13]
-    // `Audio.RadioVolume = Audio.RadioVolume` re-emission when SWRProtect
-    // changes mid-TX).
+    // IQ scalar uniformly.  Also re-pumped by handlePaTelemetry when the
+    // keyed SWR poll changes the protect factor with wind-back on (mirrors
+    // console.cs:26151-26158 [v2.10.3.15] `Audio.RadioVolume =
+    // Audio.RadioVolume`).
     //
     // Wire byte composition is byte-for-byte equivalent to Thetis
     // NetworkIO.cs:201-211 [v2.10.3.13]:
@@ -7328,6 +7348,26 @@ public:
     /// already owns a stream.
     bool bindSliceToStream(SliceModel* slice, double frequencyHz,
                            bool preferOwnStream = false, int requiredStream = -1);
+
+    /// JJ's ruling 2026-10-22: the other receivers `slice`, alone on
+    /// `currentStream` and retuning, may share with it (either way round;
+    /// SliceStreamAllocator::rejoinStream and canFoldDown decide geometry
+    /// and which receiver is freed). A receiver qualifies only when the
+    /// move changes nothing for anyone already on it: every slice there is
+    /// on the same pan, has the receive label `joinLabel` (the label `slice`
+    /// will have on its new band), and is not in Diversity; its DDC reads
+    /// the same ADC as `currentStream`'s (receiveAdcForStream, both known);
+    /// its C-Tune pin equals `currentStream`'s; and, where slices have
+    /// owners, the receiver's anchoring device is the slice's own.
+    QVector<int> rejoinCandidateStreams(const SliceModel* slice, int currentStream,
+                                        const QString& joinLabel) const;
+
+    /// The ADC the radio has been told `stream`'s DDC reads: the codec's
+    /// published assignment (adcForStream), which is what the wire carries
+    /// on either protocol, Protocol 1 Diversity's remapped routing word
+    /// included. -1 when it is not known: no codec has answered yet, or the
+    /// stream has no DDC.
+    int receiveAdcForStream(int stream) const;
 
     /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
     /// which is what decides whether that hardware DDC's samples are forwarded
@@ -8402,8 +8442,8 @@ private:
     bool m_isTuning{false};
 
     // m_lastAudioVolume: cache of the most recent value emitted by
-    //   TransmitModel::audioVolumeChanged.  Used by the swrProtectFactorChanged
-    //   re-pump path (mirrors Thetis console.cs:26108 [v2.10.3.13]
+    //   TransmitModel::audioVolumeChanged.  Used by handlePaTelemetry's
+    //   wind-back re-pump (mirrors Thetis console.cs:26157 [v2.10.3.15]
     //   `Audio.RadioVolume = Audio.RadioVolume` self-assign re-emission when
     //   SWRProtect changes mid-TX).  Updated only by pumpAudioVolume.
     double m_lastAudioVolume{0.0};
