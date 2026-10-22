@@ -68,6 +68,13 @@
 //   2026-10-15: setAnswererOpenDelayForTest(), a Core slow to see its own
 //               end open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: the lingering close ends after kCloseDrainDeadlineMs
+//               with nothing more handed to SCTP, not kCloseDrainDeadlineMs
+//               after the close, and at kCloseDrainCeilingMs at most: a
+//               backlog slower than five seconds to drain lost its last
+//               messages (the session.end) when the deadline dropped the
+//               peer mid-transfer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/DataChannelTransport.h"
@@ -95,6 +102,7 @@
 
 #include <chrono>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <deque>
@@ -1648,6 +1656,41 @@ QObject* lingerTarget()
     return context.target.get();
 }
 
+// The lingering connection's drain, checked every kCloseDrainDeadlineMs on
+// the application's thread. While SCTP keeps taking more of what was
+// queued (PeerConnection::bytesSent(), the payload bytes handed to usrsctp,
+// libdatachannel v0.24.5 src/impl/sctptransport.cpp:691-693, which hands
+// more over only as the far end acknowledges what it holds) the backlog
+// is still moving and the connection is kept; a check that finds no
+// progress, or the ceiling, lets it go. The deadline used to be fixed at
+// kCloseDrainDeadlineMs after the close, which dropped the peer, and every
+// message still queued behind a slow backlog, mid-transfer (two of four
+// delivered under load in tst_data_channel_transport).
+void checkLingerDrain(QObject* target, const std::shared_ptr<Linger>& linger,
+                      std::size_t sentBefore, const QElapsedTimer& sinceClose)
+{
+    const qint64 remainingMs = DataChannelTransport::kCloseDrainCeilingMs - sinceClose.elapsed();
+    const int waitMs = static_cast<int>(
+        std::min<qint64>(DataChannelTransport::kCloseDrainDeadlineMs, std::max<qint64>(remainingMs, 0)));
+    QTimer::singleShot(waitMs, target, [target, linger, sentBefore, sinceClose]() {
+        if (!linger->peer) {
+            return;
+        }
+        std::size_t sentNow = sentBefore;
+        try {
+            sentNow = linger->peer->bytesSent();
+        } catch (const std::exception&) {
+            // Closing what is already closing: no progress.
+        }
+        if (sentNow == sentBefore
+            || sinceClose.elapsed() >= DataChannelTransport::kCloseDrainCeilingMs) {
+            linger->release();
+            return;
+        }
+        checkLingerDrain(target, linger, sentNow, sinceClose);
+    });
+}
+
 // True when the connection was handed to a Linger; false when there is
 // nothing to wait for (the caller closes the peer at once).
 bool lingerUntilClosed(const std::shared_ptr<rtc::PeerConnection>& peer,
@@ -1681,9 +1724,12 @@ bool lingerUntilClosed(const std::shared_ptr<rtc::PeerConnection>& peer,
             }
         }, Qt::QueuedConnection);
     });
-    // The timer's copy holds the connection until the deadline at most.
-    QTimer::singleShot(DataChannelTransport::kCloseDrainDeadlineMs, target,
-                       [linger]() { linger->release(); });
+    // The timer's copy holds the connection until the drain stalls or
+    // the ceiling passes, whichever is first.
+    const std::size_t sentAtClose = peer->bytesSent();
+    QElapsedTimer sinceClose;
+    sinceClose.start();
+    checkLingerDrain(target, linger, sentAtClose, sinceClose);
     channel->resetCallbacks();
     channel->close();
     peer->close();

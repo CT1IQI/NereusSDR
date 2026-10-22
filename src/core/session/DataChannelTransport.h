@@ -82,6 +82,13 @@
 //   2026-10-15: setAnswererOpenDelayForTest(), a Core slow to see its own
 //               end open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: the lingering close ends after kCloseDrainDeadlineMs
+//               with nothing more handed to SCTP, not kCloseDrainDeadlineMs
+//               after the close, and at kCloseDrainCeilingMs at most: a
+//               backlog slower than five seconds to drain lost its last
+//               messages (the session.end) when the deadline dropped the
+//               peer mid-transfer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -192,11 +199,17 @@ public:
     /// anyone has signed in.
     static constexpr quint64 kMaxQueuedCaps = 4;
     /// closeLink() closes the channel and then the peer gracefully, and
-    /// the connection is kept until the peer reports it has closed, or for
-    /// at most this long, so what was already sent (a session.end behind a
-    /// backlog) is delivered even when the transport is deleted at once,
-    /// as a WebSocket's close waits for what it has written.
+    /// the connection is kept until the peer reports it has closed, so
+    /// what was already sent (a session.end behind a backlog) is delivered
+    /// even when the transport is deleted at once, as a WebSocket's close
+    /// waits for what it has written. The connection is let go sooner
+    /// when nothing more has been handed to SCTP for this long (the far
+    /// end has stopped taking it), and at kCloseDrainCeilingMs after the
+    /// close in any case. A backlog that is still moving is not cut off
+    /// at this deadline: that lost the messages behind it.
     static constexpr int kCloseDrainDeadlineMs = 5000;
+    /// The longest a closed connection is kept while its backlog drains.
+    static constexpr int kCloseDrainCeilingMs = 60000;
 
     struct Options {
         Role role = Role::Offerer;
