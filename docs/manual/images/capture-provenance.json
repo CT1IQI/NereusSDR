@@ -16,25 +16,25 @@
     },
     {
       "file": "iphone-shared-slices-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/fix-wave-shots/fw-shots-iphone17/listening.png (SeveralDevicesScreenTests, iPhone 17 simulator, 2026-10-22 fix-wave recapture after the final review)",
-      "sha256": "25ce33d7dd66053fd4f1fd1befa3bb8892a918d303bb21cf0c2ca716c8f2522e",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/listening.png (SeveralDevicesScreenTests, iPhone 17 simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "7fcdf3dd2f2a5e58c6f518f3209279cc82d8d94696ee00f0a45014dd35b6a6a2",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "e20d70b38 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-sound-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-a-shots/fa-shots-iphone18pm/sound-panel.png (SoundPanelUITests, iPhone 18 Pro Max simulator, 2026-10-22 recapture after the re-review: switch rows greyed once, output row at radius 7)",
-      "sha256": "fb4783f5164b31a43a13cb644acb06351b7b365b282e30261258163f333d98e8",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone18pm/sound-panel.png (SoundPanelUITests, iPhone 18 Pro Max simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "c1a1be22a51d8793f0d6ff6af7cd8dd061b4b31c025b42fc645cebbb5034a94e",
       "dimensions": [
         1320,
         2868
       ],
-      "build": "fb8cebe45 (claude/ios-workspace-look)",
+      "build": "d3207d2bb (claude/ios-workspace-look)",
       "kind": "full-app-XCUIApplication",
       "state": "Simulator route, without live Core audio"
     },
@@ -52,25 +52,25 @@
     },
     {
       "file": "iphone-spot-hub-landscape-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/fix-wave-shots/fw-shots-iphone17/tools-spot-hub-landscape.png (ToolsPagesShotTests, iPhone 17 simulator, 2026-10-22 fix-wave recapture after the final review)",
-      "sha256": "721a4f0c579087e9614f3b6254e4c82302102c274d1102301f931f8ef1569911",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/tools-spot-hub-landscape.png (ToolsPagesShotTests, iPhone 17 simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "db13d885286f8e8e83e17e8d0867da2ddb0e41a448b4302a0562030a83c769f4",
       "dimensions": [
         2622,
         1206
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "e20d70b38 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-devices-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/task-9-shots/t9-shots-iphone17-switch/setup-devices.png (SetupRenderingTests, iPhone 17 simulator, 2026-10-21 workspace-look recapture)",
-      "sha256": "eb392fbb3d4112ecb500f474b41cf92a80f0d057d3af6473e4b7f1b63ca71206",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/setup-devices.png (SetupRenderingTests, iPhone 17 simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "6642d9a749e3c4b6958a22e936a59bb45fe171832d92471c9ceb9549fcf50946",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "0408a09ae (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "e20d70b38 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
@@ -100,37 +100,37 @@
     },
     {
       "file": "iphone-radio-landscape-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/fix-wave-shots/fw-shots-iphone17/radio-tab-landscape.png (RadioTabTests, iPhone 17 simulator, 2026-10-22 fix-wave recapture after the final review)",
-      "sha256": "66e861e0439ba5da3ec1d8581094324e93d8925e359bfff4b7f3f08d63a2c07f",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/radio-tab-landscape.png (RadioTabTests, iPhone 17 simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "d12da1972c0351609b249e24033f6e8d21a6fd35d0b38f777a5145bcbde8eb96",
       "dimensions": [
         2622,
         1206
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "e20d70b38 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "iphone-mic-muted-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/fix-wave-shots/fw-shots-iphone17/mic-muted-portrait.png (TxStageMetersTests, iPhone 17 simulator, 2026-10-22 fix-wave recapture after the final review)",
-      "sha256": "c90c24fdebd8d1a91505e47327f2376155288911f1196556957c5d1f20b14d3c",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/mic-muted-portrait.png (TxStageMetersTests, iPhone 17 simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "6253d0a138f60b8d6efa452862a4306921484cb90b4212046f14283504013c59",
       "dimensions": [
         1206,
         2622
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "e20d70b38 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; synthetic waterfall where present"
     },
     {
       "file": "ipad-applet-column-original.png",
-      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/task-9-shots/t9-shots-ipad13/native-txpanel-ipad-full-column.png (TxPanelUITests, iPad Pro 13-inch (M5) simulator, 2026-10-21 workspace-look recapture)",
-      "sha256": "ff6abf61763b57c201616ac9d2d0efcc92cd4c3db64eb1e5c5e6433b8eb36b3e",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-ipad13/native-txpanel-ipad-full-column.png (TxPanelUITests, iPad Pro 13-inch (M5) simulator, 2026-10-22 recapture after the W11 radii and the second re-review)",
+      "sha256": "f9491a9732536c900174569367bd9ddf2471fd911581f029766aa944f7d14278",
       "dimensions": [
         2064,
         2752
       ],
-      "build": "4ff934ec0 (claude/ios-workspace-look; app source as cdd829608)",
+      "build": "d3207d2bb (claude/ios-workspace-look)",
       "kind": "full-app-XCUIApplication",
       "state": "Test scenario, missing Core readings; layout illustration only"
     },

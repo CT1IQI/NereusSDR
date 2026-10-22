@@ -119,7 +119,10 @@ review's fixes (the workspace switch in every presentation, accent text and
 the 7 and 10 radii), all of them except Devices were recaptured again from
 branch `claude/ios-workspace-look` at `45c52b2dd`; Devices did not change. The two
 Sound images were recaptured once more at `fb8cebe45`, after the re-review
-(the Sound switch rows greyed once, the output row's corner at 7). [Capture provenance](capture-provenance.json)
+(the Sound switch rows greyed once, the output row's corner at 7). After the
+7 and 10 radii (W11), Shared slices, Sound, Spot Hub, Devices, Radio, Mic muted
+and the iPad column were recaptured again on 22 October: the iPhone 17 images
+at `e20d70b38`, Sound and the iPad column at `d3207d2bb`. [Capture provenance](capture-provenance.json)
 records each image's test, hash and build. **Sound** is a screenshot of the full running app driven by
 `XCUIApplication`. The other phone images render the application’s actual
 SwiftUI screens in a simulator window with test services or simulated Core
@@ -141,7 +144,8 @@ radio telemetry, pairing or RF transmission.
 
 [ipad-applet-column-original.png](ipad-applet-column-original.png) is a full-app
 `XCUIApplication` screenshot by `TxPanelUITests` on an iPad Pro 13-inch (M5)
-simulator, recaptured on 21 October 2026 at `4ff934ec0` in the workspace look. It shows
+simulator, recaptured on 21 October 2026 at `4ff934ec0` in the workspace look and
+again on 22 October at `d3207d2bb` after the 7 and 10 radii. It shows
 the applet-column arrangement in a test scenario with unavailable Core
 readings, so it illustrates layout only. Redundant dim TX-panel captures are
 not used as distinct operating states.
