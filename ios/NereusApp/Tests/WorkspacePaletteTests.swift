@@ -79,7 +79,8 @@ struct WorkspacePaletteTests {
     /// greyed it is raised (plan call 2), and a greyed lit button is raised too.
     @Test func panelButtonsDrawTheirTreatments() {
         let lit: [(PanelButton.Style, WorkspaceLook)] = [(.blue, .glass), (.dsp, .litGreen),
-                                                         (.amber, .litAmber), (.red, .keyed)]
+                                                         (.amber, .litAmber), (.red, .danger),
+                                                         (.txAntenna, .keyed)]
         for (style, look) in lit {
             #expect(PanelButton.look(style: style, lit: true, disabled: false) == look)
             #expect(PanelButton.look(style: style, lit: false, disabled: false) == .raised)

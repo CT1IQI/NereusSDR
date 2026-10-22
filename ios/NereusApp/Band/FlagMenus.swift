@@ -246,7 +246,7 @@ struct FlagAntennaMenu: View {
             }
             section("TX antenna", colour: BandColours.txAntenna)
             subsection("Main TX/RX")
-            grid(modes.txAntennas, style: .red, reason: modes.txAntennaReason, prefix: "flagTx") {
+            grid(modes.txAntennas, style: .txAntenna, reason: modes.txAntennaReason, prefix: "flagTx") {
                 modes.selectTxAntenna($0)
             }
             if let reason = modes.txAntennaReason {

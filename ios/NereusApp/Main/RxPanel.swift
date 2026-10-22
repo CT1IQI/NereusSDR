@@ -257,8 +257,11 @@ struct PanelButton: View {
         case blue
         /// A running function (a DSP button, SPEAKERS and PHONES): lit green.
         case dsp
-        /// TUNE and MOX, keyed while on the air; the TX antenna (W5).
+        /// TUNE, MOX, 2-Tone and the tuner's TUNE: the danger set when lit,
+        /// as the desktop's redCheckedStyle lights them.
         case red
+        /// The chosen TX antenna marks transmit (W5): the keyed look.
+        case txAntenna
         /// RIT and XIT, lit amber (the Modes tab); RX bypass on transmit, as
         /// the desktop flag lights BYPS in yellow.
         case amber
@@ -319,6 +322,11 @@ struct PanelButton: View {
         case .amber:
             return .litAmber
         case .red:
+            // From NereusSDR src/gui/applets/TxApplet.cpp:613-627 (TUNE, MOX) and
+            // src/gui/StyleConstants.h:156-161 redCheckedStyle: kRedBg, kRedText,
+            // kRedBorder, the danger set.
+            return .danger
+        case .txAntenna:
             return .keyed
         }
     }
