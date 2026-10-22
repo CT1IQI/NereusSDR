@@ -99,8 +99,8 @@ struct SpotDetailsSheet: View {
                         .foregroundStyle(reason == nil ? Color.white : ChromeColours.buttonOffText)
                         .frame(maxWidth: .infinity, minHeight: 40)
                         .background(reason == nil ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff,
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                             .strokeBorder(reason == nil ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonOffBorder,
                                           lineWidth: 1))
                         .contentShape(Rectangle())
@@ -117,8 +117,7 @@ struct SpotDetailsSheet: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(ChromeColours.text)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                        .background { WorkspaceFace(.raised) }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -132,8 +131,8 @@ struct SpotDetailsSheet: View {
         .onChange(of: spot.id) { _, _ in beamSent = false }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(SpotColours.sheet.opacity(0.97), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SpotColours.sheetBorder, lineWidth: 1))
+        .background(SpotColours.sheet.opacity(0.97), in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(SpotColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.6), radius: 15, y: 12)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("spotDetails")

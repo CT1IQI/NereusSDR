@@ -39,10 +39,10 @@ struct SliceListSheet: View {
             }
         }
         .background(ChromeColours.sheet)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 14, y: 10)
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(SliceListModel.title)
         .accessibilityIdentifier("sliceList")
@@ -153,8 +153,8 @@ struct SliceListSheet: View {
             }
         }
         .padding(10)
-        .background(SliceListStyle.refusedGround, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SliceListStyle.refusedEdge, lineWidth: 1))
+        .background(SliceListStyle.refusedGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(SliceListStyle.refusedEdge, lineWidth: 1))
         .padding(.top, 10)
     }
 
@@ -314,8 +314,8 @@ struct YourVolumeRow: View {
                 .font(.system(size: large ? 19 : 16))
                 .foregroundStyle(level.muted ? Color.white : ChromeColours.text)
                 .frame(width: 44, height: 44)
-                .background(level.muted ? SliceListStyle.muted : ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(level.muted ? SliceListStyle.muted : ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(level.muted ? SliceListStyle.mutedEdge : ChromeColours.buttonBorder, lineWidth: 1))
                 .contentShape(Rectangle())
         }
@@ -367,8 +367,8 @@ struct YourVolumeRow: View {
             .font(.system(size: large ? 19 : 12).monospacedDigit())
             .foregroundStyle(ChromeColours.text)
             .frame(maxWidth: .infinity, minHeight: large ? 32 : 28)
-            .background(ChromeColours.bar, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(SliceListStyle.valueEdge, lineWidth: 1))
+            .background(ChromeColours.bar, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(SliceListStyle.valueEdge, lineWidth: 1))
             .accessibilityHidden(true)
     }
 }
@@ -502,8 +502,8 @@ private struct SliceListRow: View {
                     .foregroundStyle(lit ? colour : ChromeColours.text)
                     .padding(.horizontal, 8)
                     .frame(minWidth: 88, minHeight: large ? 30 : 26)
-                    .background(lit ? Color.clear : ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                    .background(lit ? Color.clear : ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(lit ? colour : ChromeColours.buttonBorder, lineWidth: 1))
                     .padding(.top, 6)
             }

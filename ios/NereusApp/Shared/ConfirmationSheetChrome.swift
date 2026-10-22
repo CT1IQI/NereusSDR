@@ -79,8 +79,8 @@ enum ConfirmationSheetChrome {
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(rowEdge, lineWidth: 1))
+            .background(rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(rowEdge, lineWidth: 1))
             .accessibilityElement(children: .combine)
         }
 
@@ -121,8 +121,8 @@ enum ConfirmationSheetChrome {
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 12)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(rowEdge, lineWidth: 1))
+            .background(rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(rowEdge, lineWidth: 1))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(label), from \(from) to \(to)")
         }
@@ -156,8 +156,8 @@ enum ConfirmationSheetChrome {
                 }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
-                .background(picked ? pickedFill : rowFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(picked ? pickedFill : rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(picked ? ConfirmationSheetChrome.picked : rowEdge, lineWidth: 1))
                 .opacity(enabled ? 1 : 0.55)
                 .contentShape(Rectangle())

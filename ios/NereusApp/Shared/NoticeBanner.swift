@@ -164,8 +164,8 @@ struct NoticeBanner: View {
             content
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
-                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                 .contentShape(Rectangle())
                 .onTapGesture { close() }
                 .accessibilityElement(children: .contain)
@@ -190,8 +190,8 @@ struct NoticeBanner: View {
                 .padding(.vertical, 4)
                 .frame(minHeight: control ? 44 : 36)
                 .background(unavailable == nil ? ChromeColours.buttonOnBlue : Self.greyedFill,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(unavailable == nil ? ChromeColours.buttonOnBlueBorder : Self.greyedEdge, lineWidth: 1))
         }
         .buttonStyle(.plain)

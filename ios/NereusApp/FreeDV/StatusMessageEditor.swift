@@ -36,8 +36,8 @@ struct StatusMessageEditor: View {
                 .onSubmit { send(text) }
                 .padding(.horizontal, 8)
                 .frame(minHeight: 40)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                 .disabled(reason != nil)
                 .accessibilityIdentifier("freedv.status.text")
             HStack(spacing: 8) {
@@ -88,8 +88,8 @@ struct StatusMessageEditor: View {
                     .accessibilityIdentifier("freedv.status.saved.\(index)")
                 }
             }
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
             if let note = freedv.note {
                 AccessoryChrome.Refusal(text: note) { freedv.note = nil }
             } else if let reason {

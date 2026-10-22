@@ -40,9 +40,7 @@ struct ReceiverTakenOverlay: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 22)
                         .frame(height: 44)
-                        .background(ChromeColours.buttonOnBlue, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(ChromeColours.buttonOnBlueBorder, lineWidth: 1))
+                        .background { WorkspaceFace(.glass) }
                 }
                 .buttonStyle(.plain)
                 .disabled(notice.takingBack)

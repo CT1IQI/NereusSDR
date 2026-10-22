@@ -16,7 +16,8 @@ carries is missing.
 
 WorkspaceColoursCheckTest covers scripts/verify-ios-workspace-colours.py,
 the navy check: it fails on an old navy chrome color written in an app
-view unless its KEPT table lists that file and value as a data color.
+view unless its KEPT table lists that file and value as a data color, and
+on a corner radius written as a number unless KEPT_RADII lists it (W11).
 """
 
 from __future__ import annotations
@@ -313,6 +314,63 @@ class WorkspaceColoursCheckTest(unittest.TestCase):
                 text = (PROJECT / path).read_text(encoding="utf-8")
                 found = {v for line in text.splitlines() for v in self.module.colours(line)}
                 self.assertIn(value, found, "a KEPT entry that no longer matches")
+
+    def test_literal_corner_on_chrome_fails(self) -> None:
+        text = ("Text(\"Squelch\").background(fill, in: RoundedRectangle(cornerRadius: 4))\n"
+                "Text(\"Go\").cornerRadius(3)\n"
+                "layer.cornerRadius = 6\n"
+                "let path = Path(roundedRect: rect, cornerRadius: 2.5)\n"
+                "Text(\"Done\").background { WorkspaceFace(.raised, radius: 5) }\n"
+                "VStack {}.workspacePanel(radius: 12)\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={}), [
+                "FAIL " + self.VIEW + ":1: cornerRadius 4",
+                "FAIL " + self.VIEW + ":2: cornerRadius 3",
+                "FAIL " + self.VIEW + ":3: cornerRadius 6",
+                "FAIL " + self.VIEW + ":4: cornerRadius 2.5",
+                "FAIL " + self.VIEW + ":5: cornerRadius 5",
+                "FAIL " + self.VIEW + ":6: cornerRadius 12",
+            ])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL " + self.VIEW + ":1: cornerRadius 4", result.stdout)
+
+    def test_token_corners_pass(self) -> None:
+        text = ("Text(\"Squelch\").background(fill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))\n"
+                "VStack {}.background(fill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))\n"
+                "let track = WorkspaceFace(.glass, radius: size.height / 2)\n"
+                "Text(\"Go\").background { WorkspaceFace(.raised) }.shadow(color: .black, radius: 14, y: 10)\n"
+                "VStack {}.workspacePanel()\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={}), [])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_kept_corner_passes_up_to_its_count(self) -> None:
+        bar = "context.fill(Path(roundedRect: bar, cornerRadius: 2), with: ground)\n"
+        kept = {(self.VIEW, "2"): (1, "meter bar")}
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: bar})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii=kept), [])
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: bar + "Text(\"Go\").background(fill, in: RoundedRectangle(cornerRadius: 2))\n"})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii=kept), [
+                "FAIL " + self.VIEW + ":1: cornerRadius 2",
+                "FAIL " + self.VIEW + ":2: cornerRadius 2",
+            ])
+
+    def test_kept_radii_entries_match_the_tree(self) -> None:
+        for (path, value), (count, reason) in self.module.KEPT_RADII.items():
+            with self.subTest(path=path, value=value):
+                self.assertTrue(reason.strip())
+                self.assertTrue((PROJECT / path).is_file(), path)
+                text = (PROJECT / path).read_text(encoding="utf-8")
+                found = [v for line in text.splitlines() for v in self.module.radii(line) if v == value]
+                self.assertEqual(len(found), count, "a KEPT_RADII count that no longer matches")
 
 
 if __name__ == "__main__":

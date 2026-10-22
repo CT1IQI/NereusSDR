@@ -313,8 +313,8 @@ struct TxPanel: View {
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(editable ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(editable ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
                 }
                 .disabled(!editable)
@@ -562,8 +562,8 @@ struct TxPanel: View {
                     .foregroundStyle(accessory.operate ? .white : ChromeColours.text)
                     .frame(minWidth: 96, minHeight: 44)
                     .background(accessory.operate ? ChromeColours.operateOn : ChromeColours.operateOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(accessory.operate ? ChromeColours.operateOnBorder : ChromeColours.operateOffBorder,
                                       lineWidth: 1))
             }
@@ -651,7 +651,7 @@ private struct TxSwrGauge: View {
                                 .foregroundStyle(ConnectChrome.warn)
                                 .padding(.horizontal, 8)
                                 .frame(minHeight: 44)
-                                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 6))
+                                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                                 .contentShape(Rectangle())
                         }
                             .buttonStyle(.plain)

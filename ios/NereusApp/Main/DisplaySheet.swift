@@ -215,8 +215,7 @@ struct DisplaySheet: View {
                     .foregroundStyle(ChromeColours.text)
                     .padding(.horizontal, 12)
                     .frame(minWidth: 88, minHeight: 36)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .background { WorkspaceFace(.raised) }
             }
             .accessibilityLabel("Palette")
             .accessibilityValue(model.paletteName ?? CatalogFeed.needsNewerCoreText)

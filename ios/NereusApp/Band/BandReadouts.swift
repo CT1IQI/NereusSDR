@@ -94,7 +94,7 @@ struct BandReadouts: View {
             .foregroundStyle(colour)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
-            .background(background, in: RoundedRectangle(cornerRadius: 3))
+            .background(background, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
             .padding(6)
             .frame(width: max(rect.width, 0), height: max(rect.height, 0), alignment: alignment)
             .offset(x: rect.minX, y: rect.minY)
@@ -111,7 +111,7 @@ struct BandReadouts: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(minWidth: 56, minHeight: 32)
-                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 4))
+                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
