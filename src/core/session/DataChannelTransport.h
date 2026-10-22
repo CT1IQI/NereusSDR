@@ -89,6 +89,9 @@
 //               messages (the session.end) when the deadline dropped the
 //               peer mid-transfer. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22: setCloseDrainTimingForTest(), lingeringPeerCountForTest();
+//               kCloseDrainCeilingMs says what backlog it covers. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -209,6 +212,13 @@ public:
     /// at this deadline: that lost the messages behind it.
     static constexpr int kCloseDrainDeadlineMs = 5000;
     /// The longest a closed connection is kept while its backlog drains.
+    /// A backlog that has stopped moving is let go at the deadline above,
+    /// so this bounds only one that is still moving, slowly: 60 s carries
+    /// about 7.5 MB at 1 Mbit/s, close to one message at the desktop's cap
+    /// (StationClient::kMaxIncomingMessageBytes, 8 MiB), or about 1.9 MB at
+    /// 256 kbit/s, six 300 KiB settings snapshots, over a slow relayed or
+    /// cellular path. What it costs is one closed connection (its socket,
+    /// and a relay allocation when relayed) held that long at most.
     static constexpr int kCloseDrainCeilingMs = 60000;
 
     struct Options {
@@ -297,6 +307,13 @@ public:
     /// live on exists. The application's teardown deletes it; one left
     /// after an application has gone is a leak.
     static bool lingerTargetExistsForTest();
+    /// Test seam: the drain deadline and ceiling a lingering close uses
+    /// instead of kCloseDrainDeadlineMs and kCloseDrainCeilingMs (0: the
+    /// constant). Read when each drain check is scheduled.
+    static void setCloseDrainTimingForTest(int deadlineMs, int ceilingMs);
+    /// Test seam: how many closed connections are held while their
+    /// backlog drains.
+    static int lingeringPeerCountForTest();
     /// The ICE settings it was started with, the relay included once known.
     std::optional<IceConfiguration> iceConfiguration() const { return m_options.ice; }
     /// The ICE settings the session's media connection uses (the Task 28

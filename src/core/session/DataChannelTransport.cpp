@@ -75,6 +75,11 @@
 //               messages (the session.end) when the deadline dropped the
 //               peer mid-transfer. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22: setCloseDrainTimingForTest() and
+//               lingeringPeerCountForTest(), so the stalled-drain and
+//               ceiling releases are tested; closeLink()'s comment names
+//               all three ends of the hold. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/DataChannelTransport.h"
@@ -1244,9 +1249,11 @@ void DataChannelTransport::closeLink(const QString& reason)
     m_closing = true;
     qCInfo(lcControlChannel) << "Closing the control connection:" << reason;
     // Review Minor 7: the channel and then the peer close gracefully, and
-    // the connection is held on its own until the peer has closed (or for
-    // kCloseDrainDeadlineMs), so a transport deleted straight after this
-    // still delivers what it sent (StationServer::dropPeer's session.end).
+    // the connection is held on its own until the peer has closed, until
+    // nothing more has been handed to SCTP for kCloseDrainDeadlineMs, or
+    // for kCloseDrainCeilingMs after the close at most, so a transport
+    // deleted straight after this still delivers what it sent
+    // (StationServer::dropPeer's session.end).
     stopPeer(/*linger=*/true);
     // As a WebSocket's close: closed() follows, from the event loop.
     QMetaObject::invokeMethod(this, [this]() { finishClose(); }, Qt::QueuedConnection);
@@ -1564,6 +1571,25 @@ namespace {
 // transport down at once and loses what was queued. So the peer is held
 // until it reports it has closed, or until the deadline. Only ever touched
 // on the thread that made it.
+// How many Lingers still hold their connection
+// (DataChannelTransport::lingeringPeerCountForTest()).
+std::atomic<int> g_lingeringPeers{0};
+// setCloseDrainTimingForTest()'s values; 0 is the class's constant.
+std::atomic<int> g_closeDrainDeadlineMsForTest{0};
+std::atomic<int> g_closeDrainCeilingMsForTest{0};
+
+int closeDrainDeadlineMs()
+{
+    const int forTest = g_closeDrainDeadlineMsForTest.load();
+    return forTest > 0 ? forTest : DataChannelTransport::kCloseDrainDeadlineMs;
+}
+
+int closeDrainCeilingMs()
+{
+    const int forTest = g_closeDrainCeilingMsForTest.load();
+    return forTest > 0 ? forTest : DataChannelTransport::kCloseDrainCeilingMs;
+}
+
 struct Linger {
     std::shared_ptr<rtc::PeerConnection> peer;
     std::shared_ptr<rtc::DataChannel> channel;
@@ -1586,6 +1612,7 @@ struct Linger {
         }
         channel.reset();
         peer.reset();
+        g_lingeringPeers.fetch_sub(1);
     }
 };
 
@@ -1669,9 +1696,9 @@ QObject* lingerTarget()
 void checkLingerDrain(QObject* target, const std::shared_ptr<Linger>& linger,
                       std::size_t sentBefore, const QElapsedTimer& sinceClose)
 {
-    const qint64 remainingMs = DataChannelTransport::kCloseDrainCeilingMs - sinceClose.elapsed();
+    const qint64 remainingMs = closeDrainCeilingMs() - sinceClose.elapsed();
     const int waitMs = static_cast<int>(
-        std::min<qint64>(DataChannelTransport::kCloseDrainDeadlineMs, std::max<qint64>(remainingMs, 0)));
+        std::min<qint64>(closeDrainDeadlineMs(), std::max<qint64>(remainingMs, 0)));
     QTimer::singleShot(waitMs, target, [target, linger, sentBefore, sinceClose]() {
         if (!linger->peer) {
             return;
@@ -1683,7 +1710,7 @@ void checkLingerDrain(QObject* target, const std::shared_ptr<Linger>& linger,
             // Closing what is already closing: no progress.
         }
         if (sentNow == sentBefore
-            || sinceClose.elapsed() >= DataChannelTransport::kCloseDrainCeilingMs) {
+            || sinceClose.elapsed() >= closeDrainCeilingMs()) {
             linger->release();
             return;
         }
@@ -1706,6 +1733,7 @@ bool lingerUntilClosed(const std::shared_ptr<rtc::PeerConnection>& peer,
     auto linger = std::make_shared<Linger>();
     linger->peer = peer;
     linger->channel = channel;
+    g_lingeringPeers.fetch_add(1);
     const std::weak_ptr<Linger> weak = linger;
     peer->onStateChange([weak](rtc::PeerConnection::State state) {
         if (state != rtc::PeerConnection::State::Closed
@@ -1743,6 +1771,17 @@ bool DataChannelTransport::lingerTargetExistsForTest()
     LingerContext& context = lingerContext();
     std::lock_guard lock(context.mutex);
     return context.target != nullptr;
+}
+
+void DataChannelTransport::setCloseDrainTimingForTest(int deadlineMs, int ceilingMs)
+{
+    g_closeDrainDeadlineMsForTest.store(std::max(deadlineMs, 0));
+    g_closeDrainCeilingMsForTest.store(std::max(ceilingMs, 0));
+}
+
+int DataChannelTransport::lingeringPeerCountForTest()
+{
+    return g_lingeringPeers.load();
 }
 
 void DataChannelTransport::stopPeer(bool linger)
