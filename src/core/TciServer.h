@@ -979,6 +979,9 @@ private:
     // The app whose trx holds a key now (desktop program key, TCI PTT
     // level, or a remote window's forwarded key), or null.
     QWebSocket* keyHoldingClient() const;
+    // The TX audio lock `client` holds, released as its disconnect
+    // releases it, with TX_CHRONO; `why` goes to the log.
+    void releaseTxAudioLockHeldBy(QWebSocket* client, const char* why);
 
     // From Longpath src/core/TciServer.h:644-654 [@383f058]
     // Keyed-client watchdog state. The timer runs only while m_moxOwner is

@@ -1672,6 +1672,7 @@ bool TciServer::start(const QList<QHostAddress>& bindAddresses, quint16 port)
     for (qsizetype i = 1; i < bindAddresses.size(); ++i) {
         auto* extra = new QWebSocketServer(QStringLiteral("NereusSDR-TCI"),
                                            QWebSocketServer::NonSecureMode, this);
+        refuseBrowserOrigins(extra);
         if (!extra->listen(bindAddresses.at(i), boundPort)) {
             const QString errStr = extra->errorString();
             if (m_quietListenAttempts) {
@@ -1691,7 +1692,6 @@ bool TciServer::start(const QList<QHostAddress>& bindAddresses, quint16 port)
         }
         connect(extra, &QWebSocketServer::newConnection,
                 this, &TciServer::onNewConnection);
-        refuseBrowserOrigins(extra);
         m_extraServers.append(extra);
         if (m_quietListenAttempts) {
             qCDebug(lcTci) << "TciServer: also listening on"
@@ -1712,6 +1712,7 @@ bool TciServer::addListener(const QHostAddress& address)
     const quint16 port = m_server->serverPort();
     auto* extra = new QWebSocketServer(QStringLiteral("NereusSDR-TCI"),
                                        QWebSocketServer::NonSecureMode, this);
+    refuseBrowserOrigins(extra);
     if (!extra->listen(address, port)) {
         if (m_quietListenAttempts) {
             qCDebug(lcTci) << "TciServer: failed to listen on" << address.toString()
@@ -1724,7 +1725,6 @@ bool TciServer::addListener(const QHostAddress& address)
         return false;
     }
     connect(extra, &QWebSocketServer::newConnection, this, &TciServer::onNewConnection);
-    refuseBrowserOrigins(extra);
     m_extraServers.append(extra);
     qCInfo(lcTci) << "TciServer: also listening on" << address.toString() << "port" << port;
     emit listenersChanged();
@@ -1928,16 +1928,52 @@ bool TciServer::releaseKeyHeldBy(QWebSocket* ws)
 
 QWebSocket* TciServer::keyHoldingClient() const
 {
+    // Only a key still held counts. MoxController drops the TCI level on
+    // any unkey (dropPttOnUnkey, clearPttSources, a refusal) without
+    // telling this server, so m_tciPttClient alone can name an app that
+    // holds nothing.
     if (m_desktopHostMode && m_desktopKeyHeld && !m_desktopKeyClient.isNull()) {
         return m_desktopKeyClient.data();
     }
     if (!m_tciPttClient.isNull()) {
-        return m_tciPttClient.data();
+        const MoxController* mox = m_model ? m_model->moxController() : nullptr;
+        if (mox && mox->isTciPttHeld()) {
+            return m_tciPttClient.data();
+        }
     }
-    if (m_remoteWindow && !m_remoteKeyClient.isNull()) {
+    // A key still being asked for counts too: the Core's answer may come
+    // while the app is hung, and nothing would start the watchdog again.
+    if (m_remoteWindow && !m_remoteKeyClient.isNull()
+        && (m_remoteKeyEpoch != 0 || m_remoteKeyPending)) {
         return m_remoteKeyClient.data();
     }
     return nullptr;
+}
+
+// The TX audio lock `ws` holds, released as its disconnect releases it
+// (shared by onClientDisconnected() and the keyed-client watchdog).
+void TciServer::releaseTxAudioLockHeldBy(QWebSocket* ws, const char* why)
+{
+    // Phase 17: release TX audio mutex if this client held it.
+    // QPointer auto-nulls when the socket is deleted (ws->deleteLater below),
+    // but we clear explicitly here so activeTxClientCount() returns 0 in the
+    // same event-loop pass as the disconnect.
+    if (!m_txAudioActiveClient.isNull() && m_txAudioActiveClient.data() == ws) {
+        // Task 35: the app whose audio a remote window's key carried is
+        // gone; nothing would ever send its trx:N,false, so the key is
+        // released on the Core.
+        if (m_remoteWindow && m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
+            m_remoteTransmit.unkey(m_remoteKeyEpoch);
+            m_remoteKeyEpoch = 0;
+            broadcastRemoteKeyState(false);
+        }
+        m_txAudioActiveClient = nullptr;
+        qCInfo(lcTci) << "TciServer: TX audio mutex released" << why;
+        // Phase 23: notify indicator / MainWindow.
+        emit txAudioActiveClientChanged(nullptr);
+        // Phase 3J-1 bench fix: stop TX_CHRONO frames on client disconnect.
+        stopTxChrono();
+    }
 }
 
 // From Longpath src/core/TciServer.cpp:2240-2249 [@383f058]
@@ -2009,7 +2045,12 @@ void TciServer::onKeyedWatchdogTick()
         qCWarning(lcTci) << "TciServer: the app at" << peer
                          << "holds a key and stopped answering pings; releasing its key";
         stopKeyedWatchdog();
-        releaseKeyHeldBy(owner);
+        const QPointer<TciServer> self(this);
+        const QPointer<QWebSocket> client(owner);
+        if (!releaseKeyHeldBy(owner) || !self || !client) { return; }
+        // As on a disconnect: an operator key that stays on must not keep
+        // the hung app's audio on the air.
+        releaseTxAudioLockHeldBy(owner, "from an app that stopped answering pings");
         return;
     }
     ++m_ownerPingsUnanswered;
@@ -2060,6 +2101,9 @@ void TciServer::refuseBrowserOrigins(QWebSocketServer* server)
     // ported: NereusSDR serves no web page of its own, and a page served
     // from this computer is exactly what the check keeps out.
     if (!server) { return; }
+    // NereusSDR: a direct connection, so the answer is set before the
+    // handshake goes on whatever thread the server runs on; made before
+    // listen() so no connection can arrive unchecked.
     connect(server, &QWebSocketServer::originAuthenticationRequired,
             // Kein `this` in der Erfassung: `istEigeneHerkunft` ist eine
             // freie Funktion in dieser Datei. Die Erfassung war ungenutzt
@@ -2089,7 +2133,7 @@ void TciServer::refuseBrowserOrigins(QWebSocketServer* server)
                         << "TciServer: refused a browser connection from origin"
                         << origin << "(not listed in TciAllowedOrigins)";
                 }
-            });
+            }, Qt::DirectConnection);
 }
 
 void TciServer::setDesktopHostMode(bool enabled)
@@ -2167,6 +2211,7 @@ bool TciServer::start(const QHostAddress& bindAddress, quint16 port)
     // server to the LAN — there is no authentication in TCI 2.0 — so the
     // Setup UI surfaces a tooltip warning when a non-loopback option is
     // selected.
+    refuseBrowserOrigins(m_server);
     if (!m_server->listen(bindAddress, port)) {
         if (m_quietListenAttempts) {
             qCDebug(lcTci) << "TciServer: failed to listen on" << bindAddress.toString()
@@ -2186,7 +2231,6 @@ bool TciServer::start(const QHostAddress& bindAddress, quint16 port)
 
     connect(m_server, &QWebSocketServer::newConnection,
             this, &TciServer::onNewConnection);
-    refuseBrowserOrigins(m_server);
 
     if (m_quietListenAttempts) {
         qCDebug(lcTci) << "TciServer: listening on" << m_server->serverPort();
@@ -2647,26 +2691,7 @@ void TciServer::onClientDisconnected()
     it = m_clients.find(ws);
     if (it == m_clients.end()) { return; }
 
-    // Phase 17: release TX audio mutex if this client held it.
-    // QPointer auto-nulls when the socket is deleted (ws->deleteLater below),
-    // but we clear explicitly here so activeTxClientCount() returns 0 in the
-    // same event-loop pass as the disconnect.
-    if (!m_txAudioActiveClient.isNull() && m_txAudioActiveClient.data() == ws) {
-        // Task 35: the app whose audio a remote window's key carried is
-        // gone; nothing would ever send its trx:N,false, so the key is
-        // released on the Core.
-        if (m_remoteWindow && m_remoteKeyEpoch != 0 && m_remoteTransmit.unkey) {
-            m_remoteTransmit.unkey(m_remoteKeyEpoch);
-            m_remoteKeyEpoch = 0;
-            broadcastRemoteKeyState(false);
-        }
-        m_txAudioActiveClient = nullptr;
-        qCInfo(lcTci) << "TciServer: TX audio mutex released on disconnect";
-        // Phase 23: notify indicator / MainWindow.
-        emit txAudioActiveClientChanged(nullptr);
-        // Phase 3J-1 bench fix: stop TX_CHRONO frames on client disconnect.
-        stopTxChrono();
-    }
+    releaseTxAudioLockHeldBy(ws, "on disconnect");
 
     // Phase 16 Task 16.3 (sub-commit b): destroy all RESAMPLEF instances for
     // this client before removing the session from the map.

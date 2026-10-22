@@ -9,8 +9,11 @@
 //
 // Longpath (Martin Fischer, OE5SOS, https://github.com/oe5sos/Longpath)
 // is a fork of NereusSDR distributed under the GNU General Public
-// License version 3 (its root LICENSE). Upstream source has no
-// top-of-file GPL header; project-level LICENSE applies.
+// License version 3 (its root LICENSE). Of the two upstream files,
+// tst_tci_mox_release_on_disconnect.cpp opens with an
+// SPDX-License-Identifier: GPL-2.0-or-later line (kept below) and no GPL
+// text; tst_tci_origin_and_tx_time_cap.cpp has no licence line at all.
+// Neither has a full GPL header; Longpath's project-level LICENSE applies.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -20,6 +23,11 @@
 //                one, and the keyed-client watchdog checked against a real
 //                RadioModel (MOX itself, not a bookkeeping signal). The
 //                transmit time cap tests are not ported.
+//   2026-10-22 - Review fix wave by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code: Origin: null, a key
+//                dropped another way, the operator's own key, the desktop
+//                program key, a pong from another app; the live control
+//                at 200 ms.
 // =================================================================
 //
 // --- From tst_tci_mox_release_on_disconnect.cpp ---
@@ -74,8 +82,11 @@
 
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
+#include "core/SliceOwnership.h"
 #include "core/TciServer.h"
+#include "core/TxSliceArbiter.h"
 #include "core/safety/BandPlanGuard.h"
+#include "core/safety/TransmitHolder.h"
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
@@ -110,7 +121,8 @@ public:
     // Server and client share this thread, so nothing here may block:
     // the server needs the event loop to accept the socket and answer the
     // handshake. Every wait is a qWait loop.
-    bool connectAndKey(quint16 port)
+    bool connectAndKey(quint16 port,
+                       const QByteArray& trx = QByteArrayLiteral("trx:0,true;"))
     {
         sock.connectToHost(QHostAddress::LocalHost, port);
         if (!waitUntil([&] { return sock.state() == QAbstractSocket::ConnectedState; })) {
@@ -132,7 +144,7 @@ public:
             return false;
         }
         if (!reply.startsWith("HTTP/1.1 101")) { return false; }
-        sock.write(maskedTextFrame(QByteArrayLiteral("trx:0,true;")));
+        sock.write(maskedTextFrame(trx));
         sock.flush();
         return true;
     }
@@ -248,6 +260,23 @@ private slots:
         server.stop();
     }
 
+    // NereusSDR: a sandboxed page (or a file: URL) sends Origin: null; it
+    // is a browser all the same, and refused.
+    void null_origin_is_refused()
+    {
+        TciServer server(nullptr);
+        QVERIFY(server.start(0));
+
+        QWebSocket client;
+        QSignalSpy connectedSpy(&client, &QWebSocket::connected);
+        openWithOrigin(client, QStringLiteral("127.0.0.1"), server.port(),
+                       QByteArrayLiteral("null"));
+        QTest::qWait(1500);
+        QCOMPARE(connectedSpy.count(), 0);
+        QCOMPARE(server.clientCount(), 0);
+        server.stop();
+    }
+
     // From Longpath tests/tst_tci_origin_and_tx_time_cap.cpp:86-99 [@383f058]
     void listed_origin_is_accepted()
     {
@@ -331,7 +360,9 @@ private slots:
         QVERIFY(mox != nullptr);
         allowEveryKey(mox);
         TciServer server(&core);
-        server.setKeyedWatchdog(50, 3);
+        // NereusSDR: 200 ms x 3 and a 2 s wait, so a loaded machine that
+        // runs the event loop late cannot miss three answers in a row.
+        server.setKeyedWatchdog(200, 3);
         QVERIFY(server.start(0));
 
         QWebSocket client;
@@ -342,14 +373,151 @@ private slots:
         client.sendTextMessage(QStringLiteral("trx:0,true;"));
         QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 2000);
 
-        // 1 s at 50 ms = ~20 pings, each answered by QWebSocket itself.
-        QTest::qWait(1000);
+        // 2 s at 200 ms = ~10 pings, each answered by QWebSocket itself.
+        QTest::qWait(2000);
         QVERIFY(core.mox());
         QCOMPARE(server.clientCount(), 1);
 
         client.sendTextMessage(QStringLiteral("trx:0,false;"));
         QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
         client.close();
+        server.stop();
+    }
+
+    // NereusSDR: the operator unkeys while a hung app holds the key. The
+    // unkey drops the TCI level (MoxController::dropPttOnUnkey) without
+    // the server hearing of it; the watchdog then has nothing to guard and
+    // must stop, with no release and no warning.
+    void a_key_dropped_another_way_stops_the_watchdog()
+    {
+        RadioModel core;
+        MoxController* mox = core.moxController();
+        QVERIFY(mox != nullptr);
+        allowEveryKey(mox);
+        TciServer server(&core);
+        server.setKeyedWatchdog(100, 3);
+        QVERIFY(server.start(0));
+
+        HungClient hung;
+        QVERIFY2(hung.connectAndKey(server.port()), "raw WebSocket handshake failed");
+        QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 2000);
+        core.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
+        QVERIFY(!mox->isTciPttHeld());
+
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("stopped answering pings")));
+        // Well past three unanswered pings at 100 ms.
+        QTest::qWait(1000);
+        QVERIFY(!core.mox());
+        QCOMPARE(server.clientCount(), 1);
+        hung.sock.abort();
+        QTRY_COMPARE_WITH_TIMEOUT(server.clientCount(), 0, 2000);
+        server.stop();
+    }
+
+    // NereusSDR: the operator holds his own key while a hung app's key and
+    // TX audio are on. The watchdog releases the app's key; the operator's
+    // key keeps the radio on, and the app loses the TX audio lock (as a
+    // disconnect takes it), so its audio does not stay on the air.
+    void operator_key_stays_on_and_the_hung_app_loses_tx_audio()
+    {
+        RadioModel core;
+        MoxController* mox = core.moxController();
+        QVERIFY(mox != nullptr);
+        allowEveryKey(mox);
+        TciServer server(&core);
+        server.setKeyedWatchdog(100, 3);
+        QVERIFY(server.start(0));
+
+        HungClient hung;
+        QVERIFY2(hung.connectAndKey(server.port(), QByteArrayLiteral("trx:0,true,tci;")),
+                 "raw WebSocket handshake failed");
+        QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(server.activeTxClientCount(), 1, 2000);
+        mox->setManualKey(true);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!mox->isTciPttHeld(), 2000);
+        QVERIFY(core.mox());
+        QTRY_COMPARE_WITH_TIMEOUT(server.activeTxClientCount(), 0, 2000);
+        QCOMPARE(hung.sock.state(), QAbstractSocket::ConnectedState);
+
+        mox->setManualKey(false);
+        core.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
+        hung.sock.abort();
+        server.stop();
+    }
+
+    // NereusSDR: on a desktop host the app's trx is the station's program
+    // key (releaseDesktopProgramKey); a hung app loses it the same way.
+    void a_hung_app_loses_the_desktop_program_key()
+    {
+        RadioModel radio;
+        const int owned = radio.addSlice(QStringLiteral("pan-0"));
+        radio.sliceOwnership()->setOwner(owned, SliceOwnership::stationDevice());
+        TransmitHolder holder;
+        MoxController* mox = radio.moxController();
+        mox->setKeyingGate([&holder](PttMode source, const KeyerIdentity& keyer) {
+            return holder.askKey({keyer.deviceId, TransmitHolder::Source::Device,
+                                  keyer.program, source == PttMode::Vox});
+        });
+        holder.transferTo(TransmitHolder::Holder{SliceOwnership::stationDevice()},
+                          QStringLiteral("test"), [](bool) {});
+        radio.setTransmitHolder(SliceOwnership::stationDevice());
+        QVERIFY(radio.txSliceArbiter()->bindForHolder(SliceOwnership::stationDevice(), owned));
+        TciServer server(&radio);
+        server.setDesktopHostMode(true);
+        server.setKeyedWatchdog(100, 3);
+        QVERIFY(server.start(0));
+
+        HungClient hung;
+        QVERIFY2(hung.connectAndKey(server.port(), QByteArrayLiteral("trx:0,true,tci;")),
+                 "raw WebSocket handshake failed");
+        QTRY_VERIFY_WITH_TIMEOUT(radio.mox(), 2000);
+        QCOMPARE(mox->currentKeyer(), KeyerIdentity::station(PttMode::Tci));
+        QTRY_COMPARE_WITH_TIMEOUT(server.activeTxClientCount(), 1, 2000);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!radio.mox(), 2000);
+        QVERIFY(!mox->isTciPttHeld());
+        QTRY_COMPARE_WITH_TIMEOUT(server.activeTxClientCount(), 0, 2000);
+        QCOMPARE(hung.sock.state(), QAbstractSocket::ConnectedState);
+        hung.sock.abort();
+        server.stop();
+    }
+
+    // NereusSDR: only the key holder's pongs count. Another app that
+    // answers the keepalive pings often must not keep a hung holder keyed.
+    void a_pong_from_another_app_does_not_count()
+    {
+        RadioModel core;
+        MoxController* mox = core.moxController();
+        QVERIFY(mox != nullptr);
+        allowEveryKey(mox);
+        TciServer server(&core);
+        server.setKeyedWatchdog(100, 3);
+        server.setPingIntervalMs(50);
+        QVERIFY(server.start(0));
+
+        qRegisterMetaType<QWebSocket*>("QWebSocket*");
+        QSignalSpy serverSide(&server, &TciServer::clientConnected);
+        QWebSocket other;
+        QSignalSpy connected(&other, &QWebSocket::connected);
+        other.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+        QVERIFY(connected.wait(2000));
+        QTRY_COMPARE_WITH_TIMEOUT(serverSide.count(), 1, 2000);
+        auto* otherOnServer = serverSide.at(0).at(0).value<QWebSocket*>();
+        QVERIFY(otherOnServer != nullptr);
+        QSignalSpy otherPongs(otherOnServer, &QWebSocket::pong);
+
+        HungClient hung;
+        QVERIFY2(hung.connectAndKey(server.port()), "raw WebSocket handshake failed");
+        QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 2000);
+        // The other app was answering all along.
+        QVERIFY2(otherPongs.count() >= 3, qPrintable(QString::number(otherPongs.count())));
+        QCOMPARE(server.clientCount(), 2);
+        other.close();
+        hung.sock.abort();
         server.stop();
     }
 };
