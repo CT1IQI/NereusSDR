@@ -247,6 +247,9 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - txReadingsVersion 4: the six transmit peak readings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - radioAntennaRowsVersion 2 (kRadioAntennaRowsVersion):
+//                RX-only antennas 0..5, Thetis's checkbox sum. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -283,6 +286,12 @@ inline constexpr int kTransmitSettingsDifferentBandVersion = 14;
 /// at once against the revision the app last saw. Against an older Core a
 /// window keeps writing the CFC properties one by one.
 inline constexpr int kTransmitSettingsCfcProfileVersion = 15;
+
+/// The newest radioAntennaRowsVersion. 1: the one-band Alex edits bound to
+/// the connected radio's MAC. 2: and `rxOnlyAntennas` entries 0..5, Thetis's
+/// RX-only checkbox sum (4 and 5 add XVTR to the first or second input),
+/// read and written by that peer; a peer at 1 or none reads 4 and 5 as 3.
+inline constexpr int kRadioAntennaRowsVersion = 2;
 
 /// Optional identity of the Core executable, never radio firmware identity.
 struct CoreBuildInfo {
@@ -346,7 +355,9 @@ struct StationCapabilities {
     /// not write `stepAtt`.
     int radioHardwareVersion = 0;
     /// One-band Alex edits bound to the connected radio's canonical MAC.
-    /// Optional at minor 11 for a peer declaring radioAntennaRows 1.
+    /// Optional at minor 11 for a peer declaring radioAntennaRows 1 or 2:
+    /// what it declared, up to kRadioAntennaRowsVersion. 2 adds RX-only
+    /// values 0..5.
     int radioAntennaRowsVersion = 0;
     /// iPhone app plan Task 25 (R-IOS-18): 1 means the Core sends the `vax`
     /// object (the station computer's VAX channels) and keeps the
