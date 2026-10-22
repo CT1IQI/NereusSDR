@@ -236,8 +236,12 @@ and section numbers below are the spec's.
 
 ## Task order and flags
 
-Tasks run in number order, one implementer at a time; none runs in parallel, because
-Tasks 2 to 8 all touch views that read the same roles. The branch merges to main as a
+Tasks run in lanes (JJ, 2026-10-21: "use as many lanes as practical"), each lane one
+implementer at a time and no two lanes sharing a file: the main lane runs Tasks 1, 2, 3
+and 4 in the working tree; Task 5 runs in its own worktree from the start; after Task 1,
+Task 6 and then Tasks 7 and 8 run in their own worktrees; Task 9 runs last, on the merged
+branch. To keep the lanes apart, `DevicesPage`'s buttons and cards moved from Task 3 to
+Task 7. One simulator test run at a time across all lanes (the shared lock). The branch merges to main as a
 whole, so no screen ever ships half navy. Nothing here touches the link, audio,
 commands or transmit behavior; the keyed PTT and UNKEY change color only.
 
@@ -434,7 +438,6 @@ flat fills after this task; that is expected until Task 3.
   `ios/NereusApp/Connect/ConnectChrome.swift` (`WideButton`, `RowButton`, `Pill`),
   `ios/NereusApp/Accessories/AccessoryChrome.swift`,
   `ios/NereusApp/Accessories/AccessoryFields.swift`,
-  `ios/NereusApp/Setup/DevicesPage.swift` (`smallButton`, `Card`),
   `ios/NereusApp/Tools/TxEqCurveParts.swift` (`StepButton`, `PlainButton`),
   `ios/NereusApp/Tools/SupportBundlePage.swift` (`CategoryButton`),
   `ios/NereusApp/Tools/ConnectionPerformanceView.swift` (`PerformanceButtonStyle`,
@@ -653,7 +656,8 @@ as well as the app.
   page container (`NavigationPage.swift`, `BatteryAndSessionsPage.swift`,
   `AudioOnThisPhonePage.swift`, `DisplayOnThisPhonePage.swift`, `PttButtonsPage.swift`,
   `RotorSetupPage.swift`, `DataUsePage.swift`, `CoreLogsPage.swift`,
-  `AboutAppPage.swift`, `LicensesView.swift`, `CfcBandsPanel.swift`, `DevicesPage.swift`)
+  `AboutAppPage.swift`, `LicensesView.swift`, `CfcBandsPanel.swift`, `DevicesPage.swift`,
+  whose `smallButton` and `Card` also take the treatments here, moved from Task 3)
   (all under `ios/NereusApp/Setup/`)
 - Create: `ios/NereusApp/Tests/SetupWorkspaceShotTests.swift`
 - Test: `SetupRenderingTests`, `RotorUITests`
@@ -701,8 +705,10 @@ it). Unit: `SetupRenderingTests`, `SetupWorkspaceShotTests`. UI: `RotorUITests`,
 `SoundPanelUITests`. Shots looked at against setup-board.html. Device (pending, JJ):
 Setup at his own text size.
 
-**Execution note (advisory):** opus. Needs Task 3. The largest task; the container
-trial comes first so the rest is built once.
+**Execution note (advisory):** opus. Needs Task 1; runs in its own worktree beside the
+main lane. The root switch style is Task 2's: shots host each page with
+`.toggleStyle(WorkspaceSwitchStyle())` as the root will, and `RootView.swift` is not
+edited here. The largest task; the container trial comes first so the rest is built once.
 
 - [ ] **Step 1:** The container trial on two pages; record the choice.
 - [ ] **Step 2:** Build `SetupPageContainer` and `SetupPanelSection`; move every page to
