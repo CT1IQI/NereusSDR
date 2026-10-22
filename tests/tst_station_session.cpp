@@ -15,6 +15,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-12: a remote window's stored radio holds no second firmware
 // number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: RX meter stamps: the remote window declares rxMeterStamps.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // tests/tst_station_session.cpp  (NereusSDR)
 // =================================================================
@@ -1431,7 +1433,8 @@ void TstStationSession::remoteWindowSeesNoSchemaSkewFromTheCurrentCore()
     // lamps; paTransmitBand: the PA row the Core holds on the air;
     // levelCalibration: Setup's calibration run; rxFilterLowPass: why the
     // receive low-pass is set for another slice; radioSpeaker: the
-    // header's RADIO group and Setup's radio speaker) arrive.
+    // header's RADIO group and Setup's radio speaker; rxMeterStamps: the
+    // time each RX meter reading was measured) arrive.
     const QSet<QByteArray> declaredGatedFeatures{QByteArrayLiteral("radeStatus"),
                                                  QByteArrayLiteral("txInhibitReason"),
                                                  QByteArrayLiteral("alexLpf"),
@@ -1439,7 +1442,8 @@ void TstStationSession::remoteWindowSeesNoSchemaSkewFromTheCurrentCore()
                                                  QByteArrayLiteral("levelCalibration"),
                                                  QByteArrayLiteral("rxFilterLowPass"),
                                                  QByteArrayLiteral("radeReason"),
-                                                 QByteArrayLiteral("radioSpeaker")};
+                                                 QByteArrayLiteral("radioSpeaker"),
+                                                 QByteArrayLiteral("rxMeterStamps")};
     QSet<QByteArray> arrivedGatedFeatures;
     bool sawTransmitSchema = false;
     for (const QByteArray& wire : peer->received()) {

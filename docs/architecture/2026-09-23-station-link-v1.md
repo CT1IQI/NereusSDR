@@ -1034,6 +1034,14 @@ does not declare it sees exactly the wire it was built for: no capability
 entry, and none of the new ops. The station does not declare it; the
 desktop's remote window does (`StationClient`). The phone app does not.
 
+**`rxMeterStamps` 1** (RX meter stamps): the client holds each slice's RX
+meter readings until the audio they describe plays. A peer that declares it
+is sent `rxMeterStampsVersion` (section 6.3) and each slice's
+`meterReadingNs` (section 7, "The RX meter stamps"); a peer that does not
+sees exactly the wire it was built for, with no `meterReadingNs`, and a
+change to it alone sends that peer no slice delta. The station does not
+declare it; the desktop's remote window does. The phone app does not.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1230,6 +1238,7 @@ table.
 | `coreSpeakerVersion` | 1 |
 | `spectrumPictureVersion` | 1 |
 | `waveformVersion` | 1 |
+| `rxMeterStampsVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2387,6 +2396,12 @@ document). A peer that did not declare the feature is sent no entry. A client
 connected to a Core that sends no entry shows a waveform meter as unsupported
 ("This Core does not support exact waveform observation."); nothing else changes for it.
 
+**The RX meter stamps.** A client that declared `rxMeterStamps` 1 is sent
+`rxMeterStampsVersion`, an `i64`, 1, after `waveformVersion` (or after the
+last entry before it when that is absent) and before `coreBuildInfo`. At 1
+each `slice:<id>` object carries `meterReadingNs` (section 7). A peer that
+did not declare the feature is sent no entry and no `meterReadingNs`.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2429,7 +2444,9 @@ declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
 for a peer that declared `spectrumPicture` while media is available;
 `firmwareBeta` only for a peer that declared `firmwareBeta`;
 `waveformVersion` only for a peer that declared `waveform` while media is
-available on a Core that is not itself a remote client. A client ignores a capability it does not know
+available on a Core that is not itself a remote client;
+`rxMeterStampsVersion` only for a peer that declared `rxMeterStamps`. A
+client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2631,7 +2648,8 @@ older window sees only the values it was built for.
 | 112 | `spectrumPictureVersion` | `i64` |
 | 113 | `firmwareBeta` | `i64` |
 | 114 | `waveformVersion` | `i64` |
-| 115 | `coreBuildInfo` | `utf8` |
+| 115 | `rxMeterStampsVersion` | `i64` |
+| 116 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3023,7 +3041,7 @@ An enum property lists the values its domain allows.
 | 12 | `streamIndex` | `i64` | outbound |  |
 | 13 | `psPaused` | `bool` | outbound |  |
 
-**SliceModel** (154 properties)
+**SliceModel** (155 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3181,6 +3199,7 @@ An enum property lists the values its domain allows.
 | 151 | `radeSynced` | `bool` | outbound |  |
 | 152 | `radeFreqOffsetHz` | `f64` | outbound |  |
 | 153 | `radeReason` | `utf8` | outbound |  |
+| 154 | `meterReadingNs` | `i64` | outbound |  |
 
 **SpotSourceHost** (11 properties)
 
@@ -3606,7 +3625,7 @@ Notes on the keys:
   frequency offset in Hz, below ("The RADE status"). Sent only to a peer
   that declared `radeStatus` 1.
 - **`slice:<id>` RADE reason.** `radeReason` (utf8, outbound, no WRITE,
-  declared last in `SliceModel`; `radeReasonVersion` 1) is why the slice is
+  declared after `radeFreqOffsetHz` in `SliceModel`; `radeReasonVersion` 1) is why the slice is
   in RADE with no working RADE decoder, empty when it has one or is not in
   RADE, below ("The RADE reason"). Sent only to a peer that declared
   `radeReason` 1.
@@ -3623,6 +3642,10 @@ Notes on the keys:
   radio is on the air the pump leaves them where they were. They reach a
   window whatever `meterReadingsVersion` says; a window reads them only when
   it is at least 1 (section 6.3). A window never writes them back.
+- **`slice:<id>` RX meter stamp.** `meterReadingNs` (i64, outbound, no
+  WRITE, declared last in `SliceModel`; `rxMeterStampsVersion` 1) is when
+  the Core measured the slice's RX meter readings, below ("The RX meter
+  stamps"). Sent only to a peer that declared `rxMeterStamps` 1.
 - **Max Bin is measured by the client, not sent.** The S-meter's Max Bin
   mode (and a container meter bound to Max Bin) reads the strongest point
   of the slice's passband on the slice's own panadapter, from the trace as
@@ -4900,6 +4923,44 @@ a saved layout waits to be placed.
 **Showing it as the desktop's flag does.** While `radeReason` is not
 empty the RADE row reads the prefix, a hollow gray dot and `off`
 (`RADE ○ off`), and the row's tooltip is the reason. The row stays shown.
+
+#### The RX meter stamps (`meterReadingNs`)
+
+`rxMeterStampsVersion` 1. A window shows its spectrum when the matching
+audio plays (displayClockVersion 1). Its RX meters do the same with this
+stamp.
+
+- **What it is.** The time, in nanoseconds on the Core's producer clock
+  (the clock of `producerTimestamp` and the audio capture times, section
+  6.3's displayClockVersion), at which the Core's receive lane read the
+  slice's WDSP meters. All eight readings sent with it come from that one
+  read: `signalStrengthDbm`, `signalPeakDbm`, `signalAverageDbm`,
+  `adcPeakDbfs`, `adcAverageDbfs`, `agcGainDb`, `agcPeakDb` and
+  `agcAverageDb`. A no-reading value (-400) the Core writes when the radio
+  link is not up, the slice has no receiver, or WDSP has not measured yet,
+  is stamped with the time it was written. 0 before the first reading.
+- **When it changes.** At each meter pump tick while receiving, with the
+  readings, in the same delta. While the radio is on the air the pump
+  writes neither.
+- **Read-only.** A write is refused as any outbound property is.
+- **Who gets it.** Only a peer whose hello declared `rxMeterStamps` 1. Its
+  `SliceModel` schema, its slice snapshots and its deltas carry it. Every
+  other peer's carry none, and a delta that would carry only it is not
+  sent to them.
+
+**Holding the readings as the desktop's remote window does.** When a slice
+delta carries `meterReadingNs`, the window takes the eight readings out of
+it and applies them, with the stamp, at `meterReadingNs + map`, where `map`
+is the producer-to-display map its spectrum is presented by. The rest of
+the delta applies at once. Readings apply in the order they arrived; an
+unstamped reading for a slice with readings waiting goes in behind them.
+A reading applies on arrival when the window has no map yet, from a Core
+without the display clock, while no pan or mini display is open (the map
+is measured only as display frames are presented, so it would be stale),
+or when it would wait more than 1.5 s (the spectrum's own longest hold).
+The window applies deltas and the held readings on its main thread, where
+the map is kept. Readings still waiting when the session ends
+are dropped, and so are a removed slice's.
 
 **The `vax` object** (iPhone app plan Task 25, `vaxVersion` 1). The Core
 takes a write of `ch<N>RxGain`, `ch<N>Muted` or `txGain` only from a peer
