@@ -223,11 +223,9 @@ public enum SetupSpecializedWire {
         return SetupHygieneReport(mac: answeredMac, issues: issues)
     }
 
-    /// One of the Core's per-band antenna lists (14 entries, 15 with 2 m):
-    /// exactly `bands` whole numbers, comma-separated, each in `range`.
     /// Whether a band's receive-only value checks the box for `antenna`.
-    /// The value is the sum of the checked boxes' numbers, as Thetis's
-    /// Alex setup keeps it (setup.cs ProcessAlexAntCheckBox [v2.10.3.15]):
+    /// The value is the sum of the checked boxes' numbers, as the desktop's
+    /// Alex setup keeps it (0 none, 1 RX1, 2 RX2, 3 XVTR, 4 RX1+XVTR, 5 RX2+XVTR):
     /// boxes 1 and 2 rule each other out and box 3 (XVTR) stands alone, so
     /// 4 is 1 with 3 and 5 is 2 with 3.
     public static func rxOnlyChecks(_ value: Int, antenna: Int) -> Bool {
@@ -261,6 +259,8 @@ public enum SetupSpecializedWire {
         return (one ? 1 : 0) + (two ? 2 : 0) + (xvtr ? 3 : 0)
     }
 
+    /// One of the Core's per-band antenna lists (14 entries, 15 with 2 m):
+    /// exactly `bands` whole numbers, comma-separated, each in `range`.
     static func antennaList(_ value: MirrorValue?, bands: Int, range: ClosedRange<Int>) -> [Int]? {
         guard case .text(let text)? = value else {
             return nil

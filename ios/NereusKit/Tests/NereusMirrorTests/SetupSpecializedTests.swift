@@ -679,8 +679,8 @@ import Testing
         return antenna
     }
 
-    /// The receive-only cells are Thetis's checkboxes (setup.cs
-    /// ProcessAlexAntCheckBox): the value is the checked boxes' sum, 1 and
+    /// The receive-only cells are the desktop's checkboxes: the value is
+    /// the checked boxes' sum, 1 and
     /// 2 rule each other out, XVTR stands alone, and the last box turned
     /// off sends 0.
     @Test func receiveOnlyCellsAreCheckboxesThatSendTheirSum() async throws {
@@ -719,7 +719,7 @@ import Testing
     }
 
     @Test func unreadableAntennaValuesDisableTheWholeTable() async throws {
-        // A receive-only value past Thetis's 5 makes the receive table unreadable.
+        // A receive-only value past 5, the highest sum, makes the receive table unreadable.
         let rig = Rig()
         try await rig.connect(session: 1, rxOnlyAntennas: "6,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
         let rx = rig.control("hardware", "hardware.antenna.rxRows")

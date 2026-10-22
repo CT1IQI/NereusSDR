@@ -41,7 +41,7 @@ public extension SetupControlDispatcher {
     nonisolated static let txAntennaVerb = "setAlexTxAntennaForRadio"
     nonisolated static let rxAntennaVerb = "setAlexRxAntennaForRadio"
     /// A band's receive-only value: 0 none, 1 to 3 one box, 4 and 5 XVTR
-    /// with box 1 or 2 (Thetis setup.cs ProcessAlexAntCheckBox [v2.10.3.15]).
+    /// with box 1 or 2, the desktop's checkbox sum.
     nonisolated static let rxOnlyMaximum = 5
     /// The highest receive-only value a Core at `radioAntennaRowsVersion` 1 takes.
     nonisolated static let rxOnlySingleMaximum = 3
