@@ -726,11 +726,13 @@ nereus_add_test(tst_workspace_popout_return)
 # A drag never resizes a floating container's window, and a window is never larger than its screen (offscreen).
 nereus_add_test(tst_container_drag_keeps_size)
 nereus_add_test(tst_workspace_live_input)
-# Each case builds a MainWindow; 43 cases ran past the 120 s limit under
-# load. Four entries of the same binary (the limit is not raised; groups in
-# the test's main()).
+# Each case builds a MainWindow (5 to 10 s a case under load); the four
+# earlier entries each ran past the 120 s limit under CI load. Eleven entries
+# of the same binary, each about 45 s or less at load 14 to 20 on a Mac (the
+# limit is not raised; groups in the test's main()).
 nereus_split_test(tst_workspace_live_input
-    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
+    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP
+    GROUPS hidden hiddenmenu previewoff duplicate duplicatelook menus popout strip profiles profileswitch)
 nereus_add_test(tst_workspace_profiles)
 # The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0": the rule
 # on its own, with no process environment (offscreen).
