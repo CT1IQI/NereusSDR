@@ -19,6 +19,7 @@
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QSignalSpy>
 
 #include "core/ConnectionState.h"
@@ -70,6 +71,16 @@ void hover(QWidget* w, int x, int y = kSpecY)
 void release(QWidget* w, int x, int y = kSpecY)
 {
     sendMouse(w, QEvent::MouseButtonRelease, QPoint(x, y), Qt::LeftButton, Qt::NoButton);
+}
+
+// Sends a wheel event to w; returns whether w accepted it.
+bool sendWheel(QWidget* w, QPoint pos, QPoint pixelDelta, QPoint angleDelta,
+               Qt::ScrollPhase phase)
+{
+    QWheelEvent ev(QPointF(pos), w->mapToGlobal(QPointF(pos)), pixelDelta, angleDelta,
+                   Qt::NoButton, Qt::NoModifier, phase, false);
+    QApplication::sendEvent(w, &ev);
+    return ev.isAccepted();
 }
 
 struct Pan {
@@ -427,6 +438,35 @@ private slots:
         QCOMPARE(p.sw.filterLowForTest(), 0);
         QCOMPARE(a->frequency(), kCenterHz);
         QCOMPARE(a->filterHigh(), 3000);
+    }
+
+    // A wheel event that makes no step (a horizontal one, or a trackpad
+    // event short of its 15 px) is ignored, so it reaches the parent, as
+    // before the wheel steps and as AetherSDR does; a mouse notch tunes.
+    // QApplication passes a real (spontaneous) wheel event to the
+    // parent when the widget leaves it unaccepted; a sent one never
+    // propagates, so the accepted flag is what this checks.
+    void wheel_with_no_step_reaches_the_parent()
+    {
+        Pan p;
+        p.sw.setVfoFrequency(kCenterHz);
+        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        const QPoint at(xForHz(kCenterHz - 20000.0), kSpecY);
+
+        // Horizontal mouse wheel.
+        QVERIFY(!sendWheel(&p.sw, at, QPoint(), QPoint(120, 0), Qt::NoScrollPhase));
+        // Horizontal trackpad swipe.
+        QVERIFY(!sendWheel(&p.sw, at, QPoint(20, 0), QPoint(160, 0), Qt::ScrollUpdate));
+        // Vertical trackpad travel short of a step.
+        QVERIFY(!sendWheel(&p.sw, at, QPoint(0, 5), QPoint(0, 40), Qt::ScrollUpdate));
+        QCOMPARE(tuned.count(), 0);
+
+        // A mouse notch steps. (Its acceptance is not checked: every stepped
+        // branch ends in QWidget::wheelEvent, which leaves it unaccepted, as
+        // it did before the wheel steps.)
+        sendWheel(&p.sw, at, QPoint(), QPoint(0, 120), Qt::NoScrollPhase);
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(tuned.first().first().toDouble(), kCenterHz + 100.0);
     }
 
     // A pan with no flags (a bare marker for its own VFO) still tunes and

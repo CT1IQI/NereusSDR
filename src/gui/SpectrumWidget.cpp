@@ -11,7 +11,8 @@
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): the center line wins within its strip;
 //                 a drag tunes by its pixel travel from the press; a drag
-//                 moves the receiver grabbed, through its flag.
+//                 moves the receiver grabbed, through its flag; a wheel
+//                 event with no step reaches the parent.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): every receiver this pan shows can be
 //                 grabbed (AetherSDR's 8 px edge zones with a 6 px body,
@@ -14007,9 +14008,13 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     // per mouse notch or per 15 px of trackpad travel (WheelStepAccumulator).
     // A trackpad sends many small events a second, and each used to be a
     // whole step.
+    // An event with no step (a horizontal one, or trackpad travel short of a
+    // step) is ignored so it reaches the parent, as the zero-delta check
+    // here did before and as AetherSDR does (src/gui/SpectrumWidget.cpp:11329
+    // [@1e0718ad]: if (steps == 0) { ev->ignore(); return; }). 2026-10-21.
     const int steps = m_wheelSteps.stepsFor(*event);
     if (steps == 0) {
-        event->accept();
+        event->ignore();
         return;
     }
 
