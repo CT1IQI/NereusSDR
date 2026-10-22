@@ -24,6 +24,9 @@
 //                wireXSect() methods, the list of copies (QPointers) and the
 //                margins a copy gives itself. Brian Sutton, AI-assisted via
 //                OpenCode.
+//   2026-10-18 - applyDriveSourceGate; setPowerByBandPermitted removed (the
+//                 sliders no longer write the tune drive source). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -432,12 +435,6 @@ public slots:
     TxVoxSection* createVoxSection(QWidget* parent, bool preview = false);
     TxProcessingSection* createProcessingSection(QWidget* parent, bool preview = false);
     TxKeyingSection* createKeyingSection(QWidget* parent, bool preview = false);
-    // R-R3-49 (group A fix wave, M3): whether an RF Power move also writes
-    // the tune drive source (tuneDrivePowerSource on the link), which a Core
-    // takes from transmitSettingsVersion 5. MainWindow supplies false for an
-    // older Core, which would refuse it on every move. Always true locally.
-    // The per-band power is never written from a window: the Core owns it.
-    void setPowerByBandPermitted(bool permitted) { m_powerByBandPermitted = permitted; }
     // R-R3-49 (parity Task 4): the CFC dialog (transmitSettingsVersion 4).
     // The EQ and CFC right-clicks open their dialogs in any window; this
     // greys the CFC dialog with the reason while a remote window cannot
@@ -851,6 +848,9 @@ private:
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
     QString m_monitorOutputReason;
     void applyMonitorOutputGate();
+    // Grays the power slider TUNE or the two-tone test is not using, with
+    // the reason (Thetis setupTuneDriveSlider, grayed where Thetis hides).
+    void applyDriveSourceGate();
     // The VOX row's widgets, now owned by TxVoxSection. The applet keeps the
     // model wiring, the 100 ms peak poller and the permission gates; these
     // reach the section's widgets for it.
@@ -861,7 +861,6 @@ private:
     bool m_txProfilePermitted{true};
     QString m_txProfileReason;
     bool m_txProcessingPermitted{true};   // R-R3-49 (parity Task 4)
-    bool m_powerByBandPermitted{true};    // R-R3-49 (group A fix wave, M3)
     bool m_psArmingPermitted{true};       // R-R3-49 (parity Task 7)
     QString m_psArmingReason;
     // Fix round 1 (minor 5): the board is not known (no radio, so the caps

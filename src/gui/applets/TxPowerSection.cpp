@@ -311,12 +311,9 @@ void TxPowerSection::rescalePowerSlidersForModel(HPSDRModel model)
     //   <data ...><value>Transmit Drive - This is a relative value and is
     //   not meant to imply watts, unless the PA profile is configured
     //   with MAX watts @ 100%</value></data>
-    m_rfPowerSlider->setToolTip(QStringLiteral(
-        "Transmit Drive - relative value, not watts unless the PA profile "
-        "is configured with MAX watts @ 100%"));
-    m_tunePwrSlider->setToolTip(QStringLiteral(
-        "Tune and/or 2Tone Drive - relative value, not watts unless the "
-        "PA profile is configured with MAX watts @ 100%"));
+    // TxApplet's drive source gate sets them (kRfPowerTooltip,
+    // kTunePowerTooltip), with its reason while a slider is grayed, in every
+    // copy of this row.
 
     updatePowerSliderLabels();
 }
