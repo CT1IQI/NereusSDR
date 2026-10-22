@@ -568,6 +568,9 @@ if(TARGET wdsp_static)
     # saved in the shared DSP folder.
     nereus_add_test(tst_wdsp_impulse_cache_profiles EXTRA_LABELS core)
     nereus_add_test(tst_nnr_model_assets EXTRA_LABELS core)
+    # 2026-10-22: dsplock.c counts noise-reduction calls over 50 ms per
+    # channel for the Core log (RadioModel::reportSlowNrCalls).
+    nereus_add_test(tst_wdsp_slow_nr_calls EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
         # linking it again here made the linker warn about a duplicate library.
@@ -671,6 +674,9 @@ endif()
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
 nereus_add_test(tst_receiver_manager_reconnect)
+
+# ── 2026-10-22: I/Q level log per hardware DDC (IqLevelMonitor) ──────────
+nereus_add_test(tst_iq_level_monitor EXTRA_LABELS core)
 
 # ── HL2 connect-init parity: spectrum DDC center push (Bug 1) ─────────────
 # Pins the contract that RadioModel::loadSliceState() emits

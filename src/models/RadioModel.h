@@ -685,6 +685,11 @@
 //   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
 //                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-22 - reportDspDiagnostics, slowNrCallLogLine, nrStagesLogName
+//                and outputNonFiniteLogLine: the Core log names a slice's
+//                noise-reduction calls over 50 ms with the stages that ran,
+//                and non-finite samples in WDSP's output. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2260,6 +2265,32 @@ public:
     /// place of receiverDspLoad (a missing slice, or nullopt, is not
     /// measured).
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
+
+    /// 2026-10-22: the Core's DSP diagnostics on the load sampler's tick,
+    /// main thread, measures only. For every slice whose channel ran a
+    /// noise-reduction call over 50 ms since the last tick: the count, the
+    /// longest and the stages that actually ran, as WDSP and RxChannel
+    /// recorded them at call time (RxChannel::takeSlowNrCalls), so an NNR
+    /// limit step on this tick never relabels a call made before it. And,
+    /// at most every kOutputNonFiniteLogIntervalMs per slice, the non-finite
+    /// samples in WDSP's output (RxChannel::takeOutputNonFiniteSamples).
+    void reportDspDiagnostics(qint64 nowMs);
+
+    /// At most one non-finite output line per slice in this long.
+    static constexpr qint64 kOutputNonFiniteLogIntervalMs = 10000;
+
+    /// The NR stages in a dsplock.h WDSP_NR_* bit set, as the log names
+    /// them ("NNR Premium", "NR2", ...; "no stage recorded" for 0).
+    static QString nrStagesLogName(int stages);
+
+    /// The slow NR line reportDspDiagnostics logs (lcDsp) for one slice.
+    /// longestUs 0 (its record went to the previous take) prints "over 50
+    /// ms".
+    static QString slowNrCallLogLine(int sliceIndex, qint64 count, qint64 longestUs,
+                                     int longestStages, int stages);
+
+    /// The non-finite output line reportDspDiagnostics logs (lcDsp).
+    static QString outputNonFiniteLogLine(int sliceIndex, qint64 samples);
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
@@ -7734,6 +7765,13 @@ private:
     NnrLoadGovernor m_nnrGovernor;
     QElapsedTimer m_nnrGovernorClock;
     QHash<int, qint64> m_nnrLimitReadbackPending;
+    // 2026-10-22: per slice, non-finite WDSP output samples not yet logged
+    // and when the slice's last such line was logged (reportDspDiagnostics).
+    struct OutputNonFiniteLog {
+        qint64 pending{0};
+        qint64 lastLogMs{-1};
+    };
+    QHash<int, OutputNonFiniteLog> m_outputNonFiniteLog;
     QThread*         m_dspThread{nullptr};
     std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
     int m_waveformTxSlice = -1;
