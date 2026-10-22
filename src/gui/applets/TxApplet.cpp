@@ -2410,51 +2410,61 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
         fwdGaugeRefreshTimer->start();
     }
 
-    MainPowerMeter* meter = m_model->mainPowerMeter();
-    connectRow(s, meter, &MainPowerMeter::sourceChanged, [this, s, meter] {
-        if (!meter->onAmplifier()) {
-            s->setSmoothedForwardPowerW(meter->forwardW());
-        }
-        refreshPowerReadouts();
-    });
-    const auto refreshAmplifier = [this, meter] {
-        if (meter->onAmplifier()) { refreshPowerReadouts(); }
-    };
-    connectRow(s, meter, &MainPowerMeter::readingChanged, refreshAmplifier);
-    connectRow(s, meter, &MainPowerMeter::driveChanged, refreshAmplifier);
-    connectRow(s, meter, &MainPowerMeter::scaleChanged, [this] {
-        rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
-        refreshPowerReadouts();
-    });
-    // Bench #167: a lone zero after unkey left the EMA stuck above zero.
-    // Keep the explicit reset; the new rows then show their no-reading dashes.
-    if (mox) {
-        connectRow(s, mox, &MoxController::moxStateChanged, [this, s](bool active) {
-            if (!active) { s->setSmoothedForwardPowerW(0.0); }
+    // The model's power signals reach every power row through one handler
+    // each, made with the applet's own row: it resets every row's smoothed
+    // reading and then refreshes them all once, rather than once per row.
+    if (s == m_powerSection) {
+        MainPowerMeter* meter = m_model->mainPowerMeter();
+        const auto resetSmoothed = [this](double watts) {
+            for (TxPowerSection* row : allPowerSections()) {
+                row->setSmoothedForwardPowerW(watts);
+            }
+        };
+        connect(meter, &MainPowerMeter::sourceChanged, this, [this, meter, resetSmoothed] {
+            if (!meter->onAmplifier()) {
+                resetSmoothed(meter->forwardW());
+            }
             refreshPowerReadouts();
         });
-    }
-    // R-R3-49 parity Task 33: the remote controller never keys; the Core's
-    // mirrored transmit state clears the rows and drive note instead.
-    connectRow(s, m_model, &RadioModel::transmittingChanged, [this, s](bool active) {
-        if (!active) { s->setSmoothedForwardPowerW(0.0); }
-        refreshPowerReadouts();
-    });
+        const auto refreshAmplifier = [this, meter] {
+            if (meter->onAmplifier()) { refreshPowerReadouts(); }
+        };
+        connect(meter, &MainPowerMeter::readingChanged, this, refreshAmplifier);
+        connect(meter, &MainPowerMeter::driveChanged, this, refreshAmplifier);
+        connect(meter, &MainPowerMeter::scaleChanged, this, [this] {
+            rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
+            refreshPowerReadouts();
+        });
+        // Bench #167: a lone zero after unkey left the EMA stuck above zero.
+        // Keep the explicit reset; the new rows then show their no-reading dashes.
+        if (mox) {
+            connect(mox, &MoxController::moxStateChanged, this, [this, resetSmoothed](bool active) {
+                if (!active) { resetSmoothed(0.0); }
+                refreshPowerReadouts();
+            });
+        }
+        // R-R3-49 parity Task 33: the remote controller never keys; the Core's
+        // mirrored transmit state clears the rows and drive note instead.
+        connect(m_model, &RadioModel::transmittingChanged, this, [this, resetSmoothed](bool active) {
+            if (!active) { resetSmoothed(0.0); }
+            refreshPowerReadouts();
+        });
 
-    // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
-    // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
-    // unreadable.  Subscribe to currentRadioChanged so the gauge ticks
-    // and red-zone redraw whenever the active radio changes.
-    //
-    // Issue #175 Task 7: also rescale the RF Power and Tune Power sliders
-    // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
-    //  every other SKU → canonical 0..100/1 with bare integer labels).
-    connectRow(s, m_model, &RadioModel::currentRadioChanged,
-            [this](const NereusSDR::RadioInfo&) {
-        const auto model = m_model->hardwareProfile().model;
-        rescaleFwdGaugeForModel(model);
-        rescalePowerSlidersForModel(model);
-    });
+        // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
+        // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
+        // unreadable.  Subscribe to currentRadioChanged so the gauge ticks
+        // and red-zone redraw whenever the active radio changes.
+        //
+        // Issue #175 Task 7: also rescale the RF Power and Tune Power sliders
+        // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
+        //  every other SKU → canonical 0..100/1 with bare integer labels).
+        connect(m_model, &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo&) {
+            const auto model = m_model->hardwareProfile().model;
+            rescaleFwdGaugeForModel(model);
+            rescalePowerSlidersForModel(model);
+        });
+    }
     // Apply the current model's scale at wireControls() time so cold-launch
     // (or reconnect-on-startup) lands a properly-sized gauge + sliders before
     // the first telemetry sample.

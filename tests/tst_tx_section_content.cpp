@@ -25,6 +25,7 @@
 //  12. A remote window's 2-TONE copies follow the Core.
 //  13. A copy's Take transmit asks as the applet's own does.
 //  14. A preview of a row is inert.
+//  15. An unkey clears every power row's reading.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -760,6 +761,42 @@ private slots:
         const bool shown = chain->levButton()->isChecked();
         rm.transmitModel().setTxLevelerOn(!rm.transmitModel().txLevelerOn());
         QCOMPARE(chain->levButton()->isChecked(), shown);
+    }
+
+    // ── 15. An unkey clears every power row's reading ────────────────────
+    // One handler per model signal serves every power row; each row's
+    // smoothed forward power still drops to zero on an unkey.
+    void anUnkeyClearsEveryPowerRow()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QWidget host;
+        auto* first = qobject_cast<TxPowerSection*>(
+            registry.createWidget(registry.makeEntry("tx.power"), &host));
+        auto* second = qobject_cast<TxPowerSection*>(
+            registry.createWidget(registry.makeEntry("tx.power"), &host));
+        auto* own = applet.findChild<TxPowerSection*>();
+        QVERIFY(first && second && own);
+
+        rm.radioStatus().setForwardPower(50.0);
+        for (TxPowerSection* row : {own, first, second}) {
+            QVERIFY(row->smoothedForwardPowerW() > 0.0);
+        }
+        emit rm.moxController()->moxStateChanged(false);
+        for (TxPowerSection* row : {own, first, second}) {
+            QCOMPARE(row->smoothedForwardPowerW(), 0.0);
+        }
+
+        // And again from the mirrored transmit state a remote window uses.
+        rm.radioStatus().setForwardPower(50.0);
+        QVERIFY(second->smoothedForwardPowerW() > 0.0);
+        emit rm.transmittingChanged(false);
+        for (TxPowerSection* row : {own, first, second}) {
+            QCOMPARE(row->smoothedForwardPowerW(), 0.0);
+        }
     }
 };
 
