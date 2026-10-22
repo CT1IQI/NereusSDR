@@ -4401,6 +4401,12 @@ target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_
 #   Channel ID: WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 with single-RX layout.
 nereus_add_test(tst_wdsp_engine_tx_channel)
 
+# -- MaxBin hold above 0 dBm: the detector's hold falls again after a very
+#    strong signal instead of creeping toward 0 dBm for good (Thetis
+#    #2681). Ported from Longpath PR 215 (tests/tst_maxbin_hold_decay.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_maxbin_hold_decay)
+
 # ── Phase 3M-3a-iii Task 20: WdspEngine DEXP DSP-instance lifecycle ──────────
 # The bench-failing fix: before Task 20, pdexp[1] was permanently nullptr
 # after createTxChannel because create_dexp had never been ported into
