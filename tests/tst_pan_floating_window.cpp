@@ -13,7 +13,7 @@
 // Modification history (NereusSDR):
 //   2026-10-22 - Application quit closes a floating pan without docking it
 //                 (ported from Longpath tests/tst_pan_floating_window.cpp:
-//                 32-51 [@383f058], Longpath PR 83); the close box still
+//                 33-52 [@383f058], Longpath PR 83); the close box still
 //                 docks. By J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Claude Code.
 // =================================================================
@@ -83,7 +83,7 @@ private slots:
         QCOMPARE(applet->parentWidget(), &destination);
     }
 
-    // From Longpath tests/tst_pan_floating_window.cpp:32-51 [@383f058]
+    // From Longpath tests/tst_pan_floating_window.cpp:33-52 [@383f058]
     //   adapter: NereusSDR's window takes the applet through adoptApplet(),
     //   and Longpath's kFensterFrist exposure timeout is the QtTest default.
     // 2026-09-24: mit schwebendem Panadapter liess sich Longpath nicht

@@ -124,8 +124,8 @@ void PanFloatingWindow::updateWindowTitle()
 // From Longpath src/gui/PanFloatingWindow.cpp:230-243 [@383f058]
 //   Application quit closes every top-level window with a close event that
 //   is not spontaneous, and one ignored close cancels the whole quit. So a
-//   non-spontaneous close is accepted (the window only hides; the pan stays
-//   floating, so the next launch restores it floating) and only a close the
+//   non-spontaneous close is accepted (the window only hides; the pan is not
+//   docked on the way out, and its geometry is saved) and only a close the
 //   window system sends -- the user's close box -- docks.
 void PanFloatingWindow::closeEvent(QCloseEvent* event)
 {
@@ -144,6 +144,9 @@ void PanFloatingWindow::closeEvent(QCloseEvent* event)
         event->accept();
         return;
     }
+    // NereusSDR: a programmatic close() is not spontaneous either, so it
+    // hides the window without docking. To dock from code, call
+    // requestDock() (dockRequested -> PanadapterStack::dockPanadapter).
     requestDock();
     event->ignore();
 }

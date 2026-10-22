@@ -91,6 +91,12 @@ void AppletFloatingWindow::closeEvent(QCloseEvent* event)
     // where the operator left it. The same rule as Longpath
     // src/gui/PanFloatingWindow.cpp:240-243 [@383f058] (reference; no code
     // ported).
+    // This window is used only by AppletPanelWidget's unmanaged path; the
+    // managed workspace floats applets as FloatingContainer, which already
+    // accepts its close during quit.
+    // A programmatic close() is not spontaneous either, so it hides the
+    // window without docking. To dock from code, emit dockRequested() (or
+    // call AppletPanelWidget::dockApplet()).
     if (!event->spontaneous()) {
         event->accept();
         return;
