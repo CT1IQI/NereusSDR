@@ -156,9 +156,6 @@ KEPT_RADII: Dict[Tuple[str, str], Tuple[int, str]] = {
     ("ios/NereusApp/Band/VfoFlagView.swift", "6"): (1, _FLAG),
     ("ios/NereusApp/Band/FoldedTagView.swift", "4"): (2, _FLAG),
     ("ios/NereusApp/Band/JumpViews.swift", "4"): (4, "the edge markers, drawn as the folded flag (W11)"),
-    # Pending: lane A owns SoundPanel.swift in this wave; its output row
-    # becomes chipRadius there and this entry goes.
-    ("ios/NereusApp/Audio/SoundPanel.swift", "4"): (1, "PENDING: the output row, changed in lane A's SoundPanel work"),
 }
 
 # A corner radius written as a number.
