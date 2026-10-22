@@ -109,9 +109,9 @@ struct BandReadouts: View {
         } label: {
             Text(Self.liveText)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(workspaceForeground(Self.liveLook))
                 .frame(minWidth: 56, minHeight: 32)
-                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .background { WorkspaceFace(Self.liveLook) }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -125,6 +125,13 @@ struct BandReadouts: View {
     // MARK: The words
 
     static let liveText = "LIVE"
+
+    /// The LIVE button's face, shown only while the waterfall looks back.
+    /// The desktop fills its LIVE button red while paused (From
+    /// src/gui/SpectrumWidget.cpp:8261-8273, `0xc0, 0x20, 0x20` when
+    /// !m_wfLive); W5 keeps kTxRed for transmit, so every other red is the
+    /// muted danger set: kRedBg, kRedText, kRedBorder (WorkspacePalette.h:325-327).
+    static let liveLook: WorkspaceLook = .danger
 
     static func fpsText(_ fps: Double) -> String {
         String(format: "%.1f fps", fps)
