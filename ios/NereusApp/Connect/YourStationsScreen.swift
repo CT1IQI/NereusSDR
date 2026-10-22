@@ -35,7 +35,7 @@ struct YourStationsScreen: View {
                         } label: {
                             Text("+")
                                 .font(.system(size: 26))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                                 .frame(width: 40, height: 40)
                         }
                         .accessibilityLabel("Add a Core")
@@ -99,7 +99,7 @@ struct YourStationsScreen: View {
                             .padding(.top, 12)
                         Button("About this app") { showingAbout = true }
                             .font(.footnote)
-                            .foregroundStyle(ChromeColours.accent)
+                            .foregroundStyle(ChromeColours.accentText)
                             .frame(minHeight: 44)
                             .accessibilityIdentifier("coresAbout")
                     }

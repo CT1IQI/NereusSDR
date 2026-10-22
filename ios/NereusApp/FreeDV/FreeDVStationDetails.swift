@@ -25,7 +25,7 @@ struct FreeDVStationDetails: View {
                 Spacer()
                 Button("Close") { freedv.openDetails = nil }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .accessibilityIdentifier("freedv.details.close")
             }
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 5) {

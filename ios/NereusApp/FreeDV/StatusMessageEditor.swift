@@ -23,7 +23,7 @@ struct StatusMessageEditor: View {
                 Spacer()
                 Button("Done") { freedv.editingMessage = false }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .accessibilityIdentifier("freedv.status.done")
             }
             Text("Listed beside your station on FreeDV Reporter.")
@@ -70,7 +70,7 @@ struct StatusMessageEditor: View {
                         HStack {
                             Text(message)
                                 .font(.system(size: 13))
-                                .foregroundStyle(message == text ? ChromeColours.accent : ChromeColours.text)
+                                .foregroundStyle(message == text ? ChromeColours.accentText : ChromeColours.text)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if message == text {

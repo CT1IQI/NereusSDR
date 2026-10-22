@@ -303,7 +303,7 @@ struct VfoFlagView: View {
                         VStack(spacing: 2) {
                             filterWidth(metrics)
                             Text("DIV").font(.system(size: 9 * metrics.scale, weight: .bold))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                         }
                         .frame(width: metrics.diversity.width, height: FlagMetrics.header)
                         .contentShape(Rectangle())

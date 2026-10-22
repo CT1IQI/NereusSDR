@@ -93,7 +93,7 @@ struct DisplaySheetStackRows: View {
         } label: {
             Text(DisplaySheetModel.resetStackTitle)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))

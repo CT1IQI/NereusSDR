@@ -71,7 +71,7 @@ struct JumpBar: View {
                 HStack(spacing: 6) {
                     Text("\u{25C0}")
                         .font(.system(size: large ? 15 : 11))
-                        .foregroundStyle(ChromeColours.accent)
+                        .foregroundStyle(ChromeColours.accentText)
                     Text(Self.backTitle)
                         .font(.system(size: large ? 19 : 13, weight: .bold))
                         .foregroundStyle(ChromeColours.textBright)

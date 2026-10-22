@@ -596,7 +596,7 @@ struct FreeDVReporterTests {
             ConnectChrome.NavBar(title: "FreeDV Reporter", back: "Tools") {
                 Link("Website", destination: FreeDVReporterModel.website)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
             }
             FreeDVReporterPage(freedv: freedv)
         }

@@ -111,7 +111,7 @@ struct RotorPage: View {
         } label: {
             Text("Turn to \(RotorModel.headingText(selection))")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .background(ChromeColours.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.accent, lineWidth: 1))

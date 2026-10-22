@@ -139,7 +139,7 @@ struct DiversityPage: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .foregroundStyle(usable ? (memory != nil ? ChromeColours.accent : ChromeColours.text)
+            .foregroundStyle(usable ? (memory != nil ? ChromeColours.accentText : ChromeColours.text)
                                     : ChromeColours.buttonOffText)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(model.storing && enabled ? ChromeColours.buttonOnAmber

@@ -471,7 +471,7 @@ private struct SliceListRow: View {
         let here = row.here
         let pill = Text(here ? SliceRoster.thisPanText : SliceRoster.anotherPanText)
             .font(.system(size: large ? 19 : 11))
-            .foregroundStyle(here ? ChromeColours.accent : SliceListStyle.whereText)
+            .foregroundStyle(here ? ChromeColours.accentText : SliceListStyle.whereText)
             .lineLimit(1)
             .fixedSize()
             .padding(.horizontal, 6)

@@ -65,7 +65,7 @@ struct FrequencyPad: View {
                 model.cancel()
             }
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(ChromeColours.accent)
+            .foregroundStyle(ChromeColours.accentText)
             .buttonStyle(.plain)
         }
     }

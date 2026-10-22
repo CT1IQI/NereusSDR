@@ -48,6 +48,8 @@ enum BandColours {
     /// the words, the locked-on dot at 5 dB or more, the dot below 5 dB,
     /// the not-locked dot, the greyed older-Core row, and the mode tab in RADE.
     static let radeRow = P.accentFill
+    /// The RADE row's words, in the accent for text (spec section 10).
+    static let radeRowText = P.accentText
     static let radeGood = P.rgb(0x6FA384)
     static let radeMarginal = P.rgb(0xE0E040) // kept (W2)
     static let radeHollow = P.rgb(0x505054)

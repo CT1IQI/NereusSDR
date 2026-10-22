@@ -38,7 +38,7 @@ struct FoldedTagView: View {
             .accessibilityAddTraits(.isButton)
             if entry.diversityOn {
                 Button { openDiversity?() } label: {
-                    Text("DIV").font(.system(size: 10, weight: .bold)).foregroundStyle(ChromeColours.accent)
+                    Text("DIV").font(.system(size: 10, weight: .bold)).foregroundStyle(ChromeColours.accentText)
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

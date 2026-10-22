@@ -14,7 +14,7 @@ struct PlaceTakenScreen: View {
             Text("TAKEN OVER")
                 .font(.system(size: 20, weight: .heavy, design: .monospaced))
                 .tracking(2)
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("placeTakenTitle")
             if case .placeTaken(let name, _, let happened, _) = notice {

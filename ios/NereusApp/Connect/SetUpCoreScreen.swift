@@ -59,7 +59,7 @@ struct SetUpCoreScreen: View {
         HStack(spacing: 12) {
             Text("\(number)")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(width: 22, height: 22)
                 .overlay(Circle().strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {

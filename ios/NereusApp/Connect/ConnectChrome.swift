@@ -56,7 +56,7 @@ enum ConnectChrome {
                         Button(action: onBack) {
                             Text("\u{2039} \(back)")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                                 .frame(height: backHeight)
                                 .padding(.horizontal, 4)
                         }

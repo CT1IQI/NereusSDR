@@ -23,7 +23,10 @@ enum ChromeColours {
     static let textBright = P.textBright
     static let textDim = P.textSecondary
     static let textFaint = P.textScale
+    /// The accent for fills, marks and icons (4.4 on kPanelBg; spec section 10).
     static let accent = P.accentFill
+    /// The accent for words: small text and a text button's title (5.6 on kPanelBg; spec section 10).
+    static let accentText = P.accentText
     static let icon = P.titleText
     static let iconMuted = P.textInactive
     static let iconOpenBackground = P.glassSelBot // glass

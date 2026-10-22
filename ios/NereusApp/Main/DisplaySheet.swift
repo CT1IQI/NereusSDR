@@ -236,7 +236,7 @@ struct DisplaySheet: View {
                     } label: {
                         Text("Re-tune")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(model.retuneAvailable ? ChromeColours.accent : ChromeColours.buttonOffText)
+                            .foregroundStyle(model.retuneAvailable ? ChromeColours.accentText : ChromeColours.buttonOffText)
                     }
                     .buttonStyle(.plain)
                     .disabled(!model.retuneAvailable)
@@ -258,7 +258,7 @@ struct DisplaySheet: View {
             Button(action: openSetup) {
                 Text("More display options in Setup \u{203A}")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 8)
                     .padding(.bottom, 2)

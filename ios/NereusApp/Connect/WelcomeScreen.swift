@@ -24,7 +24,7 @@ struct WelcomeScreen: View {
                 .padding(.top, 14)
             Text("Your station, from anywhere.")
                 .font(.system(size: 15))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .padding(.top, 4)
             Text("This app runs your radio through a NereusSDR Core: a computer or a small box connected to the radio at home.")
                 .font(.system(size: 14))
@@ -43,7 +43,7 @@ struct WelcomeScreen: View {
                     .accessibilityIdentifier("setUpCore")
                 Button("About this app") { showingAbout = true }
                     .font(.footnote)
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("welcomeAbout")
             }
