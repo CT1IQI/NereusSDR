@@ -93,15 +93,20 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
             // glide rested. It goes in now, its slot a row period on, unless
             // its due time is later than that (the waterfall rests rather
             // than plays a row early) or a few rows earlier: then the grid
-            // starts again at it.
+            // starts again at it. Resting is decided by the due time alone.
+            // A row bound by its hand-off (its target the hand-off plus a
+            // row period and the margin) takes the later of the two slots
+            // and keeps the rate: starting again there reset the rate
+            // learnt against a drifting Core on most late hand-offs (fix
+            // wave, second review).
             m_starved = false;
             const double lateSlot = now + step;
-            if (target > lateSlot || lateSlot - target > reanchorNs) {
+            if (double(frontDueNs) > lateSlot || lateSlot - target > reanchorNs) {
                 startAgain();
                 continue;
             }
             m_slideStartNs = now;
-            m_slotNs = lateSlot;
+            m_slotNs = std::max(lateSlot, target);
             ++rows;
             continue;
         }

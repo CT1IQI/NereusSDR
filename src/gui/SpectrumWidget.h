@@ -3898,15 +3898,20 @@ private:
     void trimRemoteRowQueue();
     // The pump on a drawn frame (paintEvent) and on a ticker tick. A drawn
     // frame takes at most RemoteWaterfallRowClock::kMaxRowsPerFrame rows
-    // across both; a tick with no frame drawn since the last tick (the pan
-    // is not drawing) starts a new budget.
+    // less those the ticks put in since the last drawn frame. A tick
+    // starts a budget of its own only when neither a frame nor a fresh
+    // budget came in the last half row period: ticks queued up behind a
+    // stall arrive back to back and share one, and a pan that is not
+    // drawing has its ticks (a row period apart) keep its rows going in.
     void pumpRemoteWaterfallOnFrame();
     void pumpRemoteWaterfallOnTick();
-    int m_remoteRowsThisFrame{0};
-    bool m_remoteFrameSinceTick{false};
+    int m_remoteRowsByTicks{0};
+    qint64 m_remoteBudgetStartNs{0};
+    bool m_remoteBudgetStarted{false};
     // The remote row clock: advance it to now and put in the rows it says
-    // are due. Run on every frame the pan draws and on every ticker tick.
-    void pumpRemoteWaterfallRows();
+    // are due, at most maxRows. Returns the rows put in. Run on every
+    // frame the pan draws and on every ticker tick.
+    int pumpRemoteWaterfallRows(int maxRows);
     // The steady clock the remote rows are queued and put in by, in ns.
     qint64 remoteRowNowNs() const;
     // A remote pan's waterfall scrolls by this clock, at the Core's row

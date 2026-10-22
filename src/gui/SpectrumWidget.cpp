@@ -3094,26 +3094,38 @@ qint64 SpectrumWidget::remoteRowNowNs() const
 
 void SpectrumWidget::pumpRemoteWaterfallOnFrame()
 {
-    m_remoteRowsThisFrame = 0;
-    m_remoteFrameSinceTick = true;
-    pumpRemoteWaterfallRows();
+    // The ticks since the last drawn frame spent part of this frame's
+    // budget: their rows show first on this frame.
+    pumpRemoteWaterfallRows(RemoteWaterfallRowClock::kMaxRowsPerFrame - m_remoteRowsByTicks);
+    m_remoteRowsByTicks = 0;
+    m_remoteBudgetStartNs = remoteRowNowNs();
+    m_remoteBudgetStarted = true;
 }
 
 void SpectrumWidget::pumpRemoteWaterfallOnTick()
 {
-    if (!m_remoteFrameSinceTick) {
-        // No frame drawn since the last tick: the pan is not drawing, and
-        // the ticks keep its rows going in, a frame's worth a tick.
-        m_remoteRowsThisFrame = 0;
+    // A fresh budget only when nothing started one for half a row period:
+    // the ticker posts its ticks queued and does not coalesce them, so
+    // after a main-thread stall they land back to back on one steady
+    // time. Half rather than a whole row period: the ticker runs at the
+    // row period, and a tick landing a little early would otherwise share
+    // the last one's budget and a pan that is not drawing would fall
+    // behind.
+    const qint64 now = remoteRowNowNs();
+    const qint64 freshAfterNs = m_remoteRowClock.periodNs() / 2;
+    if (!m_remoteBudgetStarted || now - m_remoteBudgetStartNs >= freshAfterNs) {
+        m_remoteRowsByTicks = 0;
+        m_remoteBudgetStartNs = now;
+        m_remoteBudgetStarted = true;
     }
-    m_remoteFrameSinceTick = false;
-    pumpRemoteWaterfallRows();
+    m_remoteRowsByTicks +=
+        pumpRemoteWaterfallRows(RemoteWaterfallRowClock::kMaxRowsPerFrame - m_remoteRowsByTicks);
 }
 
-void SpectrumWidget::pumpRemoteWaterfallRows()
+int SpectrumWidget::pumpRemoteWaterfallRows(int maxRows)
 {
     if (!m_remoteSpectrum || !m_remoteRowClock.running()) {
-        return;
+        return 0;
     }
     const qint64 now = remoteRowNowNs();
     if (m_txExternalWaterfall) {
@@ -3127,16 +3139,15 @@ void SpectrumWidget::pumpRemoteWaterfallRows()
             return row.dueNs <= now;
         });
         m_remoteRowClock.reset();
-        return;
+        return 0;
     }
-    const int budget = RemoteWaterfallRowClock::kMaxRowsPerFrame - m_remoteRowsThisFrame;
     const int rows = m_remoteRowQueue.isEmpty()
-        ? m_remoteRowClock.advance(now, 0, now, now, budget)
+        ? m_remoteRowClock.advance(now, 0, now, now, maxRows)
         : m_remoteRowClock.advance(now, int(m_remoteRowQueue.size()),
                                    m_remoteRowQueue.constFirst().dueNs,
-                                   m_remoteRowQueue.constFirst().queuedNs, budget);
-    m_remoteRowsThisFrame += rows;
+                                   m_remoteRowQueue.constFirst().queuedNs, maxRows);
     putRemoteWaterfallRows(rows);
+    return rows;
 }
 
 void SpectrumWidget::putRemoteWaterfallRows(int rows)
