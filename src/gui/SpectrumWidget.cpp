@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 pan's waterfall ticker, scroll glide and time scale run
+//                 at the Core's row period (framesPerLine frames at its
+//                 frame rate), not the pan's update period, which the
+//                 request rounds up to whole frames.
 //   2026-10-16  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 frequency-scale label counter counts only labels drawn,
 //                 after the narrow-layout skip.
@@ -823,7 +828,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         onWaterfallTick();
     }, Qt::QueuedConnection);
     m_waterfallTickerThread->start();
-    m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    applyWaterfallTickerPeriod();
     m_waterfallTicker->start();
 
     // Sub-epic E: debounce timer for waterfall history re-allocation
@@ -2427,7 +2432,7 @@ void SpectrumWidget::resetPanDisplayOverridesImpl(const QStringList& bases)
     // Waterfall rate and scrollback depth (as setWfUpdatePeriodMs() and
     // setWaterfallHistoryMs() do).
     if (m_wfUpdatePeriodMs != oldWfPeriodMs && m_waterfallTicker) {
-        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+        applyWaterfallTickerPeriod();
     }
     if ((m_wfUpdatePeriodMs != oldWfPeriodMs || m_waterfallHistoryMs != oldHistoryMs)
         && m_historyResizeTimer) {
@@ -2588,6 +2593,8 @@ void SpectrumWidget::clearRemoteSpectrum()
     m_remoteWidebandAdcRateHz = 0.0;
     m_remoteFftSize = 0;
     m_remoteFps = 0;
+    m_remoteFramesPerLine = 0;
+    applyWaterfallTickerPeriod();
     recomputeExtendedMode();
     m_dss.clear();
     m_dssFoldCount = 0;
@@ -2664,6 +2671,8 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
         m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
+        m_remoteFramesPerLine = context.framesPerLine > 0 ? context.framesPerLine : 0;
+        applyWaterfallTickerPeriod();
         return;
     }
     // R-DISP-RETUNE: a moved picture and a new picture retire the same
@@ -2701,6 +2710,8 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // own (idle) engine or display timer.
     m_remoteFftSize = grantedFftSize > 0 ? grantedFftSize : 0;
     m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
+    m_remoteFramesPerLine = context.framesPerLine > 0 ? context.framesPerLine : 0;
+    applyWaterfallTickerPeriod();
     setDdcCenterFrequency(sourceCentreHz);
     setSampleRate(sampleRateHz);
     setDisplayWindowPreservingHistory(context.exactCentreHz, context.exactSpanHz);
@@ -2993,6 +3004,46 @@ void SpectrumWidget::drainRemoteWaterfallRows()
         ++m_remoteRowsPushed;
         m_lastRemoteRowPushed = row.pixelsDbm;
     }
+}
+
+qint64 SpectrumWidget::remoteWaterfallRowPeriodNs() const
+{
+    if (!m_remoteSpectrum || m_remoteFps <= 0 || m_remoteFramesPerLine <= 0) {
+        return 0;
+    }
+    // As RemoteMediaController gives the presenter its row period.
+    return qint64(m_remoteFramesPerLine) * 1'000'000'000LL / m_remoteFps;
+}
+
+double SpectrumWidget::waterfallRowPeriodMs() const
+{
+    if (const qint64 rowNs = remoteWaterfallRowPeriodNs(); rowNs > 0) {
+        return double(rowNs) / 1'000'000.0;
+    }
+    return double(std::max(1, m_wfUpdatePeriodMs));
+}
+
+void SpectrumWidget::applyWaterfallTickerPeriod()
+{
+    if (!m_waterfallTicker) {
+        return;
+    }
+    // A remote pan's rows come at the Core's row period: the request asks
+    // for ceil(update period x fps / 1000) frames a row, so a 42 ms period
+    // at 30 fps gets a row every 66.67 ms. drainRemoteWaterfallRows() takes
+    // one row a tick; ticking at the update period found no row on one tick
+    // in three and the waterfall moved, moved and paused. Ticking at the
+    // row period takes each row in its own tick.
+    if (const qint64 rowNs = remoteWaterfallRowPeriodNs(); rowNs > 0) {
+        m_waterfallTicker->setUpdatePeriodNs(rowNs);
+    } else {
+        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    }
+}
+
+qint64 SpectrumWidget::waterfallTickerPeriodNsForTest() const
+{
+    return m_waterfallTicker ? m_waterfallTicker->updatePeriodNs() : 0;
 }
 
 void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
@@ -5686,8 +5737,8 @@ int SpectrumWidget::effectiveDssRowDivider() const
 // next row.
 float SpectrumWidget::dssScrollIncrement(int deltaMs) const
 {
-    const int periodMs = qMax(1, m_wfUpdatePeriodMs) * effectiveDssRowDivider();
-    return static_cast<float>(deltaMs) / static_cast<float>(periodMs);
+    const double periodMs = waterfallRowPeriodMs() * effectiveDssRowDivider();
+    return static_cast<float>(deltaMs / periodMs);
 }
 
 void SpectrumWidget::setThreeDSliceDepth(bool on)
@@ -5743,7 +5794,7 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     // push to the new period so a slider drag actually changes scroll
     // rate immediately (rather than waiting for the next ctor).
     if (m_waterfallTicker) {
-        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+        applyWaterfallTickerPeriod();
     }
 
     // Sub-epic E: capacity may have changed — debounce history rebuild
@@ -8273,7 +8324,7 @@ void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
     p.drawText(liveRect, Qt::AlignCenter, QStringLiteral("LIVE"));
 
     // Tick labels along the strip.
-    const float msPerRow = std::max(1, m_wfUpdatePeriodMs);
+    const float msPerRow = static_cast<float>(waterfallRowPeriodMs());
     const QRect labelRect = strip.adjusted(0, 4, 0, 0);
     const float totalSec = labelRect.height() * msPerRow / 1000.0f;
     if (totalSec <= 0) {
@@ -15042,7 +15093,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // cadence) -- imperceptible to the operator and the price for not
     // having to invent data that doesn't exist yet.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+    // A remote pan's rows come at the Core's row period: gliding over the
+    // update period instead reached the next row early and rested there.
+    const float pushPeriodMs = static_cast<float>(waterfallRowPeriodMs());
     const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
     const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
     // 2026-10-11 KG4VCF: the glide rests while the waterfall is paused. A

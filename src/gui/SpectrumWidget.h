@@ -1,4 +1,6 @@
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 pan's waterfall ticks and glides at the Core's row period.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Test-only friend for visible-plane IMD integration evidence.
@@ -1426,6 +1428,9 @@ public:
     quint64 remoteRowsPushedForTest() const { return m_remoteRowsPushed; }
     QVector<float> lastRemoteRowPushedForTest() const { return m_lastRemoteRowPushed; }
     void setWaterfallTickerPausedForTest(bool paused) { m_waterfallTickerPausedForTest = paused; }
+    // The period the waterfall ticker runs at, in ns.
+    qint64 waterfallTickerPeriodNsForTest() const;
+    double waterfallRowPeriodMsForTest() const { return waterfallRowPeriodMs(); }
     void tickWaterfallForTest() { onWaterfallTick(); }
     // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
@@ -3784,6 +3789,9 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
+    // The Core's frames per waterfall row for this remote pan (0 until its
+    // first context): with m_remoteFps, the period its rows come at.
+    int m_remoteFramesPerLine{0};
     // Display pill plan Task 15 (setRemoteDecimation).
     int m_remoteDecimation{1};
     RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
@@ -3820,6 +3828,14 @@ private:
     float m_wfGlideRowsForTest{-1.0f};
     void onWaterfallTick();
     void drainRemoteWaterfallRows();
+    // A remote pan's row period on the Core's clock: framesPerLine frames
+    // at the context's frame rate, in ns. 0 before the first context.
+    qint64 remoteWaterfallRowPeriodNs() const;
+    // The time between two waterfall rows: the Core's row period on a
+    // remote pan, the pan's update period otherwise.
+    double waterfallRowPeriodMs() const;
+    // Run the waterfall ticker at waterfallRowPeriodMs().
+    void applyWaterfallTickerPeriod();
     QVector<float> reprojectedToView(const QVector<float>& pixelsDbm,
                                      double centreHz, double spanHz) const;
     void refreshRemoteTraceProjection();

@@ -5940,6 +5940,7 @@ nereus_add_test(tst_telemetry_history)
 nereus_add_test(tst_audio_clock_estimator)
 # R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
 nereus_add_test(tst_remote_display_presenter)
+nereus_add_test(tst_remote_waterfall_cadence)
 nereus_add_test(tst_time_series_graph)
 nereus_add_test(tst_remote_telemetry fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_remote_diagnostics fakes/LoopbackTransport.cpp)
