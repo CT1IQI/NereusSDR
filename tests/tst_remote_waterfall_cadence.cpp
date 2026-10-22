@@ -6,7 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 NEREUS_TRACE_REMOTE_ROWS trace logs a starve when set and
-//                 nothing when unset.
+//                 nothing when unset; the ticker test stops its thread even
+//                 when it fails, so a failure is reported and not a fatal
+//                 "QThread: Destroyed while thread is still running".
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 ticker and glide at the Core's row period; the row clock's
 //                 grid locked to the rows' due times; then the review's fix
@@ -37,6 +39,7 @@
 
 #include <QtTest>
 #include <QRegularExpression>
+#include <QScopeGuard>
 
 #include <algorithm>
 #include <cmath>
@@ -252,10 +255,16 @@ private slots:
         connect(ticker, &WaterfallTicker::tick, ticker, [&ticks] { ticks.ref(); },
                 Qt::DirectConnection);
         thread.start();
+        auto stopThread = qScopeGuard([&thread, ticker] {
+            ticker->stop();
+            thread.quit();
+            thread.wait(5000);
+        });
         ticker->setUpdatePeriodNs(WaterfallTicker::kMinPeriodNs);
         ticker->start();
         // Five ticks of 10 ms; the wait is generous for a loaded machine.
         QTRY_VERIFY_WITH_TIMEOUT(ticks.loadRelaxed() >= 5, 5000);
+        stopThread.dismiss();
         ticker->stop();
         thread.quit();
         QVERIFY(thread.wait(5000));

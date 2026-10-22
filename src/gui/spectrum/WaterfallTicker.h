@@ -6,6 +6,9 @@
 //             period is held in nanoseconds and each tick is due at a
 //             fixed multiple of it, so a remote pan can tick at the Core's
 //             row period (66.67 ms for two frames at 30 fps) with no drift.
+// 2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: exported
+//             from the GUI DLL (NEREUS_GUI_EXPORT), so a connect to tick()
+//             from another image works on Windows.
 //
 // Dedicated worker-thread ticker for waterfall row pushes.  Isolates
 // the timer from main-thread state so a momentarily-busy GUI thread
@@ -41,6 +44,8 @@
 // =================================================================
 #pragma once
 
+#include "gui/NereusGuiExport.h"
+
 #include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
@@ -48,7 +53,7 @@
 
 namespace NereusSDR {
 
-class WaterfallTicker : public QObject {
+class NEREUS_GUI_EXPORT WaterfallTicker : public QObject {
     Q_OBJECT
 public:
     explicit WaterfallTicker(QObject* parent = nullptr);
