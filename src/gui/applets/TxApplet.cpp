@@ -264,6 +264,16 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-18  J.J. Boyd (KG4VCF): the RF Power and Tune Power sliders no
+//               longer change the tune drive source; Setup > Transmit >
+//               Power alone chooses it, as in Thetis (setPowerByBandPermitted
+//               removed with the write it gated). applyDriveSourceGate grays
+//               the slider TUNE or the two-tone test is not using, from
+//               Thetis setupTuneDriveSlider, grayed where Thetis hides.
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-21  J.J. Boyd (KG4VCF): the drive source gate sets a grayed
+//               power slider's accessible description to its reason, as
+//               the transmit gates do. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -435,6 +445,8 @@ constexpr int kTxColumnMarginV = 2;
 // The tooltip a control had before the transmit-permission layer
 // (setTransmitPermitted) disabled it, given back when permission returns.
 constexpr auto kTransmitSavedTooltip = "TxAppletSavedTransmitTooltip";
+constexpr auto kTransmitSavedEnabled = "TxAppletSavedTransmitEnabled";
+constexpr auto kTransmitSavedDescription = "TxAppletSavedTransmitDescription";
 
 // Disable a control with `reason` as its tooltip, remembering what it had,
 // or put back what it had. Shared by the keying gate and the transmit
@@ -448,8 +460,8 @@ void gateTransmitControl(QWidget* control, bool permitted, const QString& reason
     if (!control) { return; }
 
     static constexpr auto kSavedTooltip = kTransmitSavedTooltip;
-    static constexpr auto kSavedDescription = "TxAppletSavedTransmitDescription";
-    static constexpr auto kSavedEnabled = "TxAppletSavedTransmitEnabled";
+    static constexpr auto kSavedDescription = kTransmitSavedDescription;
+    static constexpr auto kSavedEnabled = kTransmitSavedEnabled;
     if (!permitted) {
         if (!control->property(kSavedTooltip).isValid()) {
             control->setProperty(kSavedTooltip, control->toolTip());
@@ -471,6 +483,37 @@ void gateTransmitControl(QWidget* control, bool permitted, const QString& reason
         control->setProperty(kSavedDescription, QVariant());
         control->setProperty(kSavedEnabled, QVariant());
     }
+}
+
+// The power sliders' own tooltips (rescalePowerSlidersForModel).
+// From Thetis console.resx + mi0bot-Thetis console.resx [v2.10.3.13-beta2]
+constexpr auto kRfPowerTooltip =
+    "Transmit Drive - relative value, not watts unless the PA profile "
+    "is configured with MAX watts @ 100%";
+constexpr auto kTunePowerTooltip =
+    "Tune and/or 2Tone Drive - relative value, not watts unless the "
+    "PA profile is configured with MAX watts @ 100%";
+
+// The drive source gate's enabled state, tooltip and accessible
+// description for a power slider: the description is the gate's reason,
+// as gateTransmitControl sets it, and empty while the slider is live.
+// While a transmit permission gate holds the slider (a remote window that
+// may not change it), the gate's saved state takes them, so the slider
+// comes back as the source says when permission returns.
+void setDriveSourceEnabled(QWidget* control, bool enabled, const QString& tooltip,
+                           const QString& reason)
+{
+    if (!control) { return; }
+    const QString description = enabled ? QString() : reason;
+    if (control->property(kTransmitSavedTooltip).isValid()) {
+        control->setProperty(kTransmitSavedEnabled, enabled);
+        control->setProperty(kTransmitSavedTooltip, tooltip);
+        control->setProperty(kTransmitSavedDescription, description);
+        return;
+    }
+    control->setEnabled(enabled);
+    control->setToolTip(tooltip);
+    control->setAccessibleDescription(description);
 }
 
 // A preview of a row (ContentRenderMode::Preview): it shows the row but can
@@ -639,6 +682,18 @@ void TxApplet::wireControls()
 
     wirePowerSection(m_powerSection);
     wireKeyingSection(m_keyingSection);
+
+    // The slider TUNE or the two-tone test is not using is grayed; Thetis
+    // reruns setupTuneDriveSlider on each source change and on TUN and 2TONE
+    // (console.cs:46651, 46673, 30206, 44832 [v2.10.3.15]).
+    connect(&tx, &TransmitModel::tuneDrivePowerSourceChanged,
+            this, [this](DrivePowerSource) { applyDriveSourceGate(); });
+    connect(&tx, &TransmitModel::twoToneDrivePowerSourceChanged,
+            this, [this](DrivePowerSource) { applyDriveSourceGate(); });
+    connect(&tx, &TransmitModel::tuneChanged,
+            this, [this](bool) { applyDriveSourceGate(); });
+    connect(&tx, &TransmitModel::twoToneActiveChanged,
+            this, [this](bool) { applyDriveSourceGate(); });
 
     // ── K.2: MOX button tooltip override ← SliceModel::dspModeChanged ─────────
     // Phase 3M-1b K.2: update MOX button tooltip when DSP mode changes.
@@ -1179,6 +1234,99 @@ void TxApplet::rescalePowerSlidersForModel(HPSDRModel model)
 {
     for (TxPowerSection* s : allPowerSections()) {
         s->rescalePowerSlidersForModel(model);
+    }
+    // The drive source gate sets the sliders' tooltips (kRfPowerTooltip,
+    // kTunePowerTooltip), with its reason while a slider is grayed.
+    applyDriveSourceGate();
+}
+
+// ---------------------------------------------------------------------------
+// The power slider TUNE or the two-tone test is not using is grayed.
+//
+// From Thetis console.cs:46677-46709 [v2.10.3.15] setupTuneDriveSlider:
+//   if (_tuneDrivePowerSource != DrivePowerSource.TUNE_SLIDER && _2ToneDrivePowerSource != DrivePowerSource.TUNE_SLIDER)
+//   {
+//       // hide it
+//       ptbTune.Visible = false;
+//       lblTune.Visible = false;
+//   }
+//   ...
+//   if (chkTUN.Checked)
+//   {
+//       ptbPWR.Enabled = _tuneDrivePowerSource == DrivePowerSource.DRIVE_SLIDER;
+//       ptbTune.Enabled = _tuneDrivePowerSource == DrivePowerSource.TUNE_SLIDER;
+//   }
+//   else if (chk2TONE.Checked)
+//   {
+//       ptbPWR.Enabled = _2ToneDrivePowerSource == DrivePowerSource.DRIVE_SLIDER;
+//       ptbTune.Enabled = _2ToneDrivePowerSource == DrivePowerSource.TUNE_SLIDER;
+//   }
+//   else
+//   {
+//       ptbPWR.Enabled = true;
+//       ptbTune.Enabled = true;
+//   }
+// Thetis calls it from the source setters (console.cs:46651, 46673), and
+// chkTUN_CheckedChanged and chk2TONE_CheckedChanged (console.cs:30206,
+// 44832). NereusSDR keeps the Tune slider on screen, grayed with its reason,
+// where Thetis hides it (JJ, 2026-10-18: disabled, never hidden).
+// ---------------------------------------------------------------------------
+void TxApplet::applyDriveSourceGate()
+{
+    const QList<TxPowerSection*> sections = allPowerSections();
+    if (sections.isEmpty()) { return; }
+    const QString rfTooltip = QString::fromLatin1(kRfPowerTooltip);
+    const QString tuneTooltip = QString::fromLatin1(kTunePowerTooltip);
+    if (!m_model) {
+        for (TxPowerSection* s : sections) {
+            setDriveSourceEnabled(s->rfPowerSlider(), true, rfTooltip, QString());
+            setDriveSourceEnabled(s->tunePowerSlider(), true, tuneTooltip, QString());
+        }
+        return;
+    }
+    const TransmitModel& tx = m_model->transmitModel();
+    const DrivePowerSource tuneSource = tx.tuneDrivePowerSource();
+    const DrivePowerSource twoToneSource = tx.twoToneDrivePowerSource();
+
+    bool rfOn = true;
+    bool tuneOn = true;
+    QString rfReason;
+    QString tuneReason;
+    const QString tuneSetup = tr("TUNE's drive source is chosen in "
+                                 "Setup > Transmit > Power.");
+    const QString twoToneSetup = tr("The two-tone test's drive source is "
+                                    "chosen in Setup > Test > Two-Tone IMD.");
+    if (tx.isTune()) {
+        rfOn = tuneSource == DrivePowerSource::DriveSlider;
+        tuneOn = tuneSource == DrivePowerSource::TuneSlider;
+        rfReason = tr("TUNE is not using this slider.") + QLatin1Char(' ') + tuneSetup;
+        tuneReason = rfReason;
+    } else if (tx.isTwoToneActive()) {
+        rfOn = twoToneSource == DrivePowerSource::DriveSlider;
+        tuneOn = twoToneSource == DrivePowerSource::TuneSlider;
+        rfReason = tr("The two-tone test is not using this slider.")
+                   + QLatin1Char(' ') + twoToneSetup;
+        tuneReason = rfReason;
+    }
+    // [original inline comment from console.cs:46681]
+    // hide it
+    // Grayed here, not hidden: neither TUNE nor the two-tone test uses it.
+    if (tuneOn && tuneSource != DrivePowerSource::TuneSlider
+        && twoToneSource != DrivePowerSource::TuneSlider) {
+        tuneOn = false;
+        tuneReason = tr("Neither TUNE nor the two-tone test uses this slider.")
+                     + QLatin1Char(' ') + tuneSetup;
+    }
+
+    // Every copy of the power rows, not just the applet's own.
+    for (TxPowerSection* s : sections) {
+        setDriveSourceEnabled(s->rfPowerSlider(), rfOn,
+                              rfOn ? rfTooltip : rfTooltip + QStringLiteral("\n\n") + rfReason,
+                              rfReason);
+        setDriveSourceEnabled(s->tunePowerSlider(), tuneOn,
+                              tuneOn ? tuneTooltip
+                                     : tuneTooltip + QStringLiteral("\n\n") + tuneReason,
+                              tuneReason);
     }
 }
 
@@ -2500,20 +2648,11 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
         // alone and the Core saves it. Writing the slot here too could pick
         // a different band (this applet's active slice) from the one that
         // transmits.
-        if (m_model && m_model->role() == RadioModel::Role::Local) {
-            tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
-            return;
-        }
-        // R-R3-49 (group A fix wave, M3): a Core below
-        // transmitSettingsVersion 5 refuses tuneDrivePowerSource and takes
-        // `power` alone.
-        if (!m_powerByBandPermitted) { return; }
-        // Symmetric to the tune-slider auto-switch above: touching the RF
-        // Power slider restores the tune source to DriveSlider so the
-        // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
-        // TUNE.  Last-touched-slider-wins UX. From Thetis console.cs:46553
-        // [v2.10.3.13] DrivePowerSource.DRIVE_SLIDER is the canonical default.
-        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        //
+        // The slider leaves the tune drive source alone: Thetis ptbPWR_Scroll
+        // never writes _tuneDrivePowerSource, which only the Setup radios set
+        // (setup.cs:22902-22915 [v2.10.3.15], radUseDriveSliderTune /
+        // radUseTuneSliderTune / radUseFixedDriveTune_CheckedChanged).
     });
 
     // Reverse: TransmitModel::powerChanged → slider
@@ -2550,19 +2689,11 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
             }
             return;
         }
+        // The tune drive source stays as Setup > Transmit > Power set it:
+        // Thetis ptbTune_Scroll (console.cs:46607-46630 [v2.10.3.15]) writes
+        // tunePower_by_band and never _tuneDrivePowerSource.
         if (tx.setTunePowerForTxBand(val)) { return; }
         tx.setTunePowerForBand(m_currentBand, val);
-        // When the user touches the tune slider, switch the tune drive
-        // source so TUNE actually reads from tunePowerForBand instead of
-        // the regular drive slider (the default per Thetis console.cs:46553
-        // [v2.10.3.13]).  Without this the tune slider is dead UI: its
-        // value persists per-band but the math kernel
-        // (TransmitModel::setPowerUsingTargetDbm txMode 1) only consults
-        // tunePowerForBand when m_tuneDrivePowerSource == TuneSlider.
-        // NereusSDR-spin: Thetis exposes _tuneDrivePowerSource via a
-        // separate Setup combo; NereusSDR follows last-touched-slider-wins
-        // UX so users don't need to know the enum exists.
-        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     });
 
     connectRow(s, s->tunePowerSlider(), &QSlider::sliderReleased, [this, s]() {
@@ -3569,6 +3700,9 @@ void TxApplet::reapplyGates()
                                       m_transmitChainSettingsReason);
     setTxProfilePermitted(m_txProfilePermitted, m_txProfileReason);
     setPureSignalArmingPermitted(m_psArmingPermitted, m_psArmingReason);
+    // The power slider TUNE or the two-tone test is not using is grayed in a
+    // new copy too: the copy joins the list after it is wired.
+    applyDriveSourceGate();
 }
 
 } // namespace NereusSDR

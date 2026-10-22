@@ -517,6 +517,9 @@ private slots:
         TxApplet applet(&rm);
         ContainerContentRegistry registry;
         registerTxSectionContent(registry, &applet);
+        // TUNE on the Tune slider, so only the chain gate decides that
+        // slider here (the drive source gate grays it under Drive Slider).
+        rm.transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
 
         const QString txReason = QStringLiteral("Transmit is not yours");
         applet.setTransmitPermitted(false, txReason);
