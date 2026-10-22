@@ -3803,6 +3803,13 @@ nereus_add_test(tst_tx_applet_vox_toggle)
 # (Renamed from tst_tx_applet_lev_eq_proc.cpp during the post-bench cleanup.)
 nereus_add_test(tst_tx_applet_lev_eq_cfc)
 
+# ── The TX applet's rows as independent container content ───────────────────
+# A container can hold the TX Monitor controls (or any other row) on their own.
+# The applet stays the wiring authority: it makes each copy and wires it, so the
+# copy shows and sets the same model state as the applet's own row and follows
+# the same transmit-permission gates.  The applet's own panel is unchanged.
+nereus_add_test(tst_tx_section_content)
+
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
 # Phase 3M-VAX-toggle extends it to a 3-way switch so MicSource::Vax
@@ -9620,6 +9627,15 @@ nereus_add_test(tst_rade_reason_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_rade_reason_link PRIVATE NEREUS_BUILD_TESTS)
+# RX meter stamps: the Core stamps each slice's RX meter readings with its
+# lane's read time, only a peer that declared rxMeterStamps 1 is sent the
+# stamp, and a remote window holds the readings until their audio plays.
+nereus_add_test(tst_rx_meter_stamps
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_rx_meter_stamps PRIVATE NEREUS_BUILD_TESTS)
 # Radio speaker (R-SPK-13, R-SPK-14, R-SPK-16; V-SW-4): radio's RADIO
 # level, mute, amplifier choice and reports reach only a peer that declared
 # radioSpeaker 1, a remote window's change lands on the Core, and a window
@@ -10379,6 +10395,9 @@ nereus_add_test(tst_remote_fft_production)
 # Remote Daemon R3, Task 4: endpoint state, tier switching, frame reduction,
 # cadence, compression, and bounded DSS wide-row composition.
 nereus_add_test(tst_spectrum_endpoint)
+# Steady waterfall row times at the source: frames are stamped with the time
+# of their samples, and the engine's frame positions and 5 ms skips.
+nereus_add_test(tst_spectrum_sample_clock)
 nereus_add_test(tst_wideband_display_context)
 
 # Remote Daemon R3 GUI receive seam: decoded remote spectrum reaches the
