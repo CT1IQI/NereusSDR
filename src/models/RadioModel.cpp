@@ -20,8 +20,11 @@
 //   2026-10-22 - A lone slice that tunes well inside another receiver of its
 //                pan goes back onto that receiver instead of moving its own
 //                (bindSliceToStream, rejoinCandidateStreams; JJ's ruling
-//                2026-10-22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                Claude Code.
+//                2026-10-22). Only the highest active receiver is freed: a
+//                lone slice on the lower one takes the other's slices down
+//                onto it instead. Antennas compare on the label the slice
+//                will have on its new band. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
 //                checkbox sum) are named by the XVTR label, and a slice's
 //                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
@@ -14558,7 +14561,8 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
 
 QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
                                                 int currentStream,
-                                                double frequencyHz) const
+                                                const QString& joinLabel,
+                                                bool pinned) const
 {
     QVector<int> candidates;
     if (slice == nullptr || currentStream < 0 || slice->diversityEnabled()) {
@@ -14569,8 +14573,7 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
         return s->panKey().isEmpty() ? QStringLiteral("pan-0") : s->panKey();
     };
     const QString pan = panOf(slice);
-    const Band newBand = bandFromFrequency(frequencyHz);
-    const bool pinned = streamCtunPinned(currentStream);
+    const bool stationLocked = m_receiverManager && m_receiverManager->ddcFrequencyLocked();
     const QByteArray subject = m_sliceOwnership != nullptr
         ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
     for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
@@ -14585,13 +14588,16 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
         // labels the codec reads (buildStreamConfigsForCodec takes a stream's
         // antenna from its first slice in m_slices order, which may become
         // this one), so the receiver's ADC cannot move under its slices.
+        // `joinLabel` is the label this slice will have on its new band (its
+        // labels are refreshed for the new band only after this bind, by
+        // crossBandForSlice, and then only when the station's band changes).
         // Diversity on the receiver would change which DDC pair carries it.
         bool qualifies = false;
         for (const SliceModel* other : m_slices) {
             if (other == nullptr || other == slice || other->streamIndex() != st) {
                 continue;
             }
-            if (panOf(other) != pan || other->rxAntenna() != slice->rxAntenna()
+            if (panOf(other) != pan || other->rxAntenna() != joinLabel
                 || other->diversityEnabled()) {
                 qualifies = false;
                 break;
@@ -14602,16 +14608,10 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
             continue;
         }
         // C-Tune: the slice keeps the pin it had, and the receiver's is not
-        // touched, so neither slice's C-Tune changes.
-        if (streamCtunPinned(st) != pinned) {
-            continue;
-        }
-        // The slice's labels are refreshed for its new band only after this
-        // bind (crossBandForSlice runs later in the same frequencyChanged), so
-        // the band's Alex receive antenna is compared too: once the labels
-        // catch up they must still match the receiver's.
-        if (receiveAntennaDiffers(newBand,
-                                  bandFromFrequency(m_streamAllocator.streamCentreHz(st)))) {
+        // touched, so neither slice's C-Tune changes. Read as
+        // bindSliceToStream reads `pinned`: the receiver's own pin or the
+        // station-wide lock.
+        if ((streamCtunPinned(st) || stationLocked) != pinned) {
             continue;
         }
         // Several devices on one Core: a receiver anchored by another device
@@ -14711,29 +14711,70 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
 
     // JJ's ruling 2026-10-22: a slice alone on its receiver that tunes well
     // inside another receiver of its pan goes back onto that receiver,
-    // freeing its own, instead of dragging its own receiver along. STRIX,
-    // 2026-10-22: the Core restored A on 80 m and B on 40 m on two
+    // freeing one of the two, instead of dragging its own receiver along.
+    // STRIX, 2026-10-22: the Core restored A on 80 m and B on 40 m on two
     // receivers; A was then tuned to 7.268 MHz, 6 kHz from B, and stayed
     // alone (RetunedStream), so the window's pan cleared on every A/B click.
     //
     // Only where the retune would move this slice's own receiver
-    // (RetunedStream). A C-Tune-pinned slice still inside its own window
-    // gets JoinedExisting on that window instead and is left there: joining
-    // another receiver would move the pan under it, which is what C-Tune
-    // exists to prevent. The other receiver's centre and rate stay as they
-    // are (rejoinStream joins at a shift only), so the slices on it hear
-    // nothing new; the moving slice gets one short gap as its channel
-    // changes receivers, in place of the one its own receiver's retune
-    // would have cost.
+    // (RetunedStream), and never for a caller that required a receiver. A
+    // C-Tune-pinned slice still inside its own window gets JoinedExisting on
+    // that window instead and is left there: joining another receiver would
+    // move the pan under it, which is what C-Tune exists to prevent.
+    //
+    // The receiver freed is always the highest active one, so the DDC enable
+    // mask keeps no gap (the 2026-07-26 G2E bench, a hole at DDC1 and a dead
+    // second pan; see SliceStreamAllocator::retuneSlice):
+    // - this slice's receiver is the highest: it joins the other at a shift
+    //   only (rejoinStream). That receiver's centre and rate stay, so the
+    //   slices on it hear nothing new; this slice gets one short gap as its
+    //   channel changes receivers.
+    // - the other receiver is the highest: this slice's receiver retunes as
+    //   before, and the other's slices come down onto it when they all sit
+    //   well inside its new window (canFoldDown); the other is freed. They
+    //   get the one short gap instead.
+    // - freeing either would leave a gap (a third receiver above): nothing
+    //   moves, as before.
     bool rejoined = false;
-    if (placement.outcome == Outcome::RetunedStream && previousStream >= 0
-        && placement.streamIndex == previousStream) {
-        if (const auto rejoin = m_streamAllocator.rejoinStream(
-                previousStream, frequencyHz,
-                rejoinCandidateStreams(slice, previousStream, frequencyHz))) {
+    int foldFrom = -1;
+    bool refreshJoinLabels = false;
+    const Band newBand = bandFromFrequency(frequencyHz);
+    if (requiredStream < 0 && placement.outcome == Outcome::RetunedStream
+        && previousStream >= 0 && placement.streamIndex == previousStream) {
+        // The receive label this slice will have on its new band, as
+        // crossBandForSlice will decide it: the relay keeps the applied
+        // band's antenna while another device listens through it, and the
+        // slice keeps its labels then; otherwise the new band's label.
+        const Band applied = m_keptRxAntennaBand.value_or(m_lastBand);
+        const bool kept = receiveAntennaDiffers(applied, newBand)
+                          && !devicesListeningThroughRelay(slice).isEmpty();
+        const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+        const QString joinLabel =
+            kept ? slice->rxAntenna()
+                 : SliceModel::rxAntennaLabelFor(m_alexController, newBand, &sku);
+        const QVector<int> candidates =
+            rejoinCandidateStreams(slice, previousStream, joinLabel, ddcPinned);
+        if (const auto rejoin =
+                m_streamAllocator.rejoinStream(previousStream, frequencyHz, candidates)) {
             placement = *rejoin;
             rejoined = true;
+        } else {
+            const int top = m_streamAllocator.highestActiveStream();
+            if (top > previousStream && candidates.contains(top)) {
+                QVector<double> frequencies;
+                for (int id : slicesOnStream(top)) {
+                    if (const SliceModel* other = sliceById(id)) {
+                        frequencies.append(other->frequency());
+                    }
+                }
+                if (m_streamAllocator.canFoldDown(previousStream, frequencyHz, top,
+                                                  frequencies)) {
+                    foldFrom = top;
+                }
+            }
         }
+        refreshJoinLabels = (rejoined || foldFrom >= 0) && !kept
+                            && slice->rxAntenna() != joinLabel;
     }
 
     // Placement diagnostic. Added 2026-08-01 chasing a bench report that a
@@ -14766,7 +14807,11 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             << " occupantsBefore=" << occupants
             << (rejoined ? qPrintable(QStringLiteral(" (rejoined, receiver %1 freed)")
                                           .arg(previousStream))
-                         : "");
+                         : "")
+            << (foldFrom >= 0
+                    ? qPrintable(QStringLiteral(" (receiver %1's slices join it, receiver %1 freed)")
+                                     .arg(foldFrom))
+                    : "");
     }
 
     if (placement.outcome == Outcome::Rejected) {
@@ -14914,6 +14959,36 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // first block (defect H1).
     activateSliceChannel(slice);
     if (!current()) { return false; }
+
+    // A rejoin: the slice takes its new band's receive label now, so the
+    // receiver it shares reads one antenna from all its slices
+    // (crossBandForSlice would refresh it later, but only when the
+    // station's band changes). The label is the one the candidates were
+    // matched on, so this changes nothing on the receiver.
+    if (refreshJoinLabels) {
+        const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+        slice->refreshAntennasFromAlex(m_alexController, newBand, &sku);
+        if (!current()) { return false; }
+    }
+
+    // The other way round (canFoldDown): the higher receiver's slices come
+    // down onto this slice's retuned receiver, and the last to leave frees
+    // it (the migration above, in each one's own bind).
+    if (foldFrom >= 0) {
+        const QVector<int> moving = slicesOnStream(foldFrom);
+        for (int id : moving) {
+            SliceModel* other = sliceById(id);
+            if (other == nullptr || other->streamIndex() != foldFrom) {
+                continue;
+            }
+            if (!bindSliceToStream(other, other->frequency(), false, placement.streamIndex)) {
+                qCWarning(lcConnection) << "Slice" << id << "could not join receiver"
+                                        << placement.streamIndex << "from receiver"
+                                        << foldFrom;
+            }
+            if (!current()) { return false; }
+        }
+    }
 
     // The active-DDC set may have changed, so the codec must recompute.
     requestDdcAssignment();

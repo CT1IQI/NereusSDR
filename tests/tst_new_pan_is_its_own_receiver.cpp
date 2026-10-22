@@ -32,10 +32,16 @@
 //   2026-10-22: a lone slice that tunes well inside another receiver of its
 //               pan goes back onto it (JJ's ruling 2026-10-22). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: review fixes: only the highest receiver is freed (both
+//               ways round, and none from the middle of three), the new
+//               band's antenna label, Diversity, the anchoring device and a
+//               required receiver. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include "core/SliceOwnership.h"
 #include "core/SliceStreamAllocator.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -292,8 +298,12 @@ private slots:
     // 7.268 MHz, 6 kHz from B, and kept a receiver of its own, so the
     // window's pan cleared on every A/B click.
     //
-    // Two slices on pan-0, A on 80 m and B on 40 m on receivers of their
-    // own. Returns false (with a test failure) when the setup did not land.
+    // The receiver freed is always the highest active one, so the DDC enable
+    // mask keeps no gap (the 2026-07-26 G2E bench).
+    //
+    // Two slices on pan-0, A on 80 m on the LOWER receiver and B on 40 m on
+    // the higher one (JJ's case). Returns false (with a test failure) when
+    // the setup did not land.
     static bool twoReceiversOnOnePan(RadioModel& model, SliceModel*& a, SliceModel*& b)
     {
         a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
@@ -304,10 +314,24 @@ private slots:
         // Seeded on A's frequency, so B shares A's receiver; tuning it to
         // 40 m takes it out of that window onto a receiver of its own.
         b->setFrequency(7262000.0);
-        return a->streamIndex() >= 0 && b->streamIndex() >= 0
-            && a->streamIndex() != b->streamIndex();
+        return a->streamIndex() == 0 && b->streamIndex() == 1;
     }
 
+    // The other way round: B on 40 m on the lower receiver, A on 80 m on the
+    // higher one.
+    static bool loneSliceOnTheHigherReceiver(RadioModel& model, SliceModel*& a, SliceModel*& b)
+    {
+        b = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        if (!b) { return false; }
+        b->setFrequency(7262000.0);
+        a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        if (!a) { return false; }
+        a->setFrequency(3870000.0);
+        return b->streamIndex() == 0 && a->streamIndex() == 1;
+    }
+
+    // JJ's case: A, alone on the lower receiver, retunes it next to B. B
+    // comes down onto A's receiver and the higher one is freed.
     void a_lone_slice_tuned_into_its_pans_other_receiver_rejoins_it()
     {
         RadioModel model;
@@ -315,22 +339,74 @@ private slots:
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
         QVERIFY(twoReceiversOnOnePan(model, a, b));
-        const int oldStream = a->streamIndex();
-        const int bStream = b->streamIndex();
-        const double bCentre = model.streamAllocator().streamCentreHz(bStream);
-        QCOMPARE(bCentre, 7262000.0);
+        QCOMPARE(model.streamAllocator().streamCentreHz(1), 7262000.0);
 
         a->setFrequency(7268000.0);
 
-        QCOMPARE(a->streamIndex(), bStream);
-        QCOMPARE(a->shiftOffsetHz(), 6000.0);
-        QVERIFY2(!model.streamAllocator().isStreamActive(oldStream),
-                 "A's old receiver must be released");
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().streamCentreHz(0), 7268000.0);
+        QCOMPARE(a->shiftOffsetHz(), 0.0);
+        QCOMPARE(b->shiftOffsetHz(), -6000.0);
+        QVERIFY2(!model.streamAllocator().isStreamActive(1),
+                 "the higher receiver must be released");
         QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
-        // B's receiver did not move: its centre, and B's place on it.
-        QCOMPARE(model.streamAllocator().streamCentreHz(bStream), bCentre);
-        QCOMPARE(b->streamIndex(), bStream);
+    }
+
+    // A, alone on the higher receiver, joins B's at a shift; B's receiver
+    // does not move.
+    void a_lone_slice_on_the_higher_receiver_joins_the_lower_one()
+    {
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(loneSliceOnTheHigherReceiver(model, a, b));
+
+        a->setFrequency(7268000.0);
+
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(a->shiftOffsetHz(), 6000.0);
+        QCOMPARE(b->streamIndex(), 0);
         QCOMPARE(b->shiftOffsetHz(), 0.0);
+        QCOMPARE(model.streamAllocator().streamCentreHz(0), 7262000.0);
+        QVERIFY(!model.streamAllocator().isStreamActive(1));
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+    }
+
+    // Three receivers: freeing the middle one would leave a gap, so nothing
+    // moves, either way round.
+    void a_rejoin_that_would_free_the_middle_receiver_does_not_happen()
+    {
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(loneSliceOnTheHigherReceiver(model, a, b));
+        SliceModel* c = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(c);
+        c->setFrequency(14200000.0);
+        QCOMPARE(c->streamIndex(), 2);
+
+        // A on the middle receiver tunes next to B on the lowest.
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().streamCentreHz(1), 7268000.0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 3);
+
+        // B on the lowest tunes next to A on the middle one.
+        b->setFrequency(7270000.0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(a->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 3);
+
+        // With C gone the same retune rejoins: the middle is now the top.
+        model.removeSlice(c->sliceIndex());
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+        b->setFrequency(7266000.0);
+        QCOMPARE(a->streamIndex(), b->streamIndex());
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
     }
 
     // Outside the other receiver's window, a lone slice moves its own
@@ -342,11 +418,11 @@ private slots:
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
         QVERIFY(twoReceiversOnOnePan(model, a, b));
-        const int aStream = a->streamIndex();
 
         a->setFrequency(7400000.0);   // 138 kHz from B's centre; window +-96 kHz
-        QCOMPARE(a->streamIndex(), aStream);
-        QCOMPARE(model.streamAllocator().streamCentreHz(aStream), 7400000.0);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().streamCentreHz(0), 7400000.0);
+        QCOMPARE(b->streamIndex(), 1);
         QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
 
         a->setFrequency(7270000.0);
@@ -362,29 +438,38 @@ private slots:
         seed(model);
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
-        QVERIFY(twoReceiversOnOnePan(model, a, b));
-        const int bStream = b->streamIndex();
+        QVERIFY(loneSliceOnTheHigherReceiver(model, a, b));
         const double bCentre = 7262000.0;
 
         a->setFrequency(bCentre + 85000.0);   // in B's window, not well inside
-        QVERIFY(a->streamIndex() != bStream);
+        QCOMPARE(a->streamIndex(), 1);
 
         a->setFrequency(bCentre + 70000.0);   // well inside: rejoins
-        QCOMPARE(a->streamIndex(), bStream);
+        QCOMPARE(a->streamIndex(), 0);
 
         a->setFrequency(bCentre + 97000.0);   // out of the window: leaves
-        const int ownStream = a->streamIndex();
-        QVERIFY(ownStream != bStream);
+        QCOMPARE(a->streamIndex(), 1);
         a->setFrequency(bCentre + 95000.0);   // back a step: stays on its own
-        QCOMPARE(a->streamIndex(), ownStream);
+        QCOMPARE(a->streamIndex(), 1);
         a->setFrequency(bCentre + 97000.0);
-        QCOMPARE(a->streamIndex(), ownStream);
-        QCOMPARE(model.streamAllocator().streamCentreHz(bStream), bCentre);
+        QCOMPARE(a->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().streamCentreHz(0), bCentre);
+
+        // The fold has the same margin: B stays put until A's retuned
+        // window holds it well inside.
+        RadioModel model2;
+        seed(model2);
+        QVERIFY(twoReceiversOnOnePan(model2, a, b));
+        a->setFrequency(bCentre + 85000.0);
+        QCOMPARE(b->streamIndex(), 1);
+        a->setFrequency(bCentre + 70000.0);
+        QCOMPARE(b->streamIndex(), 0);
     }
 
     // The receive antenna: joining a receiver whose slices are on another
     // antenna would change that receiver's routing, so it keeps today's
-    // behaviour. On the same antenna it rejoins.
+    // behaviour. The slice is compared on the label it will have on its new
+    // band (the Alex grid's), not the one it had on the old band.
     void a_slice_on_another_antenna_keeps_its_own_receiver()
     {
         RadioModel model;
@@ -392,18 +477,57 @@ private slots:
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
         QVERIFY(twoReceiversOnOnePan(model, a, b));
-        const int aStream = a->streamIndex();
-        a->setRxAntenna(QStringLiteral("ANT1"));
-        b->setRxAntenna(QStringLiteral("ANT2"));
-        QVERIFY(a->rxAntenna() != b->rxAntenna());
+        QCOMPARE(model.alexController().rxAnt(Band::Band40m), 1);
+        b->setRxAntenna(QStringLiteral("ANT2"));   // B's receiver on ANT2
 
-        a->setFrequency(7268000.0);
-        QCOMPARE(a->streamIndex(), aStream);
-        QCOMPARE(model.streamAllocator().streamCentreHz(aStream), 7268000.0);
+        a->setFrequency(7268000.0);                // A's 40 m label is ANT1
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().streamCentreHz(0), 7268000.0);
 
-        a->setRxAntenna(b->rxAntenna());
+        b->setRxAntenna(QStringLiteral("ANT1"));
         a->setFrequency(7269000.0);
         QCOMPARE(a->streamIndex(), b->streamIndex());
+    }
+
+    // Review finding (Critical 1): A on 80 m is labelled ANT2, the 80 m
+    // antenna; B on 40 m is labelled ANT1, the 40 m antenna. A tuned to 40 m
+    // will be on ANT1, so it shares B's receiver and takes the ANT1 label,
+    // and B's receiver stays on ANT1. Both receivers C-Tune pinned. Data:
+    // whether the station's band is already 40 m when A crosses (then band
+    // tracking does not refresh A's labels at all).
+    void a_band_jump_compares_the_new_bands_antenna_data()
+    {
+        QTest::addColumn<bool>("stationOn40m");
+        QTest::newRow("station band 80 m") << false;
+        QTest::newRow("station band already 40 m") << true;
+    }
+    void a_band_jump_compares_the_new_bands_antenna()
+    {
+        QFETCH(bool, stationOn40m);
+        RadioModel model;
+        seed(model);
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.alexControllerMutable().setRxAnt(Band::Band80m, 2);
+        model.alexControllerMutable().setRxAnt(Band::Band40m, 1);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(twoReceiversOnOnePan(model, a, b));
+        model.setLastBandForTest(stationOn40m ? Band::Band40m : Band::Band80m);
+        a->setRxAntenna(QStringLiteral("ANT2"));
+        b->setRxAntenna(QStringLiteral("ANT1"));
+        model.enableBandTrackingForTest();
+        QVERIFY(model.requestStreamCtunPinned(a->sliceIndex(), true));
+        QVERIFY(model.requestStreamCtunPinned(b->sliceIndex(), true));
+
+        a->setFrequency(7268000.0);
+
+        QCOMPARE(a->streamIndex(), b->streamIndex());
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+        QCOMPARE(a->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(b->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(model.alexController().rxAnt(Band::Band40m), 1);
+        QVERIFY(a->streamCtunPinned());
     }
 
     // Another pan's receiver is never joined: that would couple the pans.
@@ -418,15 +542,111 @@ private slots:
         QVERIFY(b);
         b->setFrequency(7262000.0);
         const int aStream = a->streamIndex();
-        QVERIFY(aStream != b->streamIndex());
+        const int bStream = b->streamIndex();
+        QVERIFY(aStream != bStream);
 
         a->setFrequency(7268000.0);
         QCOMPARE(a->streamIndex(), aStream);
+        QCOMPARE(b->streamIndex(), bStream);
 
-        // On B's pan, the same retune rejoins.
+        // On B's pan, the same retune shares.
         a->setPanKey(QStringLiteral("pan-1"));
         a->setFrequency(7269000.0);
         QCOMPARE(a->streamIndex(), b->streamIndex());
+    }
+
+    // Diversity changes which DDC pair carries a receiver: a slice in it,
+    // or a receiver with one on it, is never joined.
+    void a_slice_in_diversity_does_not_rejoin()
+    {
+        // A is slice 0, the one a legacy Diversity request may enable, on
+        // the lower receiver (the fold way round).
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(twoReceiversOnOnePan(model, a, b));
+        a->setDiversityEnabled(true);
+        QVERIFY(a->diversityEnabled());
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+
+        a->setDiversityEnabled(false);
+        a->setFrequency(7269000.0);
+        QCOMPARE(b->streamIndex(), 0);
+    }
+
+    void a_receiver_with_a_slice_in_diversity_is_not_joined()
+    {
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(loneSliceOnTheHigherReceiver(model, a, b));
+        b->setDiversityEnabled(true);
+        QVERIFY(b->diversityEnabled());
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 1);
+
+        b->setDiversityEnabled(false);
+        a->setFrequency(7269000.0);
+        QCOMPARE(a->streamIndex(), 0);
+    }
+
+    // Several devices on one Core: a receiver anchored by another device
+    // stays that device's.
+    void a_receiver_another_device_anchors_is_not_joined()
+    {
+        RadioModel model;
+        seed(model);
+        SliceOwnership* owners = model.sliceOwnership();
+        QVERIFY(owners);
+        const QByteArray phone("phone-device");
+        const QByteArray tablet("tablet-device");
+        SliceModel* b = nullptr;
+        {
+            SliceOwnership::CreatorScope creator(owners, phone);
+            b = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        }
+        QVERIFY(b);
+        b->setFrequency(7262000.0);
+        SliceModel* a = nullptr;
+        {
+            SliceOwnership::CreatorScope creator(owners, tablet);
+            a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        }
+        QVERIFY(a);
+        a->setFrequency(3870000.0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(a->streamIndex(), 1);
+        QCOMPARE(owners->anchorOf(0), phone);
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), 1);
+
+        // The same device's slice joins.
+        owners->setOwner(a->sliceIndex(), phone);
+        a->setFrequency(7269000.0);
+        QCOMPARE(a->streamIndex(), 0);
+    }
+
+    // A caller that requires a receiver gets that receiver: a bind asked to
+    // stay on its own is never turned into a rejoin.
+    void a_required_receiver_is_never_rejoined()
+    {
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(loneSliceOnTheHigherReceiver(model, a, b));
+
+        QVERIFY(model.bindSliceToStream(a, 7268000.0, false, /*requiredStream=*/1));
+        QCOMPARE(a->streamIndex(), 1);
+        QCOMPARE(model.streamAllocator().streamCentreHz(1), 7268000.0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
     }
 
     // C-Tune: a pinned slice still inside its own window is left there, as
@@ -462,23 +682,25 @@ private slots:
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
         QVERIFY(twoReceiversOnOnePan(model, a, b));
-        const int aStream = a->streamIndex();
-        const int bStream = b->streamIndex();
         QVERIFY(model.requestStreamCtunPinned(a->sliceIndex(), true));
 
         a->setFrequency(7268000.0);          // B's receiver is not pinned
-        QCOMPARE(a->streamIndex(), aStream);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
 
         a->setFrequency(3870000.0);
         QVERIFY(model.requestStreamCtunPinned(b->sliceIndex(), true));
         a->setFrequency(7268000.0);          // both pinned: the JJ sequence
-        QCOMPARE(a->streamIndex(), bStream);
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 0);
         QVERIFY(a->streamCtunPinned());
-        QVERIFY(!model.streamAllocator().isStreamActive(aStream));
+        QVERIFY(b->streamCtunPinned());
+        QVERIFY(!model.streamAllocator().isStreamActive(1));
     }
 
     // Restore: two slices of one pan inside one window share one receiver
-    // (bindUnboundSlices places a later slice on a covering window).
+    // (bindUnboundSlices places a later slice on a covering window). A guard
+    // on existing behaviour: this already holds without the rejoin.
     void restored_slices_inside_one_window_share_one_receiver()
     {
         RadioModel model;                     // pool comes later, as at start

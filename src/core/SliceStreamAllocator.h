@@ -26,6 +26,12 @@
 //                                    goes back onto it (JJ's ruling
 //                                    2026-10-22). AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  rejoinStream frees only the highest
+//                                    active stream; canFoldDown moves the
+//                                    higher receiver's slices down instead,
+//                                    so no rejoin leaves a gap in the DDC
+//                                    enable mask. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 #pragma once
 
@@ -158,12 +164,31 @@ public:
     /// none qualifies, or `currentStream` is not active; the caller then
     /// keeps the retune it had.
     ///
+    /// Only when `currentStream` is the highest active stream, so freeing it
+    /// never leaves a gap in the DDC enable mask (the 2026-07-26 G2E bench:
+    /// a hole at DDC1 and a dead second pan; see retuneSlice). A lone slice
+    /// on a lower stream is handled the other way round (canFoldDown).
+    ///
     /// The caller decides which streams are candidates (the same pan, the
     /// same receive antenna and the same C-Tune pin; see
     /// RadioModel::rejoinCandidateStreams) and asks only for a slice whose
     /// retune would otherwise move its own receiver (Outcome::RetunedStream).
     std::optional<Placement> rejoinStream(int currentStream, double frequencyHz,
                                           const QVector<int>& candidateStreams) const;
+
+    /// JJ's ruling 2026-10-22, the other way round: a lone slice on
+    /// `lowerStream` retunes its receiver to `lowerCentreHz`, and the slices
+    /// on `higherStream` (their frequencies in `frequenciesHz`) could all go
+    /// down onto it, freeing `higherStream`. True only when `higherStream` is
+    /// above `lowerStream` and is the highest active stream (so freeing it
+    /// leaves no gap in the DDC enable mask), both are active at one rate,
+    /// and every frequency sits within kRejoinHalfWindowFraction of the half
+    /// window centred on `lowerCentreHz` at that rate.
+    bool canFoldDown(int lowerStream, double lowerCentreHz, int higherStream,
+                     const QVector<double>& frequenciesHz) const;
+
+    /// The highest active stream, or -1 when none is.
+    int  highestActiveStream() const;
 
     int  streamCount() const { return m_streams.size(); }
     int  activeStreamCount() const;

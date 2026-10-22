@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  The pan keeps its history across an A/B
+//                                    switch after the Core puts two slices
+//                                    back on one receiver (JJ's ruling
+//                                    2026-10-22). AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF  A display allocation pending across
 //                                    a media move is asked again on the
 //                                    new connection; a lost re-ask still
@@ -3341,15 +3346,21 @@ private slots:
     {
         QTest::addColumn<bool>("threeD");
         QTest::addColumn<bool>("budget");
-        QTest::newRow("waterfall") << false << false;
-        QTest::newRow("3D stack") << true << false;
-        QTest::newRow("waterfall, display budget") << false << true;
-        QTest::newRow("3D stack, display budget") << true << true;
+        QTest::addColumn<bool>("rejoined");
+        QTest::newRow("waterfall") << false << false << false;
+        QTest::newRow("3D stack") << true << false << false;
+        QTest::newRow("waterfall, display budget") << false << true << false;
+        QTest::newRow("3D stack, display budget") << true << true << false;
+        // JJ's ruling 2026-10-22: the two slices start on receivers of their
+        // own, and the Core puts them back on one when the second is tuned
+        // into the first's range during the session.
+        QTest::newRow("waterfall, rejoined on the Core") << false << false << true;
     }
     void selectingTheOtherSliceOnOneReceiverKeepsThePansHistory()
     {
         QFETCH(bool, threeD);
         QFETCH(bool, budget);
+        QFETCH(bool, rejoined);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         RadioModel station;
@@ -3367,6 +3378,12 @@ private slots:
         QVERIFY(secondSlice);
         secondSlice->setFrequency(centre + 20000);
         QCOMPARE(secondSlice->streamIndex(), stream);
+        if (rejoined) {
+            // Out of the first receiver's window: a receiver of its own.
+            secondSlice->setFrequency(centre + 3000000);
+            QVERIFY(secondSlice->streamIndex() >= 0 && secondSlice->streamIndex() != stream);
+            QCOMPARE(station.streamAllocator().activeStreamCount(), 2);
+        }
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
         if (budget) {
@@ -3419,6 +3436,17 @@ private slots:
         sourceMedia->other = sinkMedia;
         sourceMedia->activate();
         sinkMedia->activate();
+        if (rejoined) {
+            // The window sees the two receivers first.
+            QTRY_VERIFY(remote.sliceById(secondId)
+                && remote.sliceById(secondId)->streamIndex() >= 0
+                && remote.sliceById(secondId)->streamIndex() != stream);
+            // Tuned back into the first receiver's range: the Core puts the
+            // second slice back on it and frees its own receiver.
+            secondSlice->setFrequency(centre + 20000);
+            QCOMPARE(secondSlice->streamIndex(), stream);
+            QCOMPARE(station.streamAllocator().activeStreamCount(), 1);
+        }
         QTRY_VERIFY(remote.sliceById(secondId)
             && remote.sliceById(secondId)->streamIndex() == stream);
         QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);

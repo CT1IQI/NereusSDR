@@ -14,7 +14,9 @@
 //               Claude Code.
 //   2026-10-22: rejoinStream, a lone slice going back onto another
 //               receiver that covers it well inside its window (JJ's
-//               ruling 2026-10-22). J.J. Boyd (KG4VCF), AI-assisted via
+//               ruling 2026-10-22); only the highest active receiver is
+//               freed, and canFoldDown brings a higher receiver's slices
+//               down instead. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
@@ -322,36 +324,62 @@ private slots:
     //
     // STRIX 2026-10-22: A on 3.87 MHz and B on 7.262 MHz on two receivers;
     // A tuned to 7.268 MHz, inside B's window, and kept its own receiver.
+    // A lone slice on the highest active receiver joins a lower one.
     void a_lone_slice_rejoins_the_receiver_that_covers_it()
     {
         SliceStreamAllocator alloc;
         alloc.configure(2, 5);
-        alloc.activateStream(0, 3870000.0, 192000);
-        alloc.activateStream(1, 7262000.0, 192000);
+        alloc.activateStream(0, 7262000.0, 192000);
+        alloc.activateStream(1, 3870000.0, 192000);
 
-        const auto r = alloc.rejoinStream(0, 7268000.0, {1});
+        const auto r = alloc.rejoinStream(1, 7268000.0, {0});
 
         QVERIFY(r.has_value());
         QCOMPARE(r->outcome, SliceStreamAllocator::Outcome::JoinedExisting);
-        QCOMPARE(r->streamIndex, 1);
+        QCOMPARE(r->streamIndex, 0);
         QCOMPARE(r->shiftOffsetHz, 6000.0);
         // A join at a shift: the other receiver's centre and rate stay.
-        QCOMPARE(alloc.streamCentreHz(1), 7262000.0);
-        QCOMPARE(alloc.streamSampleRateHz(1), 192000);
+        QCOMPARE(alloc.streamCentreHz(0), 7262000.0);
+        QCOMPARE(alloc.streamSampleRateHz(0), 192000);
+    }
+
+    // Freeing a receiver below an active one would leave a gap in the DDC
+    // enable mask (the 2026-07-26 G2E bench), so it never rejoins from there.
+    void a_lone_slice_below_an_active_receiver_does_not_rejoin()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(3, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+        QCOMPARE(alloc.highestActiveStream(), 1);
+
+        // The lower of two: no.
+        QVERIFY(!alloc.rejoinStream(0, 7268000.0, {1}).has_value());
+
+        // The middle of three, joining the lowest: no.
+        alloc.activateStream(2, 14200000.0, 192000);
+        QCOMPARE(alloc.highestActiveStream(), 2);
+        alloc.activateStream(0, 7262000.0, 192000);
+        alloc.activateStream(1, 3870000.0, 192000);
+        QVERIFY(!alloc.rejoinStream(1, 7268000.0, {0}).has_value());
+
+        // With the top one gone, the same ask is the highest's: yes.
+        alloc.deactivateStream(2);
+        QVERIFY(alloc.rejoinStream(1, 7268000.0, {0}).has_value());
     }
 
     void a_frequency_outside_the_other_window_does_not_rejoin()
     {
         SliceStreamAllocator alloc;
         alloc.configure(2, 5);
-        alloc.activateStream(0, 3870000.0, 192000);
-        alloc.activateStream(1, 7262000.0, 192000);
+        alloc.activateStream(0, 7262000.0, 192000);
+        alloc.activateStream(1, 3870000.0, 192000);
 
-        QVERIFY(!alloc.rejoinStream(0, 7400000.0, {1}).has_value());
+        QVERIFY(!alloc.rejoinStream(1, 7400000.0, {0}).has_value());
         // Its own stream is never a candidate, and an idle one never is.
-        QVERIFY(!alloc.rejoinStream(0, 3871000.0, {0}).has_value());
-        alloc.deactivateStream(1);
-        QVERIFY(!alloc.rejoinStream(0, 7268000.0, {1}).has_value());
+        QVERIFY(!alloc.rejoinStream(1, 3871000.0, {1}).has_value());
+        alloc.deactivateStream(0);
+        QVERIFY(!alloc.rejoinStream(1, 7268000.0, {0}).has_value());
     }
 
     // Anti-flap: a slice leaves a shared window at its edge, and rejoins only
@@ -361,35 +389,79 @@ private slots:
     {
         SliceStreamAllocator alloc;
         alloc.configure(2, 5);
-        alloc.activateStream(0, 3870000.0, 192000);
-        alloc.activateStream(1, 7262000.0, 192000);
+        alloc.activateStream(0, 7262000.0, 192000);
+        alloc.activateStream(1, 3870000.0, 192000);
         // Half window 96 kHz; the rejoin limit is 0.8 of it, 76.8 kHz.
         QCOMPARE(SliceStreamAllocator::kRejoinHalfWindowFraction, 0.8);
 
         // Inside the window, outside the inner span: no rejoin, both sides.
-        QVERIFY(!alloc.rejoinStream(0, 7262000.0 + 80000.0, {1}).has_value());
-        QVERIFY(!alloc.rejoinStream(0, 7262000.0 - 80000.0, {1}).has_value());
+        QVERIFY(!alloc.rejoinStream(1, 7262000.0 + 80000.0, {0}).has_value());
+        QVERIFY(!alloc.rejoinStream(1, 7262000.0 - 80000.0, {0}).has_value());
         // A shared slice there would still stay (it has not left the window).
-        QCOMPARE(alloc.retuneSlice(1, false, false, 7262000.0 + 80000.0).streamIndex, 1);
+        QCOMPARE(alloc.retuneSlice(0, false, false, 7262000.0 + 80000.0).streamIndex, 0);
         // Inside the inner span: rejoin.
-        const auto r = alloc.rejoinStream(0, 7262000.0 + 76000.0, {1});
+        const auto r = alloc.rejoinStream(1, 7262000.0 + 76000.0, {0});
         QVERIFY(r.has_value());
-        QCOMPARE(r->streamIndex, 1);
+        QCOMPARE(r->streamIndex, 0);
     }
 
     void a_receiver_at_another_rate_is_not_rejoined()
     {
         SliceStreamAllocator alloc;
         alloc.configure(3, 5);
-        alloc.activateStream(0, 3870000.0, 96000);
-        alloc.activateStream(1, 7262000.0, 192000);
-        alloc.activateStream(2, 7262000.0, 96000);
+        alloc.activateStream(0, 7262000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 96000);
+        alloc.activateStream(2, 3870000.0, 96000);
 
         // The first candidate at the slice's own rate wins.
-        const auto r = alloc.rejoinStream(0, 7268000.0, {1, 2});
+        const auto r = alloc.rejoinStream(2, 7268000.0, {0, 1});
         QVERIFY(r.has_value());
-        QCOMPARE(r->streamIndex, 2);
-        QVERIFY(!alloc.rejoinStream(0, 7268000.0, {1}).has_value());
+        QCOMPARE(r->streamIndex, 1);
+        QVERIFY(!alloc.rejoinStream(2, 7268000.0, {0}).has_value());
+    }
+
+    // ── canFoldDown: the other way round ─────────────────────────────────
+    //
+    // JJ's own case: A, alone on the LOWER receiver, retunes it next to B,
+    // alone on the higher one. B comes down onto A's receiver and the higher
+    // one is freed, so the enable mask keeps no gap.
+    void the_higher_receivers_slices_fold_down_onto_a_retuned_lower_one()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(3, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+
+        // A's receiver to be centred on 7.268 MHz; B at 7.262 MHz is 6 kHz off.
+        QVERIFY(alloc.canFoldDown(0, 7268000.0, 1, {7262000.0}));
+        QVERIFY(alloc.canFoldDown(0, 7268000.0, 1, {7262000.0, 7300000.0}));
+        // Every slice there must sit inside the inner 80%: 76.8 kHz.
+        QVERIFY(!alloc.canFoldDown(0, 7268000.0, 1, {7262000.0, 7268000.0 + 80000.0}));
+        QVERIFY(!alloc.canFoldDown(0, 7268000.0, 1, {7268000.0 - 80000.0}));
+        // Nothing to move, or the wrong way round: no.
+        QVERIFY(!alloc.canFoldDown(0, 7268000.0, 1, {}));
+        QVERIFY(!alloc.canFoldDown(1, 7268000.0, 0, {3870000.0}));
+    }
+
+    void a_fold_that_would_leave_a_gap_or_change_rate_is_refused()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(3, 5);
+        alloc.activateStream(0, 3870000.0, 192000);
+        alloc.activateStream(1, 7262000.0, 192000);
+        alloc.activateStream(2, 14200000.0, 192000);
+
+        // Receiver 1 is not the highest: freeing it leaves 0 and 2.
+        QVERIFY(!alloc.canFoldDown(0, 7268000.0, 1, {7262000.0}));
+        // The highest one may fold.
+        QVERIFY(alloc.canFoldDown(0, 14205000.0, 2, {14200000.0}));
+        // Another rate: no.
+        alloc.activateStream(2, 14200000.0, 96000);
+        QVERIFY(!alloc.canFoldDown(0, 14205000.0, 2, {14200000.0}));
+        // An idle lower receiver: no.
+        alloc.activateStream(2, 14200000.0, 192000);
+        alloc.deactivateStream(0);
+        QVERIFY(!alloc.canFoldDown(0, 14205000.0, 2, {14200000.0}));
     }
 };
 
