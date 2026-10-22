@@ -11,7 +11,8 @@
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
-//                 NEREUS_TRACE_REMOTE_ROWS=1; diagnostics only.
+//                 NEREUS_TRACE_REMOTE_ROWS=1; diagnostics only. Its list of
+//                 put lateness grows only while the row clock runs.
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 pan's rows go in by a steady row clock read on every
 //                 frame, and its glide follows that clock instead of when a
@@ -3231,7 +3232,11 @@ void SpectrumWidget::putRemoteWaterfallRows(int rows)
         if (m_traceRemoteRows) {
             const qint64 now = remoteRowNowNs();
             ++m_remoteRowTrace.rowsPut;
-            m_remoteRowTrace.dueMinusNowMs.append((row.dueNs - now) / 1e6);
+            // Only while the clock runs: the window that clears this list
+            // rolls in pumpRemoteWaterfallRows, past its running() guard.
+            if (m_remoteRowClock.running()) {
+                m_remoteRowTrace.dueMinusNowMs.append((row.dueNs - now) / 1e6);
+            }
             m_remoteRowTrace.lastPutNs = now;
         }
         if (!qFuzzyCompare(row.centreHz, m_centerHz)

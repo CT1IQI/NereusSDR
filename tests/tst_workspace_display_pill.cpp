@@ -4,9 +4,9 @@
 //   2026-10-12 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-13 - Runtime level refresh event regressions. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-22 - A closed pill is not laid out on each remote telemetry
-//                 tick, and opens to the same geometry. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Claude Code.
+//   2026-10-22 - A closed pill is not laid out or restyled on each remote
+//                 telemetry tick or enables pass, and opens to the same
+//                 geometry. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -684,11 +684,16 @@ private slots:
         QVERIFY2(events.enabledChanges == 0 && events.styleChanges == 0
             && events.layoutEdits == 0, qPrintable(events.counts()));
         // A full enables pass (a GPU capability report runs one) restyles
-        // nothing it did not change and lays nothing out while closed.
+        // nothing and lays nothing out while closed.
+        PillRefreshEvents enablesEvents;
+        enablesEvents.watch(h.pill());
         for (int pass = 0; pass < 3; ++pass) {
             h.panel->setGpuCapabilities(true, true);
             drainPillEvents();
         }
+        qInfo().noquote() << "enables passes, closed pill" << enablesEvents.counts();
+        QVERIFY2(enablesEvents.styleChanges == 0 && enablesEvents.layoutEdits == 0,
+            qPrintable(enablesEvents.counts()));
         QCOMPARE(h.panel->displayPillGeometryRefreshCountForTest(), refreshes);
         // Opening lays it out once, at once.
         h.panel->openDisplayPill();

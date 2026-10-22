@@ -1,6 +1,6 @@
 // no-port-check: NereusSDR-original main-thread stall trace regressions.
 // Modification history (NereusSDR):
-//   2026-10-22 — J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-22 - J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #include <QEventLoop>
 #include <QMutex>
@@ -22,6 +22,7 @@ QtMessageHandler g_previousHandler = nullptr;
 
 void captureHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
+    // MAIN_STALL also covers MAIN_STALL_SUPPRESSED.
     if (message.startsWith(QLatin1String("MAIN_STALL"))
         || message.startsWith(QLatin1String("MAIN_LATE"))) {
         QMutexLocker locker(&g_linesMutex);
@@ -71,6 +72,35 @@ QStringList runSlowQueuedCall(const char* traceValue)
     return takeLines();
 }
 
+// Builds the traced application with a short window, posts `calls` queued
+// calls that each sleep 15 ms, runs the loop past the window's end, and
+// returns the trace lines it logged.
+QStringList runManySlowQueuedCalls(int calls, qint64 windowNs, int runMs)
+{
+    qputenv("NEREUS_TRACE_MAIN_STALLS", "1");
+    takeLines();
+
+    int argc = 1;
+    char arg0[] = "tst_gui_application_stall_trace";
+    char* argv[] = {arg0, nullptr};
+    {
+        GuiApplication app(argc, argv);
+        app.setStallTraceWindowNsForTest(windowNs);
+        QObject slowReceiver;
+        slowReceiver.setObjectName(QStringLiteral("slowReceiver"));
+        for (int call = 0; call < calls; ++call) {
+            QMetaObject::invokeMethod(&slowReceiver, [] {
+                QThread::msleep(15);
+            }, Qt::QueuedConnection);
+        }
+        QEventLoop loop;
+        QTimer::singleShot(runMs, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    qunsetenv("NEREUS_TRACE_MAIN_STALLS");
+    return takeLines();
+}
+
 } // namespace
 
 class TestGuiApplicationStallTrace : public QObject
@@ -111,6 +141,35 @@ private slots:
             }
         }
         QVERIFY2(matched, qPrintable(stalls.join(QLatin1Char('\n'))));
+    }
+
+    // A slow delivery every frame must not log a line a frame: one window
+    // logs at most the cap, then one line counting what it held back.
+    void manySlowDeliveriesAreCapped()
+    {
+        constexpr int kCalls = GuiApplication::kStallTraceLineCap + 10;
+        // 50 calls of 15 ms run well inside the 1.5 s window; the loop runs
+        // on past its end so the heartbeat rolls it.
+        const QStringList lines = runManySlowQueuedCalls(kCalls, 1'500'000'000LL, 2'200);
+        const QString all = lines.join(QLatin1Char('\n'));
+        int logged = 0;
+        QStringList suppressed;
+        for (const QString& line : lines) {
+            if (line.startsWith(QLatin1String("MAIN_STALL_SUPPRESSED"))) {
+                suppressed.append(line);
+            } else if (suppressed.isEmpty()) {
+                ++logged;
+            }
+        }
+        QCOMPARE(logged, GuiApplication::kStallTraceLineCap);
+        QVERIFY2(suppressed.size() == 1, qPrintable(all));
+        const QRegularExpressionMatch match =
+            QRegularExpression(QStringLiteral("^MAIN_STALL_SUPPRESSED count=(\\d+)$"))
+                .match(suppressed.constFirst());
+        QVERIFY2(match.hasMatch(), qPrintable(suppressed.constFirst()));
+        // MAIN_LATE shares the budget, so at least the slow calls past the cap.
+        QVERIFY2(match.captured(1).toInt() >= kCalls - GuiApplication::kStallTraceLineCap,
+                 qPrintable(suppressed.constFirst()));
     }
 
     void traceOffLogsNothing()

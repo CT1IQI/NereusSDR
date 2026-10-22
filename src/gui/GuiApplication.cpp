@@ -1,10 +1,10 @@
 // no-port-check: NereusSDR-original application shutdown boundary.
 // Modification history (NereusSDR):
 //   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-22 — J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
+//   2026-10-22 - J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
 //                 main-thread stall trace (slow event deliveries and a
 //                 lateness heartbeat) under NEREUS_TRACE_MAIN_STALLS=1;
-//                 diagnostics only.
+//                 diagnostics only, capped at 40 lines a 10 s window.
 
 #include "GuiApplication.h"
 
@@ -39,6 +39,20 @@ QString eventTypeName(QEvent::Type type)
     return key ? QString::fromLatin1(key) : QString::number(int(type));
 }
 
+// Counts a delivery's nesting for as long as it runs.
+struct StallDepthGuard {
+    explicit StallDepthGuard(int& depth)
+        : m_depth(depth)
+    {
+        ++m_depth;
+    }
+    ~StallDepthGuard() { --m_depth; }
+    StallDepthGuard(const StallDepthGuard&) = delete;
+    StallDepthGuard& operator=(const StallDepthGuard&) = delete;
+
+    int& m_depth;
+};
+
 } // namespace
 
 GuiApplication::GuiApplication(int& argc, char** argv)
@@ -62,6 +76,7 @@ GuiApplication::GuiApplication(int& argc, char** argv)
         m_stallHeartbeat->setInterval(kStallHeartbeatMs);
         connect(m_stallHeartbeat, &QTimer::timeout, this, [this] { onStallHeartbeat(); });
         m_stallHeartbeatClock.start();
+        m_stallTraceWindow.start();
         m_stallHeartbeat->start();
     }
 }
@@ -96,12 +111,17 @@ bool GuiApplication::notifyTraced(QObject* receiver, QEvent* event)
     }
     const QPointer<QObject> guard(receiver);
 
-    const int depth = ++m_stallDepth;
-    QElapsedTimer clock;
-    clock.start();
-    const bool result = QApplication::notify(receiver, event);
-    const qint64 elapsedNs = clock.nsecsElapsed();
-    --m_stallDepth;
+    int depth = 0;
+    bool result = false;
+    qint64 elapsedNs = 0;
+    {
+        const StallDepthGuard depthGuard(m_stallDepth);
+        depth = m_stallDepth;
+        QElapsedTimer clock;
+        clock.start();
+        result = QApplication::notify(receiver, event);
+        elapsedNs = clock.nsecsElapsed();
+    }
 
     if (elapsedNs < kMainStallLogNs) {
         return result;
@@ -127,7 +147,7 @@ bool GuiApplication::notifyTraced(QObject* receiver, QEvent* event)
     if (timerInterval >= 0) {
         line += QStringLiteral(" interval=%1").arg(timerInterval);
     }
-    qCInfo(lcApp).noquote() << line;
+    logStallTraceLine(line);
     return result;
 }
 
@@ -137,10 +157,41 @@ void GuiApplication::onStallHeartbeat()
     m_stallHeartbeatClock.restart();
     const qint64 lateNs = sinceLastNs - qint64(kStallHeartbeatMs) * 1'000'000;
     if (lateNs >= kStallHeartbeatLateNs) {
-        qCInfo(lcApp).noquote() << QStringLiteral("MAIN_LATE late=%1 wall=%2")
+        logStallTraceLine(QStringLiteral("MAIN_LATE late=%1 wall=%2")
             .arg(lateNs / 1e6, 0, 'f', 1)
-            .arg(stallWallTime());
+            .arg(stallWallTime()));
+    } else {
+        // The heartbeat rolls a quiet window too, so its count is not held
+        // back until the next slow delivery.
+        rollStallTraceWindow();
     }
+}
+
+void GuiApplication::rollStallTraceWindow()
+{
+    if (m_stallTraceWindow.nsecsElapsed() < m_stallTraceWindowNs) {
+        return;
+    }
+    if (m_stallTraceSuppressed > 0) {
+        qCInfo(lcApp).noquote() << QStringLiteral("MAIN_STALL_SUPPRESSED count=%1")
+            .arg(m_stallTraceSuppressed);
+    }
+    m_stallTraceLines = 0;
+    m_stallTraceSuppressed = 0;
+    m_stallTraceWindow.restart();
+}
+
+void GuiApplication::logStallTraceLine(const QString& line)
+{
+    // As the remote row trace caps its events: a slow frame repeating every
+    // 16 ms would otherwise log a line a frame and disturb what it measures.
+    rollStallTraceWindow();
+    if (m_stallTraceLines >= kStallTraceLineCap) {
+        ++m_stallTraceSuppressed;
+        return;
+    }
+    ++m_stallTraceLines;
+    qCInfo(lcApp).noquote() << line;
 }
 
 bool GuiApplication::applicationQuitInProgress()
