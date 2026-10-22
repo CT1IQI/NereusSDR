@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: The sender passes each frame's source spacing to the
+//               endpoint's deadline (SpectrumEndpoint::earlyToleranceNs)
+//               and orders endpoints by it. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-16: Merge of the RADE waveforms into the display send thread:
 //               the waveforms stay on the station thread, which owns the
 //               waveform channel, where the display thread had sent none
@@ -6411,13 +6415,20 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
             continue;
         }
         const qint64 producedAtNs = found->second.latestInput->producedAtNs;
-        const std::optional<qint64> deadlineNs = endpoint.outputDeadlineNs(producedAtNs);
+        const qint64 sourceFrameGapNs = found->second.latestInput->sourceFrameGapNs;
+        const std::optional<qint64> deadlineNs =
+            endpoint.outputDeadlineNs(producedAtNs, sourceFrameGapNs);
         qint64 key = std::numeric_limits<qint64>::max();
         if (deadlineNs) {
             key = *deadlineNs;
             const auto source = m_sources.constFind(found->second.request.source);
             if (source != m_sources.cend() && source->config.fft.fps > 0) {
-                const qint64 sourcePeriodNs = 1'000'000'000LL / source->config.fft.fps;
+                // 2026-10-21: the source's measured frame spacing when the
+                // frame carries one. The configured rate is not the rate
+                // frames come at under decimation (each transform advances
+                // decimation times as many input samples).
+                const qint64 sourcePeriodNs = sourceFrameGapNs > 0
+                    ? sourceFrameGapNs : 1'000'000'000LL / source->config.fft.fps;
                 const qint64 frames = std::max<qint64>(
                     0, (*deadlineNs - producedAtNs + sourcePeriodNs / 2) / sourcePeriodNs);
                 key = producedAtNs + frames * sourcePeriodNs;
@@ -6740,7 +6751,8 @@ bool DaemonMediaController::heldFrameWouldBeSent(const EndpointEntry& entry) con
     return entry.latestInput.has_value() && entry.contextSent && !entry.txViewer
         && !entry.configurePending && entry.endpoint.configured()
         && entry.endpoint.context().sourceGeneration == entry.latestInput->generation
-        && entry.endpoint.outputDeadlineNs(entry.latestInput->producedAtNs).has_value();
+        && entry.endpoint.outputDeadlineNs(entry.latestInput->producedAtNs,
+                                           entry.latestInput->sourceFrameGapNs).has_value();
 }
 
 void DaemonMediaController::onSendTick()
