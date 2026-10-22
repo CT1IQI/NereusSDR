@@ -14,7 +14,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxPowerSection.h  (NereusSDR)
+// src/gui/applets/TxPowerSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:
@@ -26,6 +26,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20 - The mi0bot-Thetis quotes and MI0BOT tags above the slider
+//                rescale and the dB labels, as TxApplet.cpp carried them.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - A copy of this row in a container is told the outer
+//                 margins the applet's column gives the row (outerMargins);
+//                 the applet's own row is told none.
+//                 Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-19 - Extracted from TxApplet.{h,cpp} as part of splitting the
 //                 TX applet into per-concern section objects. Behaviour,
 //                 appearance, object names and tooltips are unchanged.
@@ -97,9 +104,11 @@
 namespace NereusSDR {
 
 TxPowerSection::TxPowerSection(QWidget* parent, int rowSpacing,
-                             const MainPowerMeter* meter)
+                               const MainPowerMeter* meter,
+                               const QMargins& outerMargins)
     : QWidget(parent)
 {
+    m_outerMargins = outerMargins;
     buildUI(rowSpacing, meter);
 }
 
@@ -108,7 +117,7 @@ void TxPowerSection::buildUI(int rowSpacing, const MainPowerMeter* meter)
     // The column the applet puts its rows in, with the applet's own
     // contents margins. The rows below are added to it unchanged.
     auto* vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setContentsMargins(m_outerMargins);
     vbox->setSpacing(rowSpacing);
 
 // ── 1. Forward Power gauge — per-SKU scale ──────────────────────────────
@@ -250,6 +259,29 @@ void TxPowerSection::refreshPowerReadouts(const MainPowerMeter* meter,
     }
 }
 
+// ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────────
+//
+// From mi0bot-Thetis console.cs:2098-2108 [v2.10.3.13-beta2]
+//   if (HPSDRHW.HermesLite == Audio.LastRadioHardware ||
+//       HPSDRModel.HERMESLITE == HardwareSpecific.Model)     // MI0BOT: Need an early indication of hardware type due to HL2 rx attenuator can be negative
+//   {
+//       ptbPWR.Maximum = 90;        // MI0BOT: Changes for HL2 only having a 16 step output attenuator
+//       ptbPWR.Value = 0;
+//       ptbPWR.LargeChange = 6;
+//       ptbPWR.SmallChange = 6;
+//       ptbTune.Maximum = 99;
+//       ptbTune.Value = 0;
+//       ptbTune.LargeChange = 3;
+//       ptbTune.SmallChange = 3;
+//       ...
+//   }
+//
+// HL2: RF Power slider 0..90 step 6 (16-step output attenuator,
+//      0.5 dB/step); Tune slider 0..99 step 3 (33 sub-steps).
+// Other SKUs: canonical Thetis 0..100 step 1.
+//
+// MI0BOT: Changes for HL2 only having a 16 step output attenuator
+// [original inline comment from mi0bot console.cs:2098]
 void TxPowerSection::rescalePowerSlidersForModel(HPSDRModel model)
 {
     if (!m_rfPowerSlider || !m_tunePwrSlider) { return; }
@@ -289,6 +321,20 @@ void TxPowerSection::rescalePowerSlidersForModel(HPSDRModel model)
     updatePowerSliderLabels();
 }
 
+// From mi0bot-Thetis console.cs:29245-29274 [v2.10.3.13-beta2]
+//   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 has only 15 output power levels
+//   {
+//       ...
+//       lblPWR.Text = "Drive:  " + ((Math.Round(drv / 6.0) / 2) - 7.5).ToString() + "dB";
+//   }
+//
+// HL2 RF Power label formula:
+//   dB = (round(drv/6.0)/2) - 7.5     // 0.5 dB steps in [-7.5, 0]
+// HL2 Tune slider label formula (slider 0..99 -> dB -16.5..0):
+//   dB = (slider/3 - 33) / 2          // inverse of the persistence formula
+//
+// MI0BOT: HL2 has only 15 output power levels
+// [original inline comment from mi0bot console.cs:29245]
 void TxPowerSection::updatePowerSliderLabels()
 {
     if (!m_rfPowerSlider || !m_tunePwrSlider

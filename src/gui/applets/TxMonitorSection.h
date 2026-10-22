@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20 - A copy of this row in a container is told the outer
+//                 margins the applet's column gives the row (outerMargins);
+//                 the applet's own row is told none.
+//                 Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-19 - Extracted from TxApplet.{h,cpp} as part of splitting the
 //                 TX applet into per-concern section objects. Behaviour,
 //                 appearance, object names and tooltips are unchanged.
@@ -82,6 +86,7 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
 
+#include <QMargins>
 #include <QString>
 #include <QWidget>
 
@@ -108,7 +113,7 @@ class TxMonitorSection : public QWidget
 public:
     // rowSpacing is the gap the applet's own column puts between rows, so the
     // rows inside this section keep the same gap they had there.
-    explicit TxMonitorSection(QWidget* parent, int rowSpacing);
+    explicit TxMonitorSection(QWidget* parent, int rowSpacing, const QMargins& outerMargins);
 
     QPushButton* monButton() const { return m_monBtn; }
     QPushButton* speakersButton() const { return m_monSpeakersBtn; }
@@ -133,6 +138,13 @@ public:
 
 private:
     void buildUI(int rowSpacing);
+    // The margins this section gives itself.  The applet's own rows
+    // give none, because the applet's column already has them; a copy
+    // in a container has no column of its own, so it gives itself the
+    // margins the column would have given it.
+    QMargins m_outerMargins;
+
+
 
     QPushButton* m_monBtn = nullptr;
     QPushButton* m_monSpeakersBtn = nullptr;

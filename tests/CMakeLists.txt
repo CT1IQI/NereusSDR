@@ -3803,6 +3803,13 @@ nereus_add_test(tst_tx_applet_vox_toggle)
 # (Renamed from tst_tx_applet_lev_eq_proc.cpp during the post-bench cleanup.)
 nereus_add_test(tst_tx_applet_lev_eq_cfc)
 
+# ── The TX applet's rows as independent container content ───────────────────
+# A container can hold the TX Monitor controls (or any other row) on their own.
+# The applet stays the wiring authority: it makes each copy and wires it, so the
+# copy shows and sets the same model state as the applet's own row and follows
+# the same transmit-permission gates.  The applet's own panel is unchanged.
+nereus_add_test(tst_tx_section_content)
+
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
 # Phase 3M-VAX-toggle extends it to a 3-way switch so MicSource::Vax

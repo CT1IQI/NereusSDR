@@ -14,6 +14,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - A copy of a row made after the gates starts as gated as the
+//                applet's own; a preview of a row is inert. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - connectRow: a row's connection ends with the row or the
+//                applet, whichever goes first. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - The rows as independent container content: per-row
+//                wireXSect() methods, the list of copies (QPointers) and the
+//                margins a copy gives itself. Brian Sutton, AI-assisted via
+//                OpenCode.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -222,9 +232,11 @@
 
 #include "AppletWidget.h"
 #include "gui/NereusGuiExport.h"
+#include <QMargins>
 #include <QPointer>
 #include <QList>
 #include <functional>
+#include <utility>
 #include <QString>
 #include "models/Band.h"
 #include "core/BoardCapabilities.h"  // setBoardCapabilities slot
@@ -406,6 +418,20 @@ public slots:
     void setMonitorOutputPermitted(bool permitted,
                                    const QString& unavailableReason = QString());
     static QString monitorOutputUnavailableReason();
+    // A second, independent copy of the MON row, for a container that holds
+    // the monitor controls on their own. The applet wires it exactly as it
+    // wires its own, so both show and set the same state.
+    //
+    // With `preview` (a container's ContentRenderMode::Preview) the copy is
+    // inert: built as the row is, but not wired, not one of the applet's
+    // rows, disabled and taking no focus, so it can change nothing.
+    TxMonitorSection* createMonitorSection(QWidget* parent, bool preview = false);
+    TxPowerSection* createPowerSection(QWidget* parent, bool preview = false);
+    TxFilterSection* createFilterSection(QWidget* parent, bool preview = false);
+    TxChainSection* createChainSection(QWidget* parent, bool preview = false);
+    TxVoxSection* createVoxSection(QWidget* parent, bool preview = false);
+    TxProcessingSection* createProcessingSection(QWidget* parent, bool preview = false);
+    TxKeyingSection* createKeyingSection(QWidget* parent, bool preview = false);
     // R-R3-49 (group A fix wave, M3): whether an RF Power move also writes
     // the tune drive source (tuneDrivePowerSource on the link), which a Core
     // takes from transmitSettingsVersion 5. MainWindow supplies false for an
@@ -688,6 +714,59 @@ private:
     //      keeps the wiring to the model, the audio engine and the gates;
     //      the section owns the widgets and their presentation.
     TxMonitorSection* m_monitorSection = nullptr;
+    // Independent copies of the MON row made for containers (see
+    // createMonitorSection). The applet wires each of them, and the
+    // transmit-permission gates reach all of them.
+    QList<QPointer<TxMonitorSection>> m_extraMonitorSections;
+    QList<QPointer<TxPowerSection>> m_extraPowerSections;
+    QList<QPointer<TxFilterSection>> m_extraFilterSections;
+    QList<QPointer<TxChainSection>> m_extraChainSections;
+    QList<QPointer<TxVoxSection>> m_extraVoxSections;
+    QList<QPointer<TxProcessingSection>> m_extraProcessingSections;
+    QList<QPointer<TxKeyingSection>> m_extraKeyingSections;
+    // The controls each transmit-permission gate covers, in the applet's own
+    // rows and in every independent copy of them.
+    QList<TxMonitorSection*> allMonitorSections() const;
+    QList<TxPowerSection*> allPowerSections() const;
+    QList<TxFilterSection*> allFilterSections() const;
+    QList<TxChainSection*> allChainSections() const;
+    QList<TxVoxSection*> allVoxSections() const;
+    QList<TxProcessingSection*> allProcessingSections() const;
+    QList<TxKeyingSection*> allKeyingSections() const;
+    QList<QWidget*> rxOnlyLockedControls() const;
+    void syncSectionInstances();
+    // Applies every gate again from the state the setters kept, so a copy
+    // made after the gates starts as gated as the applet's own row.
+    void reapplyGates();
+    void syncPsaFromFacadeIn(TxProcessingSection* s);
+    void refreshTransmitSliceChoicesIn(TxKeyingSection* s);
+    void removePsaFacadeReasonIn(TxProcessingSection* s);
+    QList<QWidget*> transmitSettingsGatedControls() const;
+    QList<QWidget*> chainSettingsGatedControls() const;
+    QList<QWidget*> profileGatedControls() const;
+    void wireMonitorSection(TxMonitorSection* section);
+    void wirePowerSection(TxPowerSection* section);
+    void wireFilterSection(TxFilterSection* section);
+    void wireChainSection(TxChainSection* section);
+    void wireVoxSection(TxVoxSection* section);
+    void wireProcessingSection(TxProcessingSection* section);
+    void wireKeyingSection(TxKeyingSection* section);
+    // Connects a signal to a handler for one row.  The connection ends with
+    // whichever goes first: the row, which a container may close while the
+    // applet lives, or the applet, which a copy in a container may outlive.
+    // The handlers use both, so neither one alone can be the context.
+    template <typename Sender, typename Signal, typename Handler>
+    void connectRow(QObject* row, const Sender* sender, Signal signal, Handler&& handler)
+    {
+        const QMetaObject::Connection c =
+            connect(sender, signal, row, std::forward<Handler>(handler));
+        connect(this, &QObject::destroyed, row, [c] { QObject::disconnect(c); });
+    }
+    int txRowSpacing() const;
+    QMargins txRowMargins() const;
+    QMargins txCopyMargins() const;
+    QList<QWidget*> monitorChainControls() const;
+    QList<QWidget*> monitorOutputControls() const;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup
     //     drops the duplicate PROC button; PROC lives on PhoneCwApplet which
     //     already had a wired button + slider sitting un-wired since 3I-3):
@@ -742,6 +821,14 @@ private:
 
     // Flag preventing echo loops between the model and the UI.
     bool m_updatingFromModel{false};
+    // The state the applet has pushed into its own rows, so a copy made
+    // later starts where the applet's own row is.
+    bool m_takeTransmitOffered{false};
+    bool m_holderOnAir{false};
+    QString m_transmitHolderText;
+    bool m_dupChecked{false};
+    bool m_dupAvailable{false};
+    QString m_dupTooltip;
     std::function<void(bool)> m_desktopMoxRequest;
     std::function<void(bool)> m_desktopTuneRequest;
     std::function<bool()> m_desktopMoxOn;
@@ -758,6 +845,7 @@ private:
     // after handshake/capability evaluation.
     bool m_transmitPermitted{true};
     bool m_transmitSettingsPermitted{true};
+    QString m_transmitSettingsReason;
     bool m_transmitChainSettingsPermitted{true};
     QString m_transmitChainSettingsReason;
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
@@ -771,9 +859,11 @@ private:
     QSlider* voxHoldSlider()       const;
     QLabel*  voxHoldLabel()        const;
     bool m_txProfilePermitted{true};
+    QString m_txProfileReason;
     bool m_txProcessingPermitted{true};   // R-R3-49 (parity Task 4)
     bool m_powerByBandPermitted{true};    // R-R3-49 (group A fix wave, M3)
     bool m_psArmingPermitted{true};       // R-R3-49 (parity Task 7)
+    QString m_psArmingReason;
     // Fix round 1 (minor 5): the board is not known (no radio, so the caps
     // fall back to Unknown) and does not say it has PureSignal: PS-A shows,
     // disabled, with PureSignalSessionFacade::needsRadioReason().

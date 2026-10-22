@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20 - A copy of this row in a container is told the outer
+//                 margins the applet's column gives the row (outerMargins);
+//                 the applet's own row is told none.
+//                 Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-19 - Extracted from TxApplet.{h,cpp} as part of splitting the
 //                 TX applet into per-concern section objects. Behaviour,
 //                 appearance, object names and tooltips are unchanged.
@@ -81,6 +85,7 @@
 //   AetherSDR is licensed under the GNU General Public License v3.
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
 
+#include <QMargins>
 #include <QString>
 #include <QWidget>
 
@@ -113,7 +118,8 @@ public:
     // rows inside this section keep the same gap they had there. meter is the
     // model's power meter, needed to scale the forward-power gauge the way
     // the applet scaled it when the row was built.
-    TxPowerSection(QWidget* parent, int rowSpacing, const MainPowerMeter* meter);
+    TxPowerSection(QWidget* parent, int rowSpacing, const MainPowerMeter* meter,
+                   const QMargins& outerMargins);
 
     BarInstrument* fwdPowerGauge() const { return m_fwdPowerGauge; }
     BarInstrument* swrGauge() const { return m_swrGauge; }
@@ -142,6 +148,11 @@ public:
 
 private:
     void buildUI(int rowSpacing, const MainPowerMeter* meter);
+    // The margins this section gives itself.  The applet's own rows
+    // give none, because the applet's column already has them; a copy
+    // in a container has no column of its own, so it gives itself the
+    // margins the column would have given it.
+    QMargins m_outerMargins;
 
     BarInstrument* m_fwdPowerGauge = nullptr;
     BarInstrument* m_swrGauge = nullptr;

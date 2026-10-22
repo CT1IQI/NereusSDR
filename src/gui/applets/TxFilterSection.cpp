@@ -11,7 +11,7 @@
 #include <QWidget>
 
 // =================================================================
-// src/gui/applets/TxFilterSection.h  (NereusSDR)
+// src/gui/applets/TxFilterSection.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:
@@ -22,6 +22,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20 - A copy of this row in a container is told the outer
+//                 margins the applet's column gives the row (outerMargins);
+//                 the applet's own row is told none.
+//                 Brian Sutton, AI-assisted via OpenCode.
 //   2026-10-19 - Extracted from TxApplet.{h,cpp} as part of splitting the
 //                 TX applet into per-concern section objects. Behaviour,
 //                 appearance, object names and tooltips are unchanged.
@@ -92,9 +96,11 @@
 
 namespace NereusSDR {
 
-TxFilterSection::TxFilterSection(QWidget* parent, int rowSpacing)
+TxFilterSection::TxFilterSection(QWidget* parent, int rowSpacing,
+                                 const QMargins& outerMargins)
     : QWidget(parent)
 {
+    m_outerMargins = outerMargins;
     buildUI(rowSpacing);
 }
 
@@ -103,7 +109,7 @@ void TxFilterSection::buildUI(int rowSpacing)
     // The column the applet puts its rows in, with the applet's own
     // contents margins. The rows below are added to it unchanged.
     auto* vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setContentsMargins(m_outerMargins);
     vbox->setSpacing(rowSpacing);
 
     // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ──────

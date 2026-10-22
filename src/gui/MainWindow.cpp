@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-20: The TX applet's rows are registered as container content
+//               (registerTxSectionContent). Brian Sutton, AI-assisted via
+//               OpenCode.
 //   2026-10-16: A remote window opens its speakers at window start, before
 //               the Core is asked for audio (openRemoteSpeakers), as a local
 //               start() opens them before the radio streams. J.J. Boyd
@@ -1213,6 +1216,7 @@ warren@wpratt.com
 #include "core/Rf2ksConnection.h"
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
+#include "applets/TxSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
@@ -11652,6 +11656,10 @@ void MainWindow::populateDefaultMeter()
         sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
         LongpathContent::registerAll(*registry, sources);
         SMeterDialContent::registerDial(*registry, sources);
+        // The TX applet's rows as independent container content, so a
+        // container can hold the monitor controls (or any other row) on
+        // their own.  The applet's own panel is unchanged.
+        registerTxSectionContent(*registry, m_txApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
