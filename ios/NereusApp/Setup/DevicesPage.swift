@@ -63,6 +63,7 @@ struct DevicesPage: View {
                         .accessibilityIdentifier("devicesNote")
                 }
                 .padding(12)
+                .modifier(SetupReadableWidth())
             }
             if let id = flow.renaming, let row = flow.cores.first(where: { $0.id == id }) {
                 Color.black.opacity(0.45)

@@ -16,6 +16,8 @@ import SwiftUI
 /// is kept where a page has one by ``SetupSwipeToDelete``.
 struct SetupPageContainer<Content: View>: View {
     private let content: Content
+    /// The iPad's split holds a page's content to a readable width; nil fills the width.
+    @Environment(\.setupReadableWidth) private var readableWidth
 
     /// The space between two sections, as the board draws it.
     static var sectionSpacing: CGFloat { 20 }
@@ -32,7 +34,8 @@ struct SetupPageContainer<Content: View>: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: readableWidth ?? .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
         .background(WorkspacePalette.appBg.ignoresSafeArea())
@@ -301,7 +304,34 @@ private struct SetupLayoutProbeKey: EnvironmentKey {
     static let defaultValue: SetupLayoutProbe? = nil
 }
 
+/// Holds a page that draws its own scroll view (Devices) to the split's
+/// readable width, centered; with no readable width set it changes nothing.
+struct SetupReadableWidth: ViewModifier {
+    @Environment(\.setupReadableWidth) private var readableWidth
+
+    func body(content: Content) -> some View {
+        if let readableWidth {
+            content
+                .frame(maxWidth: readableWidth)
+                .frame(maxWidth: .infinity)
+        } else {
+            content
+        }
+    }
+}
+
+private struct SetupReadableWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
 extension EnvironmentValues {
+    /// The widest a Setup page's content is drawn: the iPad's split sets it
+    /// (``SetupSplit/readableWidth``); nil, the default, fills the width.
+    var setupReadableWidth: CGFloat? {
+        get { self[SetupReadableWidthKey.self] }
+        set { self[SetupReadableWidthKey.self] = newValue }
+    }
+
     var setupLayoutProbe: SetupLayoutProbe? {
         get { self[SetupLayoutProbeKey.self] }
         set { self[SetupLayoutProbeKey.self] = newValue }
