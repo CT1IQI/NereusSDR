@@ -3,7 +3,9 @@
 //                 pan's waterfall scrolls by a steady row clock read each
 //                 frame; its rows are handed over early with the time each
 //                 is due and go in on a grid locked to those due times
-//                 (RemoteWaterfallRowClock).
+//                 (RemoteWaterfallRowClock). The row queue holds a full
+//                 hold's rows, a drawn frame takes at most two rows, and
+//                 rows due after the transmit view lets go are kept.
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 pan's waterfall ticks and glides at the Core's row period.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
@@ -739,8 +741,14 @@ public:
     /// presenter forgot their items: a key, a new context, a teardown).
     /// Returns how many were forgotten.
     int forgetEarlyRemoteRows();
-    /// Rows the ticker has not drawn yet; beyond this the oldest is dropped.
+    /// Rows not drawn yet, beyond the rows a full hold hands over early
+    /// (remoteRowQueueCap()); past the cap the oldest is dropped.
     static constexpr int kMaxRemoteRowQueue = 32;
+    /// The row queue's cap: kMaxRemoteRowQueue plus the rows of the longest
+    /// hold the presenter trusts (RemoteDisplayPresenter::kMaxHoldNs) at the
+    /// Core's row period, so rows handed over early for a deep audio hold
+    /// are never dropped before they are due.
+    int remoteRowQueueCap() const;
     /// R-R3-21: a remote trace captured at centreHz and spanHz, drawn on the
     /// current axis (a frame presented after its pan was tuned). False
     /// outside a remote window, during MOX, or for a non-finite trace.
@@ -1459,7 +1467,9 @@ public:
     void tickWaterfallForTest() { onWaterfallTick(); }
     // The remote row clock run by hand, at a time of the test's choosing.
     void setRemoteRowNowNsForTest(qint64 ns) { m_remoteRowNowNsForTest = ns; }
-    void pumpRemoteWaterfallForTest() { pumpRemoteWaterfallRows(); }
+    // A drawn frame's pump (paintEvent), and the ticker's.
+    void pumpRemoteWaterfallForTest() { pumpRemoteWaterfallOnFrame(); }
+    void tickRemoteWaterfallPumpForTest() { pumpRemoteWaterfallOnTick(); }
     const RemoteWaterfallRowClock& remoteRowClockForTest() const { return m_remoteRowClock; }
     qint64 remoteRowNowNsForTest() const { return remoteRowNowNs(); }
     // When the queued row at index is due, on remoteRowNowNs()'s clock.
@@ -3884,6 +3894,16 @@ private:
     void drainRemoteWaterfallRows();
     // Put the queue's oldest rows into the waterfall, at most rows of them.
     void putRemoteWaterfallRows(int rows);
+    // Drop the oldest rows past remoteRowQueueCap().
+    void trimRemoteRowQueue();
+    // The pump on a drawn frame (paintEvent) and on a ticker tick. A drawn
+    // frame takes at most RemoteWaterfallRowClock::kMaxRowsPerFrame rows
+    // across both; a tick with no frame drawn since the last tick (the pan
+    // is not drawing) starts a new budget.
+    void pumpRemoteWaterfallOnFrame();
+    void pumpRemoteWaterfallOnTick();
+    int m_remoteRowsThisFrame{0};
+    bool m_remoteFrameSinceTick{false};
     // The remote row clock: advance it to now and put in the rows it says
     // are due. Run on every frame the pan draws and on every ticker tick.
     void pumpRemoteWaterfallRows();

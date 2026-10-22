@@ -239,6 +239,13 @@
 //                                    rows not yet due (panRowsAreHanded-
 //                                    OverEarlyWithTheirDueTime).
 //                                    AI-assisted via Claude Code.
+//   2026-10-21  J.J. Boyd (KG4VCF)  Fix wave: that case also shows a mini
+//                                    display gets row and trace together
+//                                    at due; a pan that keeps its history
+//                                    as its display moves to the other
+//                                    slice forgets the old binding's rows
+//                                    not yet due. AI-assisted via Claude
+//                                    Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -298,6 +305,7 @@
 #include "core/settings/SettingsProxy.h"
 #include "core/settings/SettingsScope.h"
 #include "core/session/media/DisplayCodec.h"
+#include "core/spectrum/SpectrumReducer.h"
 #include "core/session/media/DisplayExtras.h"
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/DisplayLoadGovernor.h"
@@ -3431,8 +3439,22 @@ private slots:
         clarity->notifyManualOverride();
         const float retainedLow=clarity->lastLow(), retainedFloor=clarity->smoothedFloor();
 
+        // Fix wave finding 4: the old binding's rows handed over early and
+        // not yet due go with it; what is drawn stays.
+        const auto rowsNotYetDue = [widget] {
+            const qint64 now = widget->remoteRowNowNsForTest();
+            int count = 0;
+            for (int i = 0; i < widget->remoteRowQueueDepthForTest(); ++i) {
+                if (widget->remoteRowDueNsForTest(i) > now) { ++count; }
+            }
+            return count;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), rowsNotYetDue() > 0), 10000);
+
         // The operator selects the other slice's flag on this pan.
         pan->setActiveSliceIndex(secondId);
+        gui.planNowForTest();
+        QCOMPARE(rowsNotYetDue(), 0);
         // The pan asks for the new slice's display; until it arrives, and
         // once it does, nothing drawn so far is lost.
         for (int i = 0; i < 20; ++i) {
@@ -8141,6 +8163,74 @@ private slots:
         QTest::qWait(300);
         QCOMPARE(int(drawnAtNs.size()), 2);
         controller.setPanTransmitting(panId, false, false);
+
+        // A mini display still gets row and trace together, at due: its
+        // rows are not handed over early.
+        std::vector<qint64> miniAtNs;
+        QSignalSpy minis(&controller, &RemoteMediaController::miniDisplayFrame);
+        connect(&controller, &RemoteMediaController::miniDisplayFrame, widget,
+                [&miniAtNs, widget] { miniAtNs.push_back(widget->remoteRowNowNsForTest()); });
+        controller.setMiniDisplaySlices({stationSlice->sliceIndex()});
+        const auto miniAsk = [&] {
+            for (const QJsonObject& ask : controlsFor(controls, QStringLiteral("subscribe"))) {
+                if (ask.value(QStringLiteral("displayRole")).toString() == QLatin1String("mini")) {
+                    return ask;
+                }
+            }
+            return QJsonObject{};
+        };
+        QTRY_VERIFY(!miniAsk().isEmpty());
+        const QJsonObject ask = miniAsk();
+        const quint32 miniId = quint32(ask.value(QStringLiteral("endpointId")).toDouble());
+        QVERIFY(miniId != id);
+        // The Core's crop of the asked window, as the controller checks it.
+        const int fftSize = ask.value(QStringLiteral("fftSize")).toInt();
+        ReducerConfig crop;
+        crop.centreHz = ask.value(QStringLiteral("centreHz")).toDouble();
+        crop.spanHz = ask.value(QStringLiteral("spanHz")).toDouble();
+        crop.streamCentreHz = 14225000;
+        crop.sampleRateHz = 192000;
+        const auto bins = SpectrumReducer::visibleBinRange(fftSize, crop);
+        const double binHz = 192000.0 / fftSize;
+        QJsonObject miniContext = context;
+        miniContext.insert(QStringLiteral("endpointId"), double(miniId));
+        miniContext.insert(QStringLiteral("revision"), ask.value(QStringLiteral("revision")));
+        miniContext.insert(QStringLiteral("centreHz"),
+                           14225000.0 - 96000.0 + (bins.first + bins.second + 1) * binHz * 0.5);
+        miniContext.insert(QStringLiteral("spanHz"), (bins.second - bins.first + 1) * binHz);
+        miniContext.insert(QStringLiteral("grantedFftSize"), fftSize);
+        miniContext.insert(QStringLiteral("grantedTier"), ask.value(QStringLiteral("tier")));
+        // A mini display asks for no extended view: no wideband block.
+        miniContext.remove(QStringLiteral("wideband"));
+        QVERIFY(server.sendMediaControl(miniContext, server.mediaSessionEpoch()));
+        QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 2);
+        DisplayCodecEncoder miniEncoder;
+        const qint64 producerNs = coreNow();
+        const int depthBefore = widget->remoteRowQueueDepthForTest();
+        media->deliver(encoder.encode(frameAt(3, producerNs, -70.0f)));
+        DisplayCodecFrame miniFrame = frameAt(0, producerNs, -70.0f);
+        miniFrame.context = {miniId, 1, -180, 0, 128, 128, 0};
+        media->deliver(miniEncoder.encode(miniFrame));
+        // The pan's row is handed over; the mini display's waits for due.
+        QVERIFY(widget->remoteRowQueueDepthForTest() > depthBefore);
+        const qint64 miniDueNs =
+            widget->remoteRowDueNsForTest(widget->remoteRowQueueDepthForTest() - 1);
+        QCOMPARE(minis.size(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(minis.size(), 1, 2000);
+        QVERIFY2(miniAtNs.front() >= miniDueNs - 1'000'000,
+                 qPrintable(QString::number(miniAtNs.front() - miniDueNs)));
+        QVERIFY2(miniAtNs.front() < miniDueNs + 50'000'000,
+                 qPrintable(QString::number(miniAtNs.front() - miniDueNs)));
+        // Trace and row in the one call, the row advancing the waterfall.
+        const QList<QVariant> shown = minis.first();
+        const auto isFrame = [](const QVector<float>& plane) {
+            return plane.size() == 128
+                && std::all_of(plane.cbegin(), plane.cend(),
+                               [](float dbm) { return std::abs(dbm + 70.0f) < 0.5f; });
+        };
+        QVERIFY(isFrame(shown.at(1).value<QVector<float>>()));
+        QVERIFY(isFrame(shown.at(2).value<QVector<float>>()));
+        QVERIFY(shown.at(6).toBool());
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

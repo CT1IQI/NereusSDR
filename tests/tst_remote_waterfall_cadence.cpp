@@ -3,6 +3,15 @@
 // no-port-check: NereusSDR-original. The remote waterfall's row cadence;
 // Thetis has no remote display, so there is no upstream source to cite.
 //
+// Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 ticker and glide at the Core's row period; the row clock's
+//                 grid locked to the rows' due times; then the review's fix
+//                 wave: rows bound by their hand-off follow the Core's
+//                 drift, a stall plays out gliding, a deep hold's rows all
+//                 stay queued, rows due after the transmit view lets go are
+//                 kept, and a drawn frame takes at most two rows.
+//
 // A remote pan asks the Core for ceil(update period x fps / 1000) frames a
 // row, so a 42 ms update period at 30 fps gets a row every 66.67 ms. The
 // waterfall ticker, which takes one queued row a tick, ran at the 42 ms
@@ -69,6 +78,9 @@ struct GridRun {
     qint64 lastStillNs{-1};
     // Rows that went in later than the first frame of their slide.
     int rowsInLate{0};
+    // Frames that put rows in with the glide already at the full row: the
+    // rows jumped in rather than glided.
+    int framesPutWithoutGlide{0};
     // The largest step of the glide on one frame, in rows.
     double maxGlideStepRows{0.0};
     // Each row put in alone on its frame: its index, slot and the frame it
@@ -106,6 +118,9 @@ GridRun runGrid(RemoteWaterfallRowClock& clock, const std::vector<GridRow>& rows
         run.maxRowsInAFrame = std::max(run.maxRowsInAFrame, put);
         if (put >= 2) {
             ++run.framesWithTwoRows;
+        }
+        if (put > 0 && clock.progress() >= 1.0f) {
+            ++run.framesPutWithoutGlide;
         }
         if (put == 1) {
             run.puts.push_back({queue.front(), clock.lastSlotNs(), now});
@@ -310,6 +325,7 @@ private slots:
         // Every row goes in on the first frame of its slide, one a slot.
         QCOMPARE(run.rowsInLate, 0);
         QCOMPARE(run.framesWithTwoRows, 0);
+        QCOMPARE(run.framesPutWithoutGlide, 0);
         // The glide moves on every frame and never rests.
         QCOMPARE(run.stillFrames, 0);
         QCOMPARE(clock.starvedSlots(), 0);
@@ -450,6 +466,61 @@ private slots:
                  qPrintable(QStringLiteral("%1 %2").arg(minLateMs).arg(maxLateMs)));
     }
 
+    void gridFollowsDriftForRowsBoundByTheirHandOff_data()
+    {
+        QTest::addColumn<double>("drift");
+        QTest::addColumn<qint64>("leadNs");
+        QTest::newRow("no due time, Core rows long") << 0.005 << qint64(0);
+        QTest::newRow("no due time, Core rows short") << -0.005 << qint64(0);
+        QTest::newRow("due inside a row period, Core rows long") << 0.005 << qint64(20 * kMs);
+        QTest::newRow("due inside a row period, Core rows short")
+            << -0.005 << qint64(20 * kMs);
+    }
+
+    void gridFollowsDriftForRowsBoundByTheirHandOff()
+    {
+        // Fix wave finding 2: rows that cannot go in by their due time (no
+        // due time from an older Core, or due less than a row period after
+        // they were handed over) still teach the rate the Core's clock,
+        // either way. With their early errors held at zero the rate could
+        // only fall: a faster Core's rows piled up and the grid started
+        // again with a stop and a jump about every 30 s. 300 s of rows
+        // 0.5% long, then 0.5% short, handed over with up to 5.5 ms of
+        // jitter.
+        QFETCH(double, drift);
+        QFETCH(qint64, leadNs);
+        RemoteWaterfallRowClock clock;
+        clock.setPeriodNs(kTwoFrameRowNs);
+        const qint64 endNs = 300'000 * kMs;
+        const qint64 spacing = qint64(double(kTwoFrameRowNs) * (1.0 + drift));
+        const std::vector<GridRow> rows = gridRows(spacing, 5'500'000, leadNs, endNs);
+        const GridRun run = runGrid(clock, rows, endNs);
+        QCOMPARE(clock.reanchors(), 0);
+        QCOMPARE(run.framesWithTwoRows, 0);
+        QVERIFY(clock.starvedSlots() <= 1);
+        // After 3 s the glide moves on every frame.
+        QVERIFY2(run.lastStillNs < 3'000 * kMs, qPrintable(QString::number(run.lastStillNs)));
+        QVERIFY(run.pushed >= int(rows.size()) - 3);
+        // Slower for rows spaced long, faster for rows spaced short.
+        QVERIFY2(drift > 0 ? clock.rate() < 1.0 : clock.rate() > 1.0,
+                 qPrintable(QString::number(clock.rate(), 'f', 5)));
+        // Each slot a row period and the margin after its row was handed
+        // over, steadily: within the hand-off's jitter and a frame.
+        double minLateMs = 1e9;
+        double maxLateMs = 0.0;
+        for (const GridRun::Put& put : run.puts) {
+            if (put.atNs < 10'000 * kMs) {
+                continue;
+            }
+            const double lateMs =
+                double(put.slotNs - rows[put.row].handedNs) / double(kMs);
+            minLateMs = std::min(minLateMs, lateMs);
+            maxLateMs = std::max(maxLateMs, lateMs);
+        }
+        QVERIFY2(minLateMs >= 66.0 && maxLateMs - minLateMs < 11.0 + 16.7,
+                 qPrintable(QStringLiteral("%1 %2").arg(minLateMs).arg(maxLateMs)));
+    }
+
     void gridRestsOnceForRowsThatComeLate()
     {
         // The link stalls: nothing is handed over from 5.0 s to 5.3 s, so
@@ -487,6 +558,12 @@ private slots:
         const GridRun run = runGrid(clock, rows, endNs, 3'000 * kMs, 3'400 * kMs);
         QCOMPARE(run.maxRowsInAFrame, 2);
         QVERIFY(run.framesWithTwoRows >= 1 && run.framesWithTwoRows <= 3);
+        // Gliding: every frame that puts rows in, the play-out after the
+        // stall too, starts a glide rather than jumping the rows in at the
+        // full row (fix wave finding 5).
+        QCOMPARE(run.framesPutWithoutGlide, 0);
+        QVERIFY2(run.maxGlideStepRows <= 2.0,
+                 qPrintable(QString::number(run.maxGlideStepRows)));
         QCOMPARE(clock.starvedSlots(), 0);
         QCOMPARE(clock.reanchors(), 0);
         const double worst = maxSlotErrorMs(run, rows, 4'000 * kMs);
@@ -514,6 +591,145 @@ private slots:
         QCOMPARE(clock.lastSlotNs(), 2 * due);
         clock.setPeriodNs(1'000'000'000LL / 30);
         QVERIFY(!clock.anchored());
+    }
+
+    void remotePanKeepsEveryRowOfADeepHold()
+    {
+        // Fix wave finding 1: rows go over about a hold before they are
+        // due, so a 1.2 s audio hold at a 16.67 ms row period has 72 rows
+        // queued at once. A queue of 32 dropped the row due soonest, every
+        // time, until none was left to go in. The queue holds a full hold's
+        // rows; each goes in on its own slot. Frames at 120 Hz.
+        SpectrumWidget widget;
+        widget.resize(420, 240);
+        widget.setWaterfallTickerPausedForTest(true);
+        const SpectrumEndpointContext context = remoteContext(60, 1);
+        widget.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
+        const qint64 periodNs = 1'000'000'000LL / 60;
+        QCOMPARE(widget.remoteRowClockForTest().periodNs(), periodNs);
+        const RemoteSpectrumCapture capture{context, 14200000.0, 192000.0};
+        const QVector<float> row(400, -100.0f);
+        constexpr qint64 kHoldNs = 1'200 * kMs;
+        constexpr qint64 kFrame120Ns = 1'000'000'000LL / 120;
+        const qint64 endNs = 5'000 * kMs;
+        const quint64 droppedBefore = widget.remoteRowsDropped();
+        const quint64 pushedBefore = widget.remoteRowsPushedForTest();
+        qint64 handed = 0;
+        int framesWithTwo = 0;
+        int deepest = 0;
+        for (qint64 now = 0; now <= endNs; now += kFrame120Ns) {
+            widget.setRemoteRowNowNsForTest(now);
+            while (handed * periodNs <= now) {
+                const qint64 dueNs = handed * periodNs + kHoldNs;
+                QVERIFY(widget.enqueueRemoteWaterfallRow(row, {}, capture, dueNs - now));
+                ++handed;
+            }
+            deepest = std::max(deepest, widget.remoteRowQueueDepthForTest());
+            const quint64 before = widget.remoteRowsPushedForTest();
+            widget.pumpRemoteWaterfallForTest();
+            if (widget.remoteRowsPushedForTest() - before > 1) {
+                ++framesWithTwo;
+            }
+        }
+        QCOMPARE(widget.remoteRowsDropped(), droppedBefore);
+        QCOMPARE(framesWithTwo, 0);
+        // Every row whose slide has started by the end is in.
+        const qint64 dueByEnd = (endNs + periodNs - kHoldNs) / periodNs + 1;
+        const qint64 pushed = qint64(widget.remoteRowsPushedForTest() - pushedBefore);
+        QVERIFY2(pushed >= dueByEnd - 1 && pushed <= dueByEnd + 1,
+                 qPrintable(QStringLiteral("%1 of %2").arg(pushed).arg(dueByEnd)));
+        QCOMPARE(widget.remoteRowClockForTest().reanchors(), 0);
+        QCOMPARE(widget.remoteRowClockForTest().starvedSlots(), 0);
+        // The hold's rows were all queued at once.
+        QVERIFY2(deepest >= 72, qPrintable(QString::number(deepest)));
+    }
+
+    void remoteRowsDueAfterTheTransmitViewLetsGoAreKept()
+    {
+        // Fix wave finding 3: while the transmit view owns the waterfall no
+        // receive row goes in, and the rows that fall due meanwhile are
+        // dropped. Rows handed over after the un-key and due after the
+        // transmit view lets go are the receive that follows: they stay
+        // and go in on their slots.
+        SpectrumWidget widget;
+        widget.resize(420, 240);
+        widget.setWaterfallTickerPausedForTest(true);
+        const SpectrumEndpointContext context = remoteContext(30, 2);
+        widget.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
+        const RemoteSpectrumCapture capture{context, 14200000.0, 192000.0};
+        const QVector<float> row(400, -100.0f);
+        const quint64 pushedBefore = widget.remoteRowsPushedForTest();
+        widget.setRemoteRowNowNsForTest(0);
+        for (const qint64 dueMs : {100, 200, 300, 400}) {
+            QVERIFY(widget.enqueueRemoteWaterfallRow(row, {}, capture, dueMs * kMs));
+        }
+        widget.setTxExternalWaterfall(true);
+        widget.setRemoteRowNowNsForTest(150 * kMs);
+        widget.pumpRemoteWaterfallForTest();
+        widget.tickRemoteWaterfallPumpForTest();
+        QCOMPARE(widget.remoteRowsPushedForTest(), pushedBefore);
+        QCOMPARE(widget.remoteRowQueueDepthForTest(), 3);
+        QVERIFY(!widget.remoteRowClockForTest().anchored());
+        widget.setRemoteRowNowNsForTest(250 * kMs);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(widget.remoteRowsPushedForTest(), pushedBefore);
+        QCOMPARE(widget.remoteRowQueueDepthForTest(), 2);
+        // It lets go at 320 ms: the row due at 300 ms fell due under it and
+        // is dropped, though no pump ran in between.
+        widget.setRemoteRowNowNsForTest(320 * kMs);
+        widget.setTxExternalWaterfall(false);
+        QCOMPARE(widget.remoteRowQueueDepthForTest(), 1);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(widget.remoteRowsPushedForTest(), pushedBefore);
+        // The row due at 400 ms slides in from a row period before.
+        widget.setRemoteRowNowNsForTest(400 * kMs - kTwoFrameRowNs);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(widget.remoteRowsPushedForTest(), pushedBefore + 1);
+        QCOMPARE(widget.remoteRowClockForTest().lastSlotNs(), 400 * kMs);
+    }
+
+    void aDrawnFrameTakesAtMostTwoRows()
+    {
+        // Fix wave finding 7: the ticker's pump and the drawn frame's both
+        // advance the clock. Two rows is a drawn frame's budget across
+        // both, so a stall plays out at most two rows a frame; a tick with
+        // no frame drawn since the last one (the pan is not drawing) has a
+        // budget of its own.
+        SpectrumWidget widget;
+        widget.resize(420, 240);
+        widget.setWaterfallTickerPausedForTest(true);
+        const SpectrumEndpointContext context = remoteContext(30, 2);
+        widget.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
+        const RemoteSpectrumCapture capture{context, 14200000.0, 192000.0};
+        const QVector<float> row(400, -100.0f);
+        widget.setRemoteRowNowNsForTest(0);
+        for (int k = 0; k < 10; ++k) {
+            QVERIFY(widget.enqueueRemoteWaterfallRow(row, {}, capture,
+                                                     100 * kMs + k * kTwoFrameRowNs));
+        }
+        const auto pushed = [&widget, before = widget.remoteRowsPushedForTest()] {
+            return int(widget.remoteRowsPushedForTest() - before);
+        };
+        widget.setRemoteRowNowNsForTest(100 * kMs - kTwoFrameRowNs);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(pushed(), 1);
+        // No frame for six row periods: rows are far behind the grid.
+        widget.setRemoteRowNowNsForTest(100 * kMs + 6 * kTwoFrameRowNs);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(pushed(), 3);
+        // A tick before the next frame: that frame's budget is spent.
+        widget.tickRemoteWaterfallPumpForTest();
+        QCOMPARE(pushed(), 3);
+        // The next frame takes its two.
+        widget.setRemoteRowNowNsForTest(100 * kMs + 6 * kTwoFrameRowNs + kFrameNs);
+        widget.pumpRemoteWaterfallForTest();
+        QCOMPARE(pushed(), 5);
+        widget.tickRemoteWaterfallPumpForTest();
+        QCOMPARE(pushed(), 5);
+        // A second tick with no frame drawn between: the pan is not
+        // drawing, and the tick takes a frame's worth.
+        widget.tickRemoteWaterfallPumpForTest();
+        QCOMPARE(pushed(), 7);
     }
 
     void remotePanPutsEarlyRowsInOnTheGrid()

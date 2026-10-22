@@ -27,6 +27,8 @@ void RemoteWaterfallRowClock::reset()
     m_starved = false;
     m_slideStartNs = 0.0;
     m_slotNs = 0.0;
+    m_glideStartNs = 0.0;
+    m_glideEndNs = 0.0;
     m_progress = 1.0;
     m_rate = 1.0;
     m_errorNs = 0.0;
@@ -42,8 +44,18 @@ void RemoteWaterfallRowClock::anchorAt(double slotNs)
     m_starved = false;
 }
 
+void RemoteWaterfallRowClock::startAgain()
+{
+    // The grid starts again at the next row, at the nominal rate: a rate
+    // learnt against rows that are gone says nothing of the next ones.
+    ++m_reanchors;
+    m_errorNs = 0.0;
+    m_rate = 1.0;
+    m_anchored = false;
+}
+
 int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontDueNs,
-                                     qint64 frontQueuedNs)
+                                     qint64 frontQueuedNs, int maxRows)
 {
     if (!running()) {
         return 0;
@@ -51,18 +63,19 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
     const double now = double(nowNs);
     const double period = double(m_periodNs);
     const double reanchorNs = kReanchorRows * period;
+    maxRows = std::clamp(maxRows, 0, kMaxRowsPerFrame);
     int rows = 0;
-    while (rows < kMaxRowsPerFrame && queuedRows - rows > 0) {
+    while (rows < maxRows && queuedRows - rows > 0) {
         const double step = period / m_rate;
         // The slot this row should have: its due time, but never sooner than
-        // a row period after it was handed over, the shortest glide it can
-        // have. Only the oldest row's times are known; a second row this
-        // frame (playing out rows far behind) takes the grid's next slot.
+        // a row period and a margin for the hand-off's jitter after it was
+        // handed over, the shortest glide it can have with the row in hand
+        // at its slide start. Only the oldest row's times are known; a
+        // second row this frame (playing out rows far behind) takes the
+        // grid's next slot.
         double target = m_slotNs + step;
-        bool lateBound = false;
         if (rows == 0) {
-            const double earliest = double(frontQueuedNs) + period;
-            lateBound = earliest > double(frontDueNs);
+            const double earliest = double(frontQueuedNs) + period + double(kLateMarginNs);
             target = std::max(double(frontDueNs), earliest);
         }
         if (!m_anchored) {
@@ -84,9 +97,7 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
             m_starved = false;
             const double lateSlot = now + step;
             if (target > lateSlot || lateSlot - target > reanchorNs) {
-                ++m_reanchors;
-                m_errorNs = 0.0;
-                m_anchored = false;
+                startAgain();
                 continue;
             }
             m_slideStartNs = now;
@@ -99,18 +110,18 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
             break;
         }
         const double scheduled = m_slotNs + step;
-        double error = target - scheduled;
+        const double error = target - scheduled;
         if (rows == 0 && std::abs(error) > reanchorNs) {
-            ++m_reanchors;
-            m_errorNs = 0.0;
-            m_anchored = false;
+            startAgain();
             continue;
         }
-        // A row that came too late for its due time cannot be shown sooner
-        // than a row period after it came: an earlier slot is no goal.
-        if (lateBound && error < 0.0) {
-            error = 0.0;
-        }
+        // The error is taken both ways for the phase and the rate. A row
+        // whose slot is bound by its hand-off (no due time, or due sooner
+        // than a row period after it came) has a target with the margin in
+        // it, so the grid settles that margin behind the rows' arrival
+        // instead of pressing against it; clamping its early errors let the
+        // rate only fall, and a faster Core's rows piled up until the grid
+        // started again (fix wave finding 2).
         double correction = 0.0;
         if (rows == 0) {
             m_errorNs += kErrorSmoothing * (error - m_errorNs);
@@ -129,8 +140,21 @@ int RemoteWaterfallRowClock::advance(qint64 nowNs, int queuedRows, qint64 frontD
         m_starved = true;
         ++m_starvedSlots;
     }
-    if (m_anchored && m_slotNs > m_slideStartNs) {
-        m_progress = std::clamp((now - m_slideStartNs) / (m_slotNs - m_slideStartNs), 0.0, 1.0);
+    if (rows > 0) {
+        if (m_slotNs <= now) {
+            // Rows far behind the grid (a stall): the last one put in this
+            // frame glides in over a part of a row period, so the play-out
+            // moves on every frame instead of jumping whole rows at rest.
+            m_glideStartNs = now;
+            m_glideEndNs = now + period / m_rate / double(kMaxRowsPerFrame);
+        } else {
+            m_glideStartNs = m_slideStartNs;
+            m_glideEndNs = m_slotNs;
+        }
+    }
+    if (m_anchored && m_glideEndNs > m_glideStartNs) {
+        m_progress = std::clamp((now - m_glideStartNs) / (m_glideEndNs - m_glideStartNs),
+                                0.0, 1.0);
     } else {
         m_progress = 1.0;
     }

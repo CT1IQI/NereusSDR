@@ -49,9 +49,13 @@
 // ms) starts the grid again at that row. A row not in hand when its slide
 // should start rests the glide; when it comes it goes in at once, its slot
 // one row period on, and the grid then locks back toward the due times. A
-// row cannot be due sooner than one row period after it came (an older
-// Core sends no due times, so its rows are due as they come): the grid
-// then runs one row behind the rows' arrival, steadily.
+// row cannot be due sooner than one row period and a margin for the
+// hand-off's jitter after it came (an older Core sends no due times, so
+// its rows are due as they come): the grid then runs that far behind the
+// rows' arrival, steadily, and the rate follows the Core's clock either
+// way. Rows far behind the grid (a stall of the main thread) play out at
+// most two a frame, each frame's last row gliding in over half a row
+// period.
 //
 // Pure logic, no Qt objects: the widget passes the time and its queue.
 // =================================================================
@@ -82,6 +86,12 @@ public:
     // Rows one frame may put in: rows far behind (after a stall) play out
     // a few a frame, gliding, instead of all at once.
     static constexpr int kMaxRowsPerFrame = 2;
+    // A row goes in no sooner than a row period and this margin after it was
+    // handed over: the hand-off to the main thread lands up to 11 ms off
+    // (JJ's window, 2026-10-21), so a row bound by its hand-off (no due
+    // time, or due sooner than a row period after it came) is in hand at
+    // its slide start, not pressed against it.
+    static constexpr qint64 kLateMarginNs = 12'000'000;
 
     // The Core's row period in ns; 0 stops the clock. A new period starts
     // the grid again.
@@ -96,8 +106,11 @@ public:
     // time its oldest row is due on screen and frontQueuedNs the time that
     // row was handed over, on the same clock (a row with no due time is
     // due when it was handed over). Returns how many rows to put in now,
-    // oldest first.
-    int advance(qint64 nowNs, int queuedRows, qint64 frontDueNs, qint64 frontQueuedNs);
+    // oldest first. maxRows is what is left of the drawn frame's
+    // kMaxRowsPerFrame: the caller counts the rows each drawn frame took
+    // across every advance() before it.
+    int advance(qint64 nowNs, int queuedRows, qint64 frontDueNs, qint64 frontQueuedNs,
+                int maxRows = kMaxRowsPerFrame);
 
     // How far the glide toward the last row put in has come, 0 to 1, as of
     // the last advance(): 1 at that row's slot, and while the clock waits.
@@ -117,12 +130,18 @@ public:
 
 private:
     void anchorAt(double slotNs);
+    // The grid starts again at the next row (counted in reanchors()).
+    void startAgain();
 
     qint64 m_periodNs{0};
     bool   m_anchored{false};  // the grid has a slot
     bool   m_starved{false};   // resting: no row in hand at its slide start
     double m_slideStartNs{0.0};
     double m_slotNs{0.0};
+    // The glide shown: the last row's slide to its slot, or, for a row put
+    // in behind the grid, part of a row period from the frame it went in.
+    double m_glideStartNs{0.0};
+    double m_glideEndNs{0.0};
     double m_progress{1.0};
     double m_rate{1.0};
     double m_errorNs{0.0};

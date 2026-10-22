@@ -5,7 +5,8 @@
 //               row clock slides each in by then; the trace is still drawn
 //               at its due time, and a mini display still gets row and
 //               trace together. Wherever the presenter forgets its items,
-//               the rows handed over early for them are forgotten too.
+//               the rows handed over early for them are forgotten too,
+//               and so when a binding retires keeping the pan's history.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-17: a playback failure's disable that cannot be sent (the old
 //               peer not ready while the Core moves) is still owed
@@ -5526,10 +5527,16 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
             if (found->second.clarityRegistry) { found->second.clarityRegistry->setRemoteAvailable(found->second.panId, found->second.clarityToken, false); }
             found->second.suspending = false;
             const QString panId = found->second.panId;
+            const bool handedRowsEarly = found->second.handsRowsEarly();
             if (widget) {
                 // Parity Task 18 (B3.5): another slice on the same receiver
                 // takes this pan's display; what it has drawn stays.
                 if (keepHistory.contains(widget.data())) {
+                    // The rows this binding handed over early and not yet
+                    // due go with it, as wherever its presenter is reset.
+                    if (handedRowsEarly) {
+                        widget->forgetEarlyRemoteRows();
+                    }
                     widget->invalidateRemoteSpectrumFrame();
                 } else {
                     widget->clearRemoteSpectrum();
@@ -5575,12 +5582,16 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
                 : SpectrumWidget::RxHistoryEvent::LegacyBindingRetired,
                 found->second.observedStream, found->second.observedStreamEpoch);
         }
+        const bool handedRowsEarly = found->second.handsRowsEarly();
         // Retire local ownership before sending: a synchronous transport
         // failure can end the session and clear every binding inside send().
         d->bindings.erase(found);
         if (widget) {
             // Parity Task 18 (B3.5): as above.
             if (keepHistory.contains(widget.data())) {
+                if (handedRowsEarly) {
+                    widget->forgetEarlyRemoteRows();
+                }
                 widget->invalidateRemoteSpectrumFrame();
             } else {
                 widget->clearRemoteSpectrum();
