@@ -4,6 +4,13 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: rxMeterHoldMapNs (none while no display is open) and
+//               rxMeterHoldMapFor, and the StationClient's RX meter hold
+//               clock set to the display's clock and map. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21: handOverEarlyRows (a pan's waterfall rows go to its widget
+//               with their due times). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 //   2026-10-16: scheduleAudioRetry (a speaker failure is asked for again on
 //               the restart backoff); a held restart step no longer
 //               replaces another; setSpeakerDeviceListWaitForTest. J.J. Boyd
@@ -271,6 +278,20 @@ public:
     /// probes run while the display does; without it each frame is drawn on
     /// arrival, as before.
     bool displayClockNegotiated() const;
+    /// RX meter stamps: the producer-to-display map the display is presented
+    /// by, as last measured, without measuring it again (displayMapNs moves
+    /// the delay follower; this never does). nullopt before the first map,
+    /// from a Core without the display clock, and while no display is open:
+    /// the map is measured only as display frames are presented, so with
+    /// every pan and mini display closed it goes stale. The StationClient's
+    /// RX meter hold reads it on the main thread, with the audio's clock, so
+    /// a slice's RX meters show with their audio
+    /// (StationClient::setRxMeterHoldClock).
+    std::optional<qint64> rxMeterHoldMapNs() const;
+    /// The rule rxMeterHoldMapNs applies to the follower's map.
+    static std::optional<qint64> rxMeterHoldMapFor(bool displayClockNegotiated,
+                                                   bool displayOpen,
+                                                   std::optional<qint64> followerMapNs);
     RemoteAudioReceiverTelemetry audioTelemetry() const;
     /// The audio context most recently accepted from Core. Its encoder and
     /// off reason are present only when audioDetailNegotiated().
@@ -756,6 +777,7 @@ private:
     // R-R3-21 / R-R3-08: display presentation on the audio's clock.
     std::optional<qint64> displayMapNs();
     void presentDueDisplay();
+    void handOverEarlyRows(quint32 endpointId, qint64 nowNs, std::optional<qint64> mapNs);
     void scheduleDisplayPresentation(std::optional<qint64> mapNs);
     // Task 36: the microphone uplink.
     bool micUplinkWanted() const;

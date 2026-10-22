@@ -4111,6 +4111,11 @@ nereus_add_test(tst_connection_state)
 nereus_add_test(tst_radio_discovery_probe)
 target_link_libraries(tst_radio_discovery_probe PRIVATE Qt6::Network)
 
+# Review of PR 600, Important 1: startup auto-connect to a pinned radio waits
+# on the scan, not a fixed 3 s (PinnedRadioWait).
+nereus_add_test(tst_pinned_radio_wait)
+target_link_libraries(tst_pinned_radio_wait PRIVATE Qt6::Network)
+
 # ── Phase 3Q Task 4: AddCustomRadioDialog — SKU model picker + action buttons ──
 # 4 tests: Auto-detect at index 0, all 16 SKUs present in modelCombo,
 # saveOfflineButton + probeButton objectNames accessible via findChild.
@@ -5947,6 +5952,9 @@ nereus_add_test(tst_telemetry_history)
 nereus_add_test(tst_audio_clock_estimator)
 # R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
 nereus_add_test(tst_remote_display_presenter)
+nereus_add_test(tst_remote_waterfall_cadence)
+# NEREUS_TRACE_MAIN_STALLS: slow GUI-thread deliveries log MAIN_STALL; off, nothing.
+nereus_add_test(tst_gui_application_stall_trace)
 nereus_add_test(tst_time_series_graph)
 nereus_add_test(tst_remote_telemetry fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_remote_diagnostics fakes/LoopbackTransport.cpp)
@@ -9624,6 +9632,15 @@ nereus_add_test(tst_rade_reason_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_rade_reason_link PRIVATE NEREUS_BUILD_TESTS)
+# RX meter stamps: the Core stamps each slice's RX meter readings with its
+# lane's read time, only a peer that declared rxMeterStamps 1 is sent the
+# stamp, and a remote window holds the readings until their audio plays.
+nereus_add_test(tst_rx_meter_stamps
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_rx_meter_stamps PRIVATE NEREUS_BUILD_TESTS)
 # Radio speaker (R-SPK-13, R-SPK-14, R-SPK-16; V-SW-4): radio's RADIO
 # level, mute, amplifier choice and reports reach only a peer that declared
 # radioSpeaker 1, a remote window's change lands on the Core, and a window

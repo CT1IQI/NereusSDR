@@ -4,6 +4,8 @@
 // no-port-check: NereusSDR-original. See RemoteDisplayPresenter.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: push() records the rows it queues (takeQueuedRows).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-02: Capture identity separates incompatible presentation chains.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-26: created for R-R3-21 / R-R3-08 (display in step with audio).
@@ -112,6 +114,7 @@ void DisplayDelayFollower::observe(qint64 mapNs, qint64 nowNs, qint64 accuracyNs
 void RemoteDisplayPresenter::reset()
 {
     m_queue.clear();
+    m_queuedRows.clear();
     restartChain();
 }
 
@@ -147,6 +150,7 @@ void RemoteDisplayPresenter::push(const DisplayCodecFrame& frame,
 {
     const double centreHz = capture.context().exactCentreHz;
     const double spanHz = capture.context().exactSpanHz;
+    m_queuedRows.clear();
     Item item;
     item.kind = Kind::Frame;
     item.frame = frame;
@@ -203,6 +207,7 @@ void RemoteDisplayPresenter::push(const DisplayCodecFrame& frame,
                     } else {
                         row.frame.wideDbm = m_lastRow->wideDbm;
                     }
+                    m_queuedRows.push_back(row);
                     enqueue(std::move(row));
                     ++m_counters.rowsBlended;
                 }
@@ -220,7 +225,17 @@ void RemoteDisplayPresenter::push(const DisplayCodecFrame& frame,
     }
     // Any decoded frame ends a wait: the decoder took a keyframe.
     m_waiting = false;
+    if (item.frame.waterfallAdvance) {
+        m_queuedRows.push_back(item);
+    }
     enqueue(std::move(item));
+}
+
+std::vector<RemoteDisplayPresenter::Item> RemoteDisplayPresenter::takeQueuedRows()
+{
+    std::vector<Item> rows;
+    rows.swap(m_queuedRows);
+    return rows;
 }
 
 void RemoteDisplayPresenter::noteLoss()

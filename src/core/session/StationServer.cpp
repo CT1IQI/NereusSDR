@@ -1,6 +1,15 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-22: RX-only antennas as Thetis's checkbox sum (0..5):
+//               radioAntennaRowsVersion 2 for a peer that declared
+//               radioAntennaRows 2; any other peer reads and writes a 0..3
+//               view (RxOnlyLinkFit). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: RX meter stamps: rxMeterStampsVersion 1 and each slice's
+//               meterReadingNs only to a peer that declared rxMeterStamps 1
+//               (fitPeerOnlyProperties; before coreBuildInfo). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta for a
 //               minor-11 peer that declared firmwareBeta 1
 //               (RadioModel::firmwareBetaVersion). J.J. Boyd (KG4VCF),
@@ -1048,6 +1057,7 @@
 
 #include "core/session/StationServer.h"
 #include "core/session/BandLinkFit.h"
+#include "core/session/RxOnlyLinkFit.h"
 
 #include "core/TxSliceArbiter.h"
 #include "core/Hl2OptionsModel.h"
@@ -1626,6 +1636,8 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"SliceModel", "slice:", true, "radeFreqOffsetHz", "radeStatus"},
     // Why a RADE slice has no working decoder (radeReasonVersion 1).
     {"SliceModel", "slice:", true, "radeReason", "radeReason"},
+    // When each slice's RX meter readings were measured (rxMeterStampsVersion 1).
+    {"SliceModel", "slice:", true, "meterReadingNs", "rxMeterStamps"},
     // The Alex-1 low-pass in use, for the Alex tab's lamps (alexLpf 1,
     // radioHardwareVersion 10).
     {"RadioModel", "radio", false, "alexLpfBits", "alexLpf"},
@@ -3716,7 +3728,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                         if (it->authenticated && it->snapshotComplete
                             && it->sessionId != 0
                             && it->agreedMinor >= kRadioIdentitySessionProtocolMinor
-                            && it->features.value(QByteArrayLiteral("radioAntennaRows")) == 1) {
+                            && it->features.value(QByteArrayLiteral("radioAntennaRows")) >= 1) {
                             targets.append({QPointer<SessionTransport>(it.key()), it->sessionId});
                         }
                     }
@@ -3738,7 +3750,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                 && peer->authenticated && peer->snapshotComplete
                                 && !peer->dropping
                                 && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
-                                && peer->features.value(QByteArrayLiteral("radioAntennaRows")) == 1;
+                                && peer->features.value(QByteArrayLiteral("radioAntennaRows")) >= 1;
                         }
                         if (!stillAdmitted) {
                             continue;
@@ -4545,6 +4557,13 @@ bool StationServer::peerDeclares(SessionTransport* peer, const QByteArray& featu
     return it->features.value(feature) >= minVersion;
 }
 
+bool StationServer::peerReadsRxOnlyPairs(SessionTransport* peer) const
+{
+    const Peer* it = peerPtr(peer);
+    return it != nullptr && it->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(peer, QByteArrayLiteral("radioAntennaRows"), 2);
+}
+
 bool StationServer::peerKnows2m(SessionTransport* peer) const
 {
     const auto it = m_peers.constFind(peerKey(peer));
@@ -4556,7 +4575,8 @@ QByteArray StationServer::encodeFor(SessionTransport* transport,
                                     const SessionMessage& message) const
 {
     const QByteArray wire = SessionMessages::encode(message);
-    return peerKnows2m(transport) ? wire : BandLinkFit::forPeerWithout2m(wire);
+    const QByteArray fitted = peerKnows2m(transport) ? wire : BandLinkFit::forPeerWithout2m(wire);
+    return peerReadsRxOnlyPairs(transport) ? fitted : RxOnlyLinkFit::forPeerWithoutPairs(fitted);
 }
 
 StationServer::Peer StationServer::peerFor(SessionTransport* transport) const
@@ -7885,6 +7905,36 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
 void StationServer::handlePropertyWrite(SessionTransport* transport,
                                         const SessionMessage& message)
 {
+    // RX-only antennas 0..5 (Thetis's checkbox sum): a peer that reads 0..3
+    // only wrote the list as it saw it, 4 and 5 as 3. An entry it left at
+    // that 3 keeps the Core's 4 or 5, and one above 3, which it cannot
+    // mean, keeps the Core's value (RxOnlyLinkFit::keepPairsFromNarrowList).
+    if (message.objectKey == kAlexAntennasKey && !peerReadsRxOnlyPairs(transport)) {
+        QString current;
+        for (const MirrorUpdate& value : m_mirror->snapshot(message.objectKey)) {
+            if (value.name == RxOnlyLinkFit::kProperty) {
+                current = value.value.toString();
+            }
+        }
+        SessionMessage kept = message;
+        bool changed = false;
+        for (MirrorUpdate& update : kept.updates) {
+            if (update.name != RxOnlyLinkFit::kProperty
+                || update.value.typeId() != QMetaType::QString || current.isEmpty()) {
+                continue;
+            }
+            const QString fitted =
+                RxOnlyLinkFit::keepPairsFromNarrowList(current, update.value.toString());
+            if (fitted != update.value.toString()) {
+                update.value = fitted;
+                changed = true;
+            }
+        }
+        if (changed) {
+            handlePropertyWrite(transport, kept);
+            return;
+        }
+    }
     if (message.objectKey == kSetupDescriptionKey) {
         // Descriptions are station-authored. A peer that did not declare
         // setupDescription must not learn any value through a write result.
@@ -9608,7 +9658,7 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // a later connection of the same board/SKU. Current radio/MAC
             // checks still govern every row command.
             const bool antennaRowsAvailable =
-                peer->features.value(QByteArrayLiteral("radioAntennaRows")) == 1;
+                peer->features.value(QByteArrayLiteral("radioAntennaRows")) >= 1;
             for (MirrorUpdate& update : fitted.updates) {
                 if (update.name != "revision") {
                     update.value = SetupDescription::fitCategoryForVersion(
@@ -13480,6 +13530,28 @@ int StationServer::radioHardwareVersion() const
 QString StationServer::radioAntennaRowRefusal(SessionTransport* transport,
                                               const SessionMessage& invoke) const
 {
+    // RX-only values 4 and 5 (Thetis's checkbox sum) come only from a peer
+    // that declared radioAntennaRows 2; any other peer chooses one input or
+    // none (0..3), which replaces the band's value as Thetis's radio-style
+    // pick would.
+    if ((invoke.commandVerb == "setAlexRxAntenna"
+         || invoke.commandVerb == "setAlexRxAntennaForRadio")
+        && !peerReadsRxOnlyPairs(transport)) {
+        qlonglong antenna = 0;
+        bool rxOnly = false;
+        for (const MirrorUpdate& argument : invoke.arguments) {
+            if (argument.name == "antenna") {
+                antenna = argument.value.toLongLong();
+            } else if (argument.name == "rxOnly"
+                       && argument.value.typeId() == QMetaType::Bool) {
+                rxOnly = argument.value.toBool();
+            }
+        }
+        if (rxOnly && antenna > RxOnlyLinkFit::kNarrowMax) {
+            return QStringLiteral("Update this app to choose XVTR with another receive-only "
+                                  "input on this Core.");
+        }
+    }
     if (invoke.commandVerb != "setAlexRxAntennaForRadio"
         && invoke.commandVerb != "setAlexTxAntennaForRadio") {
         return {};
@@ -13487,7 +13559,7 @@ QString StationServer::radioAntennaRowRefusal(SessionTransport* transport,
     const auto peer = m_peers.constFind(peerKey(transport));
     if (peer == m_peers.cend() || !peer->authenticated
         || peer->agreedMinor < kRadioIdentitySessionProtocolMinor
-        || peer->features.value(QByteArrayLiteral("radioAntennaRows")) != 1) {
+        || peer->features.value(QByteArrayLiteral("radioAntennaRows")) < 1) {
         return QStringLiteral("Update this app to change this radio's antenna row on this Core.");
     }
     if (radioHardwareVersion() < 6) {
@@ -13581,15 +13653,19 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // JJ's ruling of 2026-09-28: the Core's TCI server settings,
             // for a peer that declared stationTciSettings 1.
             caps.stationTciSettingsVersion = peerGetsStationTciSettings(transport) ? 1 : 0;
-            caps.radioAntennaRowsVersion = peer->features.value(
-                    QByteArrayLiteral("radioAntennaRows")) == 1
+            // 2 (RX-only values 0..5, Thetis's checkbox sum) for a peer
+            // that declared 2 or later, 1 for one that declared 1.
+            const int antennaRowsDeclared =
+                peer->features.value(QByteArrayLiteral("radioAntennaRows"));
+            caps.radioAntennaRowsVersion = antennaRowsDeclared >= 1
                 && m_radioModel->role() == RadioModel::Role::Local
                 && caps.radioHardwareVersion >= 6
                 && board.hasAlexFilters
                 && m_radioModel->alexAntennaFacade() != nullptr
                 && m_radioModel->alexAntennaFacade()->isBound()
                 && !currentMac.isEmpty()
-                && AppSettings::normalizedRadioMac(currentMac) == currentMac ? 1 : 0;
+                && AppSettings::normalizedRadioMac(currentMac) == currentMac
+                ? std::min(antennaRowsDeclared, kRadioAntennaRowsVersion) : 0;
             // R-IOS-13 / R-R3-49: transmit's read-only txEqCurve, to a peer
             // that declared txEqCurve 1; 2, with txEq.setCurve and
             // txEq.resetCurve, to one that declared 2.
@@ -13737,6 +13813,12 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
                 caps.firmwareBetaEntry = true;
                 caps.firmwareBetaVersion = m_radioModel->firmwareBetaVersion();
             }
+            // RX meter stamps: each slice's meterReadingNs, for a peer that
+            // declared rxMeterStamps 1 (after waveformVersion and before
+            // coreBuildInfo on the wire), the same test that sends it the
+            // property (fitPeerOnlyProperties).
+            caps.rxMeterStampsVersion =
+                peerGetsFeatureProperties(transport, QByteArrayLiteral("rxMeterStamps")) ? 1 : 0;
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.
