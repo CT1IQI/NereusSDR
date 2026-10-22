@@ -1,8 +1,15 @@
 // =================================================================
 // tests/tst_sample_rate_live_apply.cpp  (NereusSDR)
 // =================================================================
-// no-port-check: NereusSDR-original test infrastructure; the Thetis filename
+// NereusSDR-original test infrastructure, except the case
+// stored_rate_survives_probing_and_connecting, ported from Longpath and
+// registered in docs/attribution/LONGPATH-PROVENANCE.md. The Thetis filename
 // reference below is a comment-only provenance note, not a code port.
+//
+// Ported from Longpath sources:
+//   tests/tst_sample_rate_live_apply.cpp (stored_rate_survives_probing_and_connecting).
+//   Longpath's banner on that file is this NereusSDR header with the project
+//   name changed, so it is not copied here.
 //
 // NereusSDR-original infrastructure — no Thetis source ported here.
 // RadioModel::setSampleRateLive() is a NereusSDR coordinator; the P1
@@ -27,33 +34,6 @@
 //                Longpath PR 37 (fd894ded, Martin Fischer OE5SOS) by J.J.
 //                Boyd (KG4VCF), with AI-assisted transformation via Claude
 //                Code.
-// =================================================================
-
-// --- From tst_sample_rate_live_apply.cpp (Longpath, oe5sos/Longpath @383f058) ---
-// Longpath banner, byte for byte.
-// =================================================================
-// tests/tst_sample_rate_live_apply.cpp  (Longpath)
-// =================================================================
-// no-port-check: Longpath-original test infrastructure; the Thetis filename
-// reference below is a comment-only provenance note, not a code port.
-//
-// Longpath-original infrastructure — no Thetis source ported here.
-// RadioModel::setSampleRateLive() is a Longpath coordinator; the P1
-// restart it delegates to mirrors the onReconnectTimeout() sequence
-// from P1RadioConnection (itself ported from
-// ChannelMaster/networkproto1.c SendStopToMetis/SendStartToMetis [v2.10.3.13]).
-//
-// Test scope (Task 1.6):
-//   changes_rate_without_dropping_channel —
-//       guards: unconnected → returns -1, idempotent same-rate → returns 0.
-//   rebuild_completes_under_glitch_budget —
-//       with no WDSP session the coordinator returns -1 from the guard
-//       before any of the 8 steps execute; elapsed is always < 200 ms.
-//
-// Both tests run without a live WDSP session or radio connection.
-// The "under glitch budget" test is vacuously satisfied in the unconnected
-// case; the full timing path is verified by the integration bench when
-// a real ANAN-G2 is attached (see Task 1.8).
 // =================================================================
 
 #include <QtTest/QtTest>
