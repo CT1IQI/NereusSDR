@@ -2342,13 +2342,10 @@ TxMonitorSection* TxApplet::createMonitorSection(QWidget* parent, bool preview)
 QList<QWidget*> TxApplet::monitorChainControls() const
 {
     QList<QWidget*> controls;
-    if (m_monitorSection) {
-        controls << m_monitorSection->monButton()
-                  << m_monitorSection->volumeSlider();
-    }
-    for (const TxMonitorSection* s : m_extraMonitorSections) {
+    // allMonitorSections skips a copy that is gone.
+    for (const TxMonitorSection* s : allMonitorSections()) {
         controls << s->monButton()
-                  << s->volumeSlider();
+                 << s->volumeSlider();
     }
     return controls;
 }
@@ -2358,13 +2355,10 @@ QList<QWidget*> TxApplet::monitorChainControls() const
 QList<QWidget*> TxApplet::monitorOutputControls() const
 {
     QList<QWidget*> controls;
-    if (m_monitorSection) {
-        controls << m_monitorSection->speakersButton()
-                  << m_monitorSection->headphonesButton();
-    }
-    for (const TxMonitorSection* s : m_extraMonitorSections) {
+    // allMonitorSections skips a copy that is gone.
+    for (const TxMonitorSection* s : allMonitorSections()) {
         controls << s->speakersButton()
-                  << s->headphonesButton();
+                 << s->headphonesButton();
     }
     return controls;
 }
