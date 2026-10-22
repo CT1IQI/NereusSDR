@@ -854,7 +854,7 @@ final class TransmitModel: ObservableObject {
     /// Why RF Power is greyed by the drive sources, or nil while it is live:
     /// during TUNE when TUNE's source is not the drive slider, during the
     /// two-tone test when its source is not. The desktop TX applet's rule
-    /// (TxApplet::applyDriveSourceGate, from Thetis setupTuneDriveSlider).
+    /// (TxApplet::applyDriveSourceGate).
     var rfPowerSourceReason: String? {
         if coreTune {
             return tuneDrivePowerSource == Self.driveSliderSource ? nil : Self.tuneNotUsingText
@@ -868,7 +868,7 @@ final class TransmitModel: ObservableObject {
     /// Why Tune Pwr is greyed by the drive sources, or nil while it is live:
     /// during TUNE when TUNE's source is not the tune slider, during the
     /// two-tone test when its source is not, and at any time while neither
-    /// source is the tune slider (where the desktop's Thetis hides it).
+    /// source is the tune slider (where the desktop hides it).
     var tunePowerSourceReason: String? {
         if coreTune, tuneDrivePowerSource != Self.tuneSliderSource {
             return Self.tuneNotUsingText
