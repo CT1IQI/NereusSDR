@@ -44,9 +44,10 @@ enum BandColours {
     static let levelHigh = P.liveGreen
     static let zoomBackground = P.rgb(0x202024).opacity(0.941)
     static let zoomBorder = Color.white.opacity(0.157)
-    /// The flag's RADE row (the board's `.rf-row`, the desktop's SNR row):
-    /// the words, the locked-on dot at 5 dB or more, the dot below 5 dB,
-    /// the not-locked dot, the greyed older-Core row, and the mode tab in RADE.
+    /// The RADE row's accent for fills and marks (the board's `.rf-row`, the
+    /// desktop's SNR row). Nothing draws in it today: the row's words take
+    /// radeRowText, and its dots and mode tab have their own roles. Kept, and
+    /// pinned, as the row's fill accent.
     static let radeRow = P.accentFill
     /// The RADE row's words, in the accent for text (spec section 10).
     static let radeRowText = P.accentText
