@@ -135,10 +135,12 @@ void feedWidebandBurst(P2RadioConnection* connection)
 }
 }
 
-// The product's Protocol 2 watchdogs (P2RadioConnection.h:681-682, private):
-// the connect budget and the established-stream silence timeout.
-constexpr int kP2ConnectTimeoutMs = 2000;
-constexpr int kP2EstablishedSilenceTimeoutMs = 3000;
+// The product's Protocol 2 watchdogs: the connect budget and the
+// established-stream silence timeout. Copied by value, as MinGW imports a
+// static constexpr member of an exported class by address when it is bound
+// to a reference.
+constexpr int kP2ConnectTimeoutMs = P2RadioConnection::kConnectTimeoutMs;
+constexpr int kP2EstablishedSilenceTimeoutMs = P2RadioConnection::kEstablishedSilenceTimeoutMs;
 
 class TestDaemonRadioRecovery : public QObject {
     Q_OBJECT
@@ -1468,7 +1470,8 @@ private slots:
             // ports are in place before the connection is created. The
             // timeouts are the production ones.
             app.m_radioModel->configureP2TransportForTest(
-                fake.outboundPortBase(), fake.inputRolePortBase(), 2000, 3000);
+                fake.outboundPortBase(), fake.inputRolePortBase(),
+                kP2ConnectTimeoutMs, kP2EstablishedSilenceTimeoutMs);
             return app.m_radioModel.get();
         };
 
@@ -1620,7 +1623,8 @@ private slots:
         QVERIFY(app.start(cfg));
         RadioModel* const model = app.m_radioModel.get();
         model->configureP2TransportForTest(fake.outboundPortBase(),
-                                           fake.inputRolePortBase(), 2000, 3000);
+                                           fake.inputRolePortBase(), kP2ConnectTimeoutMs,
+                                           kP2EstablishedSilenceTimeoutMs);
         QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 15000);
         QTRY_VERIFY_WITH_TIMEOUT(
             model->receiveLayoutRestoreState() == QStringLiteral("accepted")

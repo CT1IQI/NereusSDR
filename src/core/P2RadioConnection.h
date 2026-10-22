@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
+//                 public, so a test reads the product's watchdogs instead of
+//                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-15 - wireMox(): the MOX state the wire carries, unkeyed while
 //                 the transmit is cut. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -678,8 +682,8 @@ private:
     bool m_linkLossLatched{false};
 
     // Connect watchdog budget — 2 s matches P1.
-    static constexpr int kConnectTimeoutMs = 2000;
-    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
+    // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, by
+    // setSilenceTimeoutsForTest().)
     int m_connectTimeoutMs{kConnectTimeoutMs};
     int m_establishedSilenceTimeoutMs{kEstablishedSilenceTimeoutMs};
 
@@ -1403,6 +1407,11 @@ public:
         m_baseOutboundPort = static_cast<int>(outboundBase);
         m_p2CustomPortBase = static_cast<int>(inputRoleBase);
     }
+
+    // The connect watchdog's budget and the established stream's silence
+    // timeout: the values setSilenceTimeoutsForTest() replaces.
+    static constexpr int kConnectTimeoutMs = 2000;
+    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
 
     // Compress only timer budgets; packet parsing and socket paths remain the
     // production implementations. Values are clamped away from zero so a
