@@ -254,7 +254,7 @@
 
 // --- From SliceModel.cpp (Longpath) ---
 // The constrained filter API (constrainFilter in setFilter) follows
-// Longpath src/models/SliceModel.cpp:511-630, 1110-1129 [@383f058]
+// Longpath src/models/SliceModel.cpp:511-634, 1110-1129 [@383f058]
 // (commit 6a5df5f1); the logic is ported from Thetis. Longpath's banner
 // for that file, byte for byte:
 // =================================================================

@@ -254,7 +254,7 @@
 // --- From SliceModel.h (Longpath) ---
 // The constrainFilter declaration, kMaxFilterShiftHz, kMaxFilterWidthHz
 // and the limitFiltersToSidebands pair follow Longpath
-// src/models/SliceModel.h:490-552 [@383f058] (commit 6a5df5f1). Longpath's
+// src/models/SliceModel.h:492-552 [@383f058] (commit 6a5df5f1). Longpath's
 // banner for that file, byte for byte:
 // =================================================================
 // src/models/SliceModel.h  (Longpath)
@@ -836,7 +836,7 @@ public:
     // ported, so FM and the modes the switch does not name are left alone.
     static void applyMinimumFilterWidth(int& low, int& high, DSPMode mode);
 
-    // From Thetis console.cs:7549, 7554, 7560-7565 [v2.10.3.15]: the 10 in
+    // From Thetis console.cs:7549, 7554, 7563, 7565 [v2.10.3.15]: the 10 in
     // `low = high - 10` / `high = low + 10`.
     static constexpr int kMinFilterWidthHz = 10;
 
