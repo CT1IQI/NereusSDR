@@ -781,6 +781,68 @@ private slots:
         QTRY_COMPARE(mox->state(), MoxState::Rx);
     }
 
+    // PR 604 third pass (controller ruling, for JJ's veto): a CAT or TCI key
+    // dropped by the open-antenna unkey is not waited on (the unkey drops
+    // its level), so the latch swallows nothing: a fresh mic press keys, and
+    // so does the app's next CAT or TCI key.
+    void openAntenna_catOrTciKey_nextKeysAreNotSwallowed_data()
+    {
+        QTest::addColumn<bool>("tci");
+        QTest::newRow("CAT") << false;
+        QTest::newRow("TCI") << true;
+    }
+
+    void openAntenna_catOrTciKey_nextKeysAreNotSwallowed()
+    {
+        QFETCH(bool, tci);
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN7000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        MoxController* mox = model.moxController();
+        mox->setMoxCheck({});
+        auto appKey = [&](bool down) {
+            if (tci) {
+                mox->onTciPtt(down);
+            } else {
+                mox->onCatPtt(down);
+            }
+        };
+        appKey(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+
+        model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        QVERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        // The unkey dropped the app's level, so nothing is waited on.
+        QVERIFY(!mox->isStopAllTxLatched());
+
+        // A fresh mic press keys.
+        mox->onMicPttFromRadio(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        mox->onMicPttFromRadio(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+
+        // The app's next key command keys.
+        appKey(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        appKey(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+    }
+
     // PR 604 fix wave, item 2: the ANAN-8000D skips the open-antenna check.
     // From Thetis console.cs:26038-26039 [v2.10.3.15]:
     // Upstream tags preserved: //K2UE (from cited console.cs:26034) //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]

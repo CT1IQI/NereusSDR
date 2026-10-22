@@ -1761,7 +1761,6 @@ float swrAlexFwdLimit(HPSDRModel model, int pwrSlider) noexcept
     return kSwrAlexFwdLimitW;
 }
 
-
 // scaleFwdPowerWatts: lifted from this anonymous namespace into the
 // public PaTelemetryScaling API in Phase 1 Agent 1B of issue #167.
 // See src/core/PaTelemetryScaling.{h,cpp} — same Thetis-canonical math
@@ -21610,13 +21609,16 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //
     // Deliberate departure from Thetis (JJ, 2026-10-22: "A, hold the key off
     // until release"): before the drop, Stop All TX's latch is set
-    // (latchStopAllTx), so a PTT, VOX, CAT or TCI key still held does not key
-    // again until it is released. Thetis does not: chkMOX.Checked = false
+    // (latchStopAllTx), so a held mic PTT or VOX is held off until it is
+    // released. CAT and TCI keys are dropped by the unkey itself
+    // (dropPttOnUnkey), so they are not waited on, and the app's next key
+    // command keys normally; so does a fresh key from any source the latch
+    // is not waiting on. Thetis does not latch: chkMOX.Checked = false
     // here (PollPAPWR, console.cs:26036-26057 [v2.10.3.15]) leaves PollPTT
     // (console.cs:25470-25555 [v2.10.3.15]) free to key again from a held
     // source on its next pass, which then keys into the open antenna, trips,
     // drops and keys again. The latch stops that key/unkey chatter into an
-    // open antenna; the release (or a fresh press) keys normally.
+    // open antenna; the release, then a new press, keys normally.
     if (m_swrProt.openAntennaDetected() && m_moxController && m_moxController->isMox()) {
         m_lastTransmitStopReason =
             TransmitStopReason{QByteArray(kOpenAntennaStopCode), QByteArray(), -1};
