@@ -189,10 +189,10 @@ the rows, in the same block that registers the Longpath instruments.
 
 The rows are registered only while the workspace preview is on
 (`WorkspacePreview::enabled()`, which is on by default and off only when
-`NEREUS_WORKSPACE_PREVIEW=0`). The add-item menu therefore asks the
-registry what it has rather than listing the rows unconditionally: with the
-preview off there is no TX submenu at all, instead of a submenu whose
-entries cannot be built.
+`NEREUS_WORKSPACE_PREVIEW=0`). The operator adds a row from Container
+Settings' available-items list with "Add ->", which lists what the registry
+has. (The "+" add-item popup is hidden whenever the workspace edits a
+container, so it never offers the rows.)
 
 ## 6. Verification
 
@@ -202,8 +202,8 @@ entries cannot be built.
   model state; the copy's control sets the model and the applet's own row
   follows (and the other way round); the applet's own panel still has every
   row; the transmit-permission gate reaches the copy; the registry is the
-  authority on what the workspace can build; and the add-item menu offers
-  the rows the registry has, and no TX submenu at all when it has none.
+  authority on what the workspace can build; and the operator adds a row
+  from the available-items list.
 
   The test found two real faults while it was being written, both now
   fixed: a copy started blank instead of showing the model state, and

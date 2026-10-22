@@ -1473,43 +1473,6 @@ void ContainerSettingsDialog::onAddItem()
     layoutMenu->addAction(QStringLiteral("Web Image"),   this, [this]{ addNewItem(QStringLiteral("WEBIMAGE")); });
     layoutMenu->addAction(QStringLiteral("Spacer"),      this, [this]{ addNewItem(QStringLiteral("SPACER")); });
     layoutMenu->addAction(QStringLiteral("Fade Cover"),  this, [this]{ addNewItem(QStringLiteral("FADECOVER")); });
-
-    // --- TX ---
-    // The TX applet's rows as independent content, so a container can hold
-    // the monitor controls (or any other row) on their own. The TX applet's
-    // own panel is unchanged: it still shows every row together.
-    //
-    // Only the rows the registry actually offers are listed, so the menu
-    // never offers a type this workspace cannot build.  The rows are
-    // registered by the app itself (TxSectionContent.cpp), not by a plugin,
-    // and only while the workspace preview is on.
-    {
-        struct TxRow { const char* type; const char* title; };
-        static const TxRow kTxRows[] = {
-            { "tx.monitor",    "TX Monitor" },
-            { "tx.power",      "TX Power" },
-            { "tx.filter",     "TX Filter" },
-            { "tx.chain",      "TX Chain" },
-            { "tx.vox",        "TX VOX" },
-            { "tx.processing", "TX Processing" },
-            { "tx.keying",     "TX Keying" },
-        };
-        const ContainerContentRegistry* const registry =
-            m_manager ? m_manager->contentRegistry() : nullptr;
-        QMenu* txMenu = nullptr;
-        for (const TxRow& row : kTxRows) {
-            const QString type = QString::fromLatin1(row.type);
-            if (!registry || !registry->hasWidgetFactory(type)) {
-                continue;
-            }
-            if (!txMenu) {
-                txMenu = menu->addMenu(QStringLiteral("TX"));
-                txMenu->setStyleSheet(menu->styleSheet());
-            }
-            txMenu->addAction(QString::fromLatin1(row.title), this,
-                              [this, type]{ addNewItem(type); });
-        }
-    }
     QAction* clickBoxAction = layoutMenu->addAction(QStringLiteral("Click Box"), this, [this]{ addNewItem(QStringLiteral("CLICKBOX")); });
     UnbuiltFeatures::hideUnlessBuilt(clickBoxAction, UnbuiltFeature::ContainerClickBox);
     layoutMenu->addAction(QStringLiteral("Scale"),       this, [this]{ addNewItem(QStringLiteral("SCALE")); });

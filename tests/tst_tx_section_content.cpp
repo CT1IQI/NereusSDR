@@ -13,8 +13,7 @@
 // panel is unchanged — it still shows every row together.
 //
 // Tests:
-//   1. The registry offers all seven row types, and the operator's
-//      "add item" menu would list them.
+//   1. The registry offers all seven row types.
 //   2. A copy is its own instance, not the applet's own row, and two copies
 //      are two instances.
 //   3. The copy shows the model state.
@@ -30,8 +29,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-21 - Copies made after the gates, remote 2-TONE copies, a copy's
-//                Take transmit and inert previews. J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code.
+//                Take transmit and inert previews; the unreachable "+" menu
+//                test goes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -41,7 +41,6 @@
 #include <QLayout>
 #include <QListWidget>
 #include <QMargins>
-#include <QMenu>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -253,26 +252,6 @@ private slots:
         for (const char* type : kRowTypes) {
             QVERIFY2(registry.hasWidgetFactory(QString::fromLatin1(type)), type);
         }
-    }
-
-    // ── 7. The add-item menu offers the rows, and only the rows the
-    //       registry has ──────────────────────────────────────────────────
-    void theAddItemMenuOffersTheRowsTheRegistryHas()
-    {
-        RadioModel rm;
-        TxApplet applet(&rm);
-        ContainerContentRegistry registry;
-        registerTxSectionContent(registry, &applet);
-
-        const QStringList titles = txMenuTitles(registry);
-        QCOMPARE(titles.size(), 7);
-        QVERIFY(titles.contains(QStringLiteral("TX Monitor")));
-        QVERIFY(titles.contains(QStringLiteral("TX Keying")));
-
-        // A workspace with no TX rows has no TX submenu at all, rather than
-        // one whose entries cannot be built.
-        ContainerContentRegistry bare;
-        QVERIFY(txMenuTitles(bare).isEmpty());
     }
 
     // ── 8b. The operator adds a row from the item list ──────────────────
@@ -781,67 +760,6 @@ private slots:
         const bool shown = chain->levButton()->isChecked();
         rm.transmitModel().setTxLevelerOn(!rm.transmitModel().txLevelerOn());
         QCOMPARE(chain->levButton()->isChecked(), shown);
-    }
-private:
-    // The titles the add-item menu's TX submenu offers, for a workspace over
-    // this registry.  Empty when the workspace offers no TX rows.
-    QStringList txMenuTitles(ContainerContentRegistry& registry)
-    {
-        QTemporaryDir dir;
-        AppSettings settings(dir.filePath("settings"));
-        ContainerWorkspaceStore store(settings);
-        MeterPoller poller;
-        QWidget root;
-        QSplitter splitter(&root);
-        ContainerManager manager(&root, &splitter);
-        manager.setWorkspaceAdapter(&store, &registry);
-        manager.setPreviewPoller(&poller);
-        WorkspaceDocument document;
-        document.mainContainerId = QStringLiteral("A");
-        ContainerDocument container;
-        container.id = QStringLiteral("A");
-        container.layout = ContentLayout::VerticalStack;
-        document.containers = {container};
-        if (manager.commitWorkspace(document, 0).status != CommitStatus::Saved) {
-            return {};
-        }
-
-        ContainerSettingsDialog dialog(manager.container("A"), nullptr, &manager);
-        dialog.show();
-        QCoreApplication::processEvents();
-
-        // The button that opens the add-item menu.  It is the "+" button
-        // with this tooltip; the "Add ->" button beside it adds a selected
-        // available item and opens no menu.
-        QPushButton* add = nullptr;
-        for (QPushButton* button : dialog.findChildren<QPushButton*>()) {
-            if (button->toolTip() == QStringLiteral("Add item (popup)")) {
-                add = button;
-                break;
-            }
-        }
-        if (!add) {
-            return {};
-        }
-        add->click();
-        QCoreApplication::processEvents();
-
-        // The popup's TX submenu, when the workspace has the rows.
-        QMenu* txMenu = nullptr;
-        for (QMenu* candidate : dialog.findChildren<QMenu*>()) {
-            if (candidate->title() == QStringLiteral("TX")) {
-                txMenu = candidate;
-                break;
-            }
-        }
-        if (!txMenu) {
-            return {};
-        }
-        QStringList titles;
-        for (QAction* action : txMenu->actions()) {
-            titles << action->text();
-        }
-        return titles;
     }
 };
 
