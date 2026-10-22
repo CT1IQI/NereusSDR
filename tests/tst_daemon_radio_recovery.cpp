@@ -135,6 +135,11 @@ void feedWidebandBurst(P2RadioConnection* connection)
 }
 }
 
+// The product's Protocol 2 watchdogs (P2RadioConnection.h:681-682, private):
+// the connect budget and the established-stream silence timeout.
+constexpr int kP2ConnectTimeoutMs = 2000;
+constexpr int kP2EstablishedSilenceTimeoutMs = 3000;
+
 class TestDaemonRadioRecovery : public QObject {
     Q_OBJECT
 private slots:
@@ -252,6 +257,14 @@ private slots:
 
         fake.resumeIngress();
         available = true;
+        // The rebuilt connection runs the product's watchdogs. The 200 ms
+        // above only lets the silence be found quickly; the fake feeds the
+        // radio from a timer on this thread, which the product's own
+        // Connected work (WDSP channels) holds for about 200 ms on a busy
+        // machine, so 200 ms here dropped the rebuilt link and the next
+        // connection had no capture (Linux CI run 39821814770).
+        model->configureP2TransportForTest(fake.outboundPortBase(), fake.inputRolePortBase(),
+                                          kP2ConnectTimeoutMs, kP2EstablishedSilenceTimeoutMs);
         RadioDiscovery::clearHoldOffForTest();
         app.m_radioRetryTimer->start(0);
         QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 15000);
@@ -272,9 +285,14 @@ private slots:
         // A remote view can acknowledge the real capture identity and paint
         // empty wings before any ADC samples arrive. DDC and ADC cadence are
         // independent; waiting for the first survey would stall first zoom.
-        QVERIFY(QMetaObject::invokeMethod(freshP2, [freshP2]() {
-            freshP2->setWidebandEnabled(0, true);
-        }, Qt::BlockingQueuedConnection));
+        // Capture is turned on the way the product does it, through a demand
+        // owner: every DDC assignment reconciles capture to the registered
+        // demand, so a capture enabled on the connection with no owner is
+        // turned off by the next one, whenever that lands. The direct
+        // disable and enable pairs below are then reconciled back to on.
+        const auto captureOwner = model->acquireWidebandDemand(model->slices().first()->sliceIndex());
+        QVERIFY(captureOwner != 0);
+        QVERIFY(model->setWidebandDemandActive(captureOwner, true));
         QTRY_VERIFY(model->widebandSourceDescriptor(0));
         const auto preparedSource = model->widebandSourceDescriptor(0);
         QVERIFY(preparedSource->sourceGeneration != 0);
