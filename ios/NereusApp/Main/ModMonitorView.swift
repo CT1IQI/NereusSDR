@@ -274,7 +274,10 @@ struct ModMonitorView: View {
     static let doneText = ChromeColours.linkUp
     static let offLamp = ModMonitorLamp.Colours(ground: ChromeColours.inset, border: ChromeColours.insetBorder,
                                       text: ChromeColours.iconMuted)
-    static let redLamp = ModMonitorLamp.Colours(ground: ChromeColours.txRed, border: ChromeColours.gaugeRed, text: .white)
+    /// +PEAK, -PEAK and CARRIER HIGH: the muted red set, never the transmit red (W5), as the
+    /// desktop lights them (setLamp with kRedBg, kRedText, kRedBorder, src/gui/applets/ModMonitorApplet.cpp:630, :634, :640).
+    static let redLamp = ModMonitorLamp.Colours(ground: WorkspacePalette.redBg, border: WorkspacePalette.redBorder,
+                                                text: WorkspacePalette.redText)
     static let amberLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnAmber, border: ChromeColours.buttonOnAmberBorder,
                                         text: ChromeColours.buttonOnAmberText)
     static let greenLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnGreen,

@@ -304,11 +304,19 @@ struct WorkspacePaletteTests {
             ("ConnectChrome.WideButton.stopFill", ConnectChrome.WideButton.stopFill),
             ("ConnectChrome.WideButton.stopBorder", ConnectChrome.WideButton.stopBorder),
             ("ConfirmationSheetChrome.refused", ConfirmationSheetChrome.refused),
+            ("ModMonitorView.redLamp.ground", ModMonitorView.redLamp.ground),
+            ("ModMonitorView.redLamp.border", ModMonitorView.redLamp.border),
+            ("ModMonitorView.redLamp.text", ModMonitorView.redLamp.text),
         ]
         let red = Self.hex(WorkspacePalette.txRed)
         for (name, color) in roles {
             #expect((Self.hex(color) == red) == transmit.contains(name), "\(name)")
         }
+        // The Mod Monitor's over-range lamps are the muted red set
+        // (src/gui/applets/ModMonitorApplet.cpp:630, :634, :640).
+        #expect(Self.hex(ModMonitorView.redLamp.ground) == 0x7A2C2E)
+        #expect(Self.hex(ModMonitorView.redLamp.border) == 0xA86B6D)
+        #expect(Self.hex(ModMonitorView.redLamp.text) == 0xF0DCDC)
     }
 
     /// Each slice letter's color as the Core sends it today (ControlRanges
