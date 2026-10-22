@@ -2,6 +2,10 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 Band up and down follow each receiver's Thetis band list.
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-22 signedReadbackRepresentability reads filter edges in FM with
+//            nonzero width, as the slice now constrains filters (Thetis
+//            ConstrainFilter). J.J. Boyd (KG4VCF), with AI-assisted
+//            transformation via Claude Code.
 #include <QtTest>
 #define private public
 #include "core/MoxController.h"
@@ -325,13 +329,25 @@ private slots:
  }
  void signedReadbackRepresentability() {
     RadioModel model; slices(model); const quint64 id=start(model); CatService& service=*model.catService();
+    // FM: the one mode Thetis's ConstrainFilter leaves alone, so an edge
+    // past 9999 Hz still exists to read back. A zero-width filter is
+    // refused (console.cs:7582 [v2.10.3.15]), so each edge is set 1 Hz from
+    // the other and the low and high codes are read in two passes.
+    model.sliceById(0)->setDspMode(DSPMode::FM); model.sliceById(2)->setDspMode(DSPMode::FM);
+    const auto expectedFor=[](const QByteArray& code,int value) {
+        return std::abs(value)>9999 ? QByteArray("O;") : code+(value<0 ? "-" : "+")+QByteArray::number(std::abs(value))+";";
+    };
     for (int value : {-99999,-10000,-9999,9999,10000,99999}) {
-        model.sliceById(0)->setRitHz(value); model.sliceById(0)->setXitHz(value); model.sliceById(0)->setFilter(value,value); model.sliceById(2)->setFilter(value,value);
-        for (const QByteArray& code : {QByteArray("ZZRF"),QByteArray("ZZXF"),QByteArray("ZZFL"),QByteArray("ZZFH"),QByteArray("ZZFR"),QByteArray("ZZFS")}) {
-            const QByteArray expected=std::abs(value)>9999 ? QByteArray("O;") : code+(value<0 ? "-" : "+")+QByteArray::number(std::abs(value))+";";
-            QCOMPARE(service.processFrame(id,code+';'),expected);
+        model.sliceById(0)->setRitHz(value); model.sliceById(0)->setXitHz(value); model.sliceById(0)->setFilter(value,value+1); model.sliceById(2)->setFilter(value,value+1);
+        for (const QByteArray& code : {QByteArray("ZZRF"),QByteArray("ZZXF"),QByteArray("ZZFL"),QByteArray("ZZFS")}) {
+            QCOMPARE(service.processFrame(id,code+';'),expectedFor(code,value));
         }
-        QCOMPARE(model.sliceById(0)->ritHz(),value); QCOMPARE(model.sliceById(0)->xitHz(),value); QCOMPARE(model.sliceById(0)->filterLow(),value); QCOMPARE(model.sliceById(2)->filterHigh(),value);
+        QCOMPARE(model.sliceById(0)->ritHz(),value); QCOMPARE(model.sliceById(0)->xitHz(),value); QCOMPARE(model.sliceById(0)->filterLow(),value); QCOMPARE(model.sliceById(2)->filterLow(),value);
+        model.sliceById(0)->setFilter(value-1,value); model.sliceById(2)->setFilter(value-1,value);
+        for (const QByteArray& code : {QByteArray("ZZFH"),QByteArray("ZZFR")}) {
+            QCOMPARE(service.processFrame(id,code+';'),expectedFor(code,value));
+        }
+        QCOMPARE(model.sliceById(0)->filterHigh(),value); QCOMPARE(model.sliceById(2)->filterHigh(),value);
     }
  }
  void literalSourceModeAndNumericConversion() {

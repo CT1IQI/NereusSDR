@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-22 - constrainFilter, shiftFilter, kMaxFilterShiftHz,
+//              kMaxFilterWidthHz and limitFiltersToSidebands, ported from
+//              Thetis console.cs ConstrainFilter [v2.10.3.15] by J.J. Boyd
+//              (KG4VCF), with AI-assisted transformation via Claude Code.
 // 2026-10-22 - meterReadingNs, when the Core measured the RX meter readings,
 //              declared last (rxMeterStampsVersion 1). J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
@@ -766,7 +770,42 @@ public:
     void setFilterHigh(int high);
 
     // Set both filter edges atomically. Emits filterChanged once.
+    // The edges are constrained first (constrainFilter, filterShift
+    // false), and a zero-width result is refused, as Thetis's
+    // UpdateRX1Filters does (console.cs:7579-7582 [v2.10.3.15]).
+    // Placement in setFilter as Longpath does it (commit 6a5df5f1).
     void setFilter(int low, int high);
+
+    // Move the whole passband to low..high: constrained with filterShift
+    // true, so when an edge meets a limit the other edge moves with it
+    // and the width is kept, then set through setFilter. Thetis does
+    // this before UpdateRX1Filters on its whole-passband moves (filter
+    // shift slider, whole-filter drag, MeterManager filter drag):
+    // console.cs:35202, 50635 [v2.10.3.15]; MeterManager.cs:19399.
+    void shiftFilter(int low, int high);
+
+    // From Thetis console.cs:35044-35131 [v2.10.3.15] (ConstrainFilter).
+    // Constrains low/high for `mode`; returns true when either changed.
+    // The sideband rule applies only with limitToSidebands; the cap
+    // (kMaxFilterShiftHz, then kMaxFilterWidthHz) applies in every mode
+    // but FM. filterShift keeps the width when an edge is moved.
+    static bool constrainFilter(int& low, int& high, DSPMode mode,
+                                bool filterShift = false,
+                                bool limitToSidebands = false);
+
+    // From Thetis console.cs:13208 [v2.10.3.15]: _max_filter_shift = 10000
+    // (Setup udOptMaxFilterShift default, setup.designer.cs:12672).
+    static constexpr int kMaxFilterShiftHz = 10000;
+    // From Thetis console.cs:13221 [v2.10.3.15]: _max_filter_width = 10000
+    // (Setup udOptMaxFilterWidth default, setup.designer.cs:12737).
+    static constexpr int kMaxFilterWidthHz = 10000;
+
+    // From Thetis console.cs:7516-7521 [v2.10.3.15]: LimitFiltersToSideBands,
+    // off by default (Setup "Limit filter edges to sidebands"). Setting it
+    // only stores the flag, as Thetis's setter does; the next filter
+    // change is constrained by it.
+    bool limitFiltersToSidebands() const { return m_limitFiltersToSidebands; }
+    void setLimitFiltersToSidebands(bool on) { m_limitFiltersToSidebands = on; }
 
     // ---- AGC ----
 
@@ -1754,6 +1793,9 @@ private:
     quint64 m_modeRevision{0};
     quint64 m_modeFilterRevision{0};
     DSPMode m_dspMode{DSPMode::USB};
+    // From Thetis console.cs:7516 [v2.10.3.15]:
+    //   private bool m_bLimitFiltersToSidebands = false;    //MW0LGE_21k9
+    bool    m_limitFiltersToSidebands{false};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};

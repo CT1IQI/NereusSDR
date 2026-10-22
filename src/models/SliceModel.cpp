@@ -8,6 +8,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Filter edges constrained as Thetis's ConstrainFilter does
+//                (console.cs:35044-35131 [v2.10.3.15]) in setFilter,
+//                setFilterLow, setFilterHigh, setDspMode and the layout
+//                restore; setFilter refuses a zero-width filter
+//                (console.cs:7582); shiftFilter keeps the width. Placement
+//                in setFilter as Longpath does it (commit 6a5df5f1).
+//                Ported by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - refreshAntennasFromAlex names RX-only 4 and 5 by the XVTR
 //                label. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
@@ -660,6 +668,10 @@ void SliceModel::setDspMode(DSPMode mode)
         low  = m_filterLow;
         high = m_filterHigh;
     }
+    // A mode change reaches UpdateRX1Filters through SetRX1Mode's filter
+    // selection, so its filter is constrained for the new mode too
+    // (console.cs:7580 [v2.10.3.15]).
+    constrainFilter(low, high, mode, false, m_limitFiltersToSidebands);
     bool filterChanged = (m_filterLow != low || m_filterHigh != high);
     m_filterLow = low;
     m_filterHigh = high;
@@ -697,6 +709,12 @@ QString SliceModel::radeModelPath() const
 
 void SliceModel::setFilterLow(int low)
 {
+    // One edge: constrained as UpdateRX1Filters does (console.cs:7580
+    // [v2.10.3.15]). No zero-width refusal here: the remote mirror writes
+    // filterLow and filterHigh one at a time, and a refusal of the first
+    // write would leave the pair diverged from the Core's.
+    int high = m_filterHigh;
+    constrainFilter(low, high, m_dspMode, false, m_limitFiltersToSidebands);
     if (holdsListenerWrite(filterLow(), low)) { return; }
     if (m_filterLow != low) {
         m_filterLow = low;
@@ -707,6 +725,9 @@ void SliceModel::setFilterLow(int low)
 
 void SliceModel::setFilterHigh(int high)
 {
+    // See setFilterLow.
+    int low = m_filterLow;
+    constrainFilter(low, high, m_dspMode, false, m_limitFiltersToSidebands);
     if (holdsListenerWrite(filterHigh(), high)) { return; }
     if (m_filterHigh != high) {
         m_filterHigh = high;
@@ -717,6 +738,15 @@ void SliceModel::setFilterHigh(int high)
 
 void SliceModel::setFilter(int low, int high)
 {
+    // From Thetis console.cs:7579-7582 [v2.10.3.15] (UpdateRX1Filters; the
+    // same at 7699-7702 in UpdateRX2Filters). Placement in setFilter, the
+    // path every slice filter change takes, as Longpath does it
+    // (src/models/SliceModel.cpp, commit 6a5df5f1).
+    //MW0LGE_21k9
+    constrainFilter(low, high, m_dspMode, false, m_limitFiltersToSidebands);
+
+    if (low == high) { return; } // not a good idea to have a 0hz width filter
+
     if (holdsListenerWrite(std::pair(m_filterLow, m_filterHigh), std::pair(low, high))) { return; }
     if (m_filterLow != low || m_filterHigh != high) {
         m_filterLow = low;
@@ -724,6 +754,103 @@ void SliceModel::setFilter(int low, int high)
         ++m_modeFilterRevision;
         emit filterChanged(m_filterLow, m_filterHigh);
     }
+}
+
+void SliceModel::shiftFilter(int low, int high)
+{
+    // From Thetis console.cs:50630-50636 [v2.10.3.15] (rx1_whole_filter_drag):
+    //   ConstrainFilter(ref nLow, ref nHigh, 1, true);
+    //   UpdateRX1Filters(nLow, nHigh);
+    constrainFilter(low, high, m_dspMode, true, m_limitFiltersToSidebands);
+    setFilter(low, high);
+}
+
+// From Thetis console.cs:35044-35131 [v2.10.3.15] (ConstrainFilter). The
+// receiver's mode and m_bLimitFiltersToSidebands are parameters here;
+// _max_filter_shift and _max_filter_width are kMaxFilterShiftHz and
+// kMaxFilterWidthHz (their Setup defaults). Modes Thetis's switch does not
+// name (DRM, and NereusSDR's RADE modes) take only the cap, as DRM does
+// in Thetis.
+bool SliceModel::constrainFilter(int& low, int& high, DSPMode mode,
+                                 bool filterShift, bool limitToSidebands)
+{
+    const int originalLow = low;
+    const int originalHigh = high;
+
+    switch (mode) {
+    case DSPMode::LSB:
+    case DSPMode::DIGL:
+    case DSPMode::CWL:
+        if (high > 0 && limitToSidebands) {
+            if (filterShift) { low -= high; }
+            high = 0;
+        }
+        if (low < -kMaxFilterShiftHz) {
+            const int n = -kMaxFilterShiftHz - low;
+            low += n;
+            if (filterShift) { high += n; }
+        }
+        if (high > kMaxFilterShiftHz) {
+            const int n = high - kMaxFilterShiftHz;
+            high -= n;
+            if (filterShift) { low -= n; }
+        }
+        break;
+    case DSPMode::USB:
+    case DSPMode::DIGU:
+    case DSPMode::CWU:
+        if (low < 0 && limitToSidebands) {
+            if (filterShift) { high += low * -1; }
+            low = 0;
+        }
+        if (low < -kMaxFilterShiftHz) {
+            const int n = -kMaxFilterShiftHz - low;
+            low += n;
+            if (filterShift) { high += n; }
+        }
+        if (high > kMaxFilterShiftHz) {
+            const int n = high - kMaxFilterShiftHz;
+            high -= n;
+            if (filterShift) { low -= n; }
+        }
+        break;
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
+    case DSPMode::SPEC: //MW0LGE_21k9
+        if (low > 0 && limitToSidebands) {
+            if (filterShift) { high -= low; }
+            low = 0;
+        }
+        if (high < 0 && limitToSidebands) {
+            if (filterShift) { low += high * -1; }
+            high = 0;
+        }
+        if (low < -kMaxFilterShiftHz) {
+            const int n = -kMaxFilterShiftHz - low;
+            low += n;
+            if (filterShift) { high += n; }
+        }
+        if (high > kMaxFilterShiftHz) {
+            const int n = high - kMaxFilterShiftHz;
+            high -= n;
+            if (filterShift) { low -= n; }
+        }
+        break;
+    case DSPMode::FM:
+        break;
+    default:
+        break;
+    }
+
+    if (mode != DSPMode::FM) {
+        if (low < -kMaxFilterWidthHz) { low = -kMaxFilterWidthHz; }
+        if (low > kMaxFilterWidthHz) { low = kMaxFilterWidthHz; }
+        if (high > kMaxFilterWidthHz) { high = kMaxFilterWidthHz; }
+        if (high < -kMaxFilterWidthHz) { high = -kMaxFilterWidthHz; }
+    }
+
+    return (low != originalLow) || (high != originalHigh);
 }
 
 // ---------------------------------------------------------------------------
@@ -2868,6 +2995,9 @@ bool SliceModel::restoreReceiveState(double frequencyHz, DSPMode mode)
             m_filterLow = filter.first;
             m_filterHigh = filter.second;
         }
+        // Constrained as every other filter change is (console.cs:7580
+        // [v2.10.3.15]).
+        constrainFilter(m_filterLow, m_filterHigh, mode, false, m_limitFiltersToSidebands);
     }
     return true;
 }
