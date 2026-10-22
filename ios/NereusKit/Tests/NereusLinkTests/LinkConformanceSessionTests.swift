@@ -27,7 +27,7 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 87)
+        #expect(fixtures.count == 88)
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -52,6 +52,10 @@ import Testing
         // The CFC band editor (cfcProfile 1): the app reads transmit.cfcProfile
         // and sends cfc.setProfile.
         #expect(fixtures.contains { $0.id == "session-cfc-set-profile" })
+        // TUNE's drive source (tuneDriveSource 1): the Core takes the app's
+        // tuneDrivePowerSource; an older client's is the station's case alone.
+        #expect(fixtures.contains { $0.id == "session-tune-drive-source" })
+        #expect(!fixtures.contains { $0.id == "session-tune-drive-source-older-client" })
         // The TX EQ curve (txEqCurveVersion 1, Core checkpoint 338a895ac, read; 2, changed through
         // txEq.setCurve and txEq.resetCurve): the app declares txEqCurve 2.
         #expect(fixtures.contains { $0.id == "session-tx-eq-curve" })
@@ -173,7 +177,7 @@ import Testing
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1, "firmwareBeta": 1])
+                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the
