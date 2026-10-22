@@ -468,6 +468,9 @@ void RemoteTelemetryController::logDiagnostics(qint64 now) const
            << QStringLiteral("displayDelayMs=%1").arg(logged(display.displayDelayMs))
            << QStringLiteral("displayItemsDropped=%1").arg(display.itemsDropped)
            << QStringLiteral("displayRowsDropped=%1").arg(display.rowsDropped)
+           // Each pan's keyframe waits and rows blended and repeated, for
+           // the bench check of the Core's DisplayKeyframeEveryFrame.
+           << remoteDisplayPanDiagnosticsFields(display)
            << QStringLiteral("coreTelemetryAgeMs=%1").arg(logged(m_station
                   ? std::optional<qint64>(qMax<qint64>(0, now - m_stationReceivedMs)) : std::nullopt))
            << QStringLiteral("coreSystemCpuPercent=%1").arg(logged(host.systemCpuPercent))

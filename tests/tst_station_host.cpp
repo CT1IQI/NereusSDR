@@ -10,6 +10,8 @@
 #include "core/SliceOwnership.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/station/StationHost.h"
+#include "core/session/media/DaemonMediaController.h"
+#include "core/settings/SettingsScope.h"
 #include "fakes/LoopbackTransport.h"
 #include <QJsonDocument>
 #include "fakes/UpgradedCoreToken.h"
@@ -103,6 +105,47 @@ private slots:
         QCOMPARE(host.server()->deviceSessions()->placesTaken(), 4);
         host.stop();
         QCOMPARE(model.sliceOwnership()->mark(foreign).owner, QByteArray("peer"));
+    }
+
+    // Bench setting (JJ approved 2026-10-22): the Core's own
+    // DisplayKeyframeEveryFrame reaches the media hub as the host starts;
+    // only "True" turns it on, and the settings proxy never carries it.
+    void displayKeyframeEveryFrameIsReadAtStart_data()
+    {
+        QTest::addColumn<QString>("stored");
+        QTest::addColumn<bool>("expected");
+        QTest::newRow("unset") << QString() << false;
+        QTest::newRow("False") << QStringLiteral("False") << false;
+        QTest::newRow("True") << QStringLiteral("True") << true;
+        QTest::newRow("lower-case true") << QStringLiteral("true") << false;
+    }
+
+    void displayKeyframeEveryFrameIsReadAtStart()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend.");
+        }
+        QFETCH(QString, stored);
+        QFETCH(bool, expected);
+        QCOMPARE(QString::fromLatin1(kDisplayKeyframeEveryFrameSettingsKey),
+                 QStringLiteral("DisplayKeyframeEveryFrame"));
+        QCOMPARE(classifySettingsKey(QString::fromLatin1(kDisplayKeyframeEveryFrameSettingsKey)),
+                 SettingsScope::OperatorLocal);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        if (!stored.isNull()) {
+            settings.setValue(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey), stored);
+        }
+        RadioModel model;
+        StationHostOptions options = listenerOptions();
+        options.settings = &settings;
+        options.securityDirectory = directory.path();
+        StationHost host(&model, options);
+        QVERIFY(host.start());
+        QVERIFY(host.mediaHubForTest() != nullptr);
+        QCOMPARE(host.mediaHubForTest()->displayKeyframeEveryFrame(), expected);
+        host.stop();
     }
 
     void borrowedModelSurvivesStopAndRestart()
