@@ -140,8 +140,8 @@
     },
     {
       "output": "manual/images/README.md",
-      "output_sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
-      "sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
+      "output_sha256": "b98a7adf988ff8d878f69e2407cd2ef255e9b006f55577f31e0c268a1b4e6bfa",
+      "sha256": "b98a7adf988ff8d878f69e2407cd2ef255e9b006f55577f31e0c268a1b4e6bfa",
       "source": "docs/manual/images/README.md"
     },
     {
@@ -154,14 +154,14 @@
   "images": [
     {
       "output": "manual/images/README.md",
-      "output_sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
-      "sha256": "59412984b7a5179922e976c028eef9e1179cd4224b392715e9b058ad3fbe3150",
+      "output_sha256": "b98a7adf988ff8d878f69e2407cd2ef255e9b006f55577f31e0c268a1b4e6bfa",
+      "sha256": "b98a7adf988ff8d878f69e2407cd2ef255e9b006f55577f31e0c268a1b4e6bfa",
       "source": "docs/manual/images/README.md"
     },
     {
       "output": "manual/images/capture-provenance.json",
-      "output_sha256": "2bbb05dcd65d1ae3e6a95b913eaee860b162c663ce96463f037da23531581396",
-      "sha256": "df71c1c15dc38dbad0fe5d0156286804f388ff3374370e4131f4ab4afae15dd1",
+      "output_sha256": "bfb88a04d826dc6635a7b31fbc51360bf68a405dadc39eaacc19ff84ab3e081d",
+      "sha256": "4dd536fd95bfce28c0497686fae748631914e140da5053381495ef27322295e1",
       "source": "docs/manual/images/capture-provenance.json"
     },
     {
@@ -394,14 +394,14 @@
     },
     {
       "output": "manual/images/iphone-sound-core-speaker.png",
-      "output_sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
-      "sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
+      "output_sha256": "c415661d3c288b2faec4b7c1bc2cdd7b5843d1978f90dd8ad3ae88fb6e5f1687",
+      "sha256": "c415661d3c288b2faec4b7c1bc2cdd7b5843d1978f90dd8ad3ae88fb6e5f1687",
       "source": "docs/manual/images/iphone-sound-core-speaker.png"
     },
     {
       "output": "manual/images/iphone-sound-original.png",
-      "output_sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
-      "sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
+      "output_sha256": "fb4783f5164b31a43a13cb644acb06351b7b365b282e30261258163f333d98e8",
+      "sha256": "fb4783f5164b31a43a13cb644acb06351b7b365b282e30261258163f333d98e8",
       "source": "docs/manual/images/iphone-sound-original.png"
     },
     {

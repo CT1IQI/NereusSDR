@@ -29,12 +29,12 @@
     {
       "file": "iphone-sound-original.png",
       "source": "docs/manual/images/iphone-sound-original.png",
-      "sha256": "29b8e5edd88d2733cbe2dc35553754983c03902b18ffba5f89964b86dbd07fb8",
+      "sha256": "fb4783f5164b31a43a13cb644acb06351b7b365b282e30261258163f333d98e8",
       "dimensions": [
         1320,
         2868
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "fb8cebe45 (claude/ios-workspace-look)",
       "kind": "full-app-XCUIApplication",
       "state": "Simulator route, without live Core audio"
     },
@@ -137,12 +137,12 @@
     {
       "file": "iphone-sound-core-speaker.png",
       "source": "docs/manual/images/iphone-sound-core-speaker.png",
-      "sha256": "561a50bc7baf5591521b9ad3f29bd1c128ef721c3f4348931f620584f55a65c5",
+      "sha256": "c415661d3c288b2faec4b7c1bc2cdd7b5843d1978f90dd8ad3ae88fb6e5f1687",
       "dimensions": [
         870,
         2040
       ],
-      "build": "45c52b2dd (claude/ios-workspace-look)",
+      "build": "fb8cebe45 (claude/ios-workspace-look)",
       "kind": "native-SwiftUI-hosting-fixture",
       "state": "Simulated Core/test data; Radio speaker 40, Core speaker 60, AirPods route"
     },

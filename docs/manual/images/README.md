@@ -117,7 +117,9 @@ the sizes of the 1 October originals: an iPhone 17 simulator for most, an
 iPhone 18 Pro Max simulator for **Sound**. On 22 October, after the final
 review's fixes (the workspace switch in every presentation, accent text and
 the 7 and 10 radii), all of them except Devices were recaptured again from
-branch `claude/ios-workspace-look` at `45c52b2dd`; Devices did not change. [Capture provenance](capture-provenance.json)
+branch `claude/ios-workspace-look` at `45c52b2dd`; Devices did not change. The two
+Sound images were recaptured once more at `fb8cebe45`, after the re-review
+(the Sound switch rows greyed once, the output row's corner at 7). [Capture provenance](capture-provenance.json)
 records each image's test, hash and build. **Sound** is a screenshot of the full running app driven by
 `XCUIApplication`. The other phone images render the application’s actual
 SwiftUI screens in a simulator window with test services or simulated Core
