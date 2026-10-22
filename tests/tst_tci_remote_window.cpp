@@ -65,6 +65,13 @@
 //                                    app's trx carried ",tci"
 //                                    (programAudio). AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF)   appsHearTheCoresSlices runs its
+//                                    receiver streams on the source's
+//                                    clock and stalls the source once, so
+//                                    a busy computer is not link loss;
+//                                    the ramp, mono and 12 kHz cases wait
+//                                    for their blocks, not a fixed 300 ms.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -106,10 +113,12 @@
 
 #include <cmath>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -1410,7 +1419,11 @@ private slots:
         constexpr int kBlockFrames = 2048;
         constexpr int kBlocks = 3;
         core.deliverRamp(0, 0, kBlockFrames * kBlocks);
-        QTest::qWait(300);
+        // Wait for the blocks, not for a fixed time: a busy computer drains
+        // late (see remoteStereoAt12kKeepsLeftAndRightApart).
+        for (QSignalSpy* binary : {&binaryA, &binaryB}) {
+            QTRY_COMPARE_WITH_TIMEOUT(rxAudio(*binary, 0).blocks, kBlocks, 5000);
+        }
         for (QSignalSpy* binary : {&binaryA, &binaryB}) {
             const RxAudio audio = rxAudio(*binary, 0);
             QCOMPARE(audio.blocks, kBlocks);
@@ -1450,7 +1463,7 @@ private slots:
         app.sendTextMessage(QStringLiteral("audio_start:1;"));
         QTRY_VERIFY_WITH_TIMEOUT(tci.remoteReceiverRequested(1), 3000);
         core.deliverRamp(1, 0, 4096);
-        QTest::qWait(300);
+        QTRY_COMPARE_WITH_TIMEOUT(rxAudio(binary, 1).blocks, 2, 5000);
         const RxAudio audio = rxAudio(binary, 1);
         QCOMPARE(audio.blocks, 2);
         QCOMPARE(audio.channels, 1u);
@@ -1493,7 +1506,10 @@ private slots:
             sink->receiverAudioBlock(0, pcm.data(), kPacket);
             QTest::qWait(10);
         }
-        QTest::qWait(300);
+        // Wait for the audio, not for a fixed 300 ms: 48000 frames in make 23
+        // blocks of 512 frames at 12 kHz, and at load about 120 only 20 had
+        // been sent 300 ms after the last packet (20480 samples).
+        QTRY_VERIFY_WITH_TIMEOUT(rxAudio(binary, 0).samples.size() >= 2 * 11000, 5000);
         const RxAudio audio = rxAudio(binary, 0);
         QCOMPARE(audio.channels, 2u);
         QVERIFY2(audio.samples.size() >= 2 * 11000, qPrintable(QString::number(audio.samples.size())));
@@ -1746,10 +1762,22 @@ private slots:
         wire(tci, remoteMedia);
         QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
         QSignalSpy remoteErrors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        // The receiver streams hold each packet a fixed time and conceal one
+        // not come by its deadline, and the lossless trial counts what they
+        // conceal as link loss. On their own steady clock, a busy computer
+        // that runs this thread's 10 ms source late has them conceal audio
+        // still on its way: at load about 30 the trial judged 68% lost and
+        // moved the session to Opus. So they run on the source's clock, 10 ms
+        // per block fed, as tst_remote_vax_feeder's do (R-R3-44).
+        const auto sourceNs = std::make_shared<std::atomic<qint64>>(0);
+        remoteMedia.setReceiverAudioClockForTest([sourceNs] { return sourceNs->load(); });
         QTimer source;
         source.setInterval(10);
         source.setTimerType(Qt::PreciseTimer);
-        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        connect(&source, &QTimer::timeout, &source, [&h, sourceNs] {
+            h.feedMixedTone();
+            sourceNs->fetch_add(qint64(Harness::kFrames) * 1'000'000'000 / 48'000);
+        });
         QTimer speaker;
         speaker.setInterval(10);
         speaker.setTimerType(Qt::PreciseTimer);
@@ -1782,6 +1810,15 @@ private slots:
         appB.sendTextMessage(QStringLiteral("audio_start:1;"));
         QTest::qWait(300);
         secondAppB.sendTextMessage(QStringLiteral("audio_start:1;"));
+        // A busy computer: the source stops for a second inside the lossless
+        // trial's first window. On the source's clock nothing is late, so
+        // the trial must not call it link loss (one request per slice, at
+        // the chosen profile, below). On the streams' own steady clock this
+        // failed the trial and moved both slices to Opus.
+        QTest::qWait(500);
+        source.stop();
+        QTest::qWait(1000);
+        source.start();
         QTRY_VERIFY_WITH_TIMEOUT(texts(textA).contains(QStringLiteral("audio_start:0;")), 5000);
         QTRY_VERIFY_WITH_TIMEOUT(frameCount(rxAudio(binaryA, 0)) >= 48000
                                      && frameCount(rxAudio(binaryB, 1)) >= 48000
