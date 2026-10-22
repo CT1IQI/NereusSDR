@@ -33,9 +33,10 @@
 //                 NereusSDR-original synchronization logic.
 //   2026-10-22 - I/Q level log in feedIqData (IqLevelMonitor, one line per
 //                 hardware DDC at most every 10 s: RMS and peak dBFS,
-//                 non-finite pairs, receiver, ADC, overload flag, DDC map)
-//                 and noteAdcOverflow. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code. NereusSDR-original.
+//                 non-finite pairs, stream (logical receiver), ADC,
+//                 overload flag, DDC map) and noteAdcOverflow. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -583,7 +584,7 @@ QStringList ReceiverManager::describeIqLevels(const IqLevelMonitor::Report& repo
 {
     QStringList mapped;
     for (auto mi = m_hwToLogical.constBegin(); mi != m_hwToLogical.constEnd(); ++mi) {
-        mapped << QStringLiteral("hw%1->rx%2").arg(mi.key()).arg(mi.value());
+        mapped << QStringLiteral("DDC%1->stream%2").arg(mi.key()).arg(mi.value());
     }
     const QString map = mapped.isEmpty() ? QStringLiteral("(empty)") : mapped.join(',');
     QStringList overloaded;
@@ -594,7 +595,7 @@ QStringList ReceiverManager::describeIqLevels(const IqLevelMonitor::Report& repo
     }
     QStringList lines;
     for (const IqLevelMonitor::DdcLevel& level : report.levels) {
-        QString receiver = QStringLiteral("no receiver");
+        QString receiver = QStringLiteral("no stream");
         QString overload = overloaded.isEmpty()
                                ? QStringLiteral("no ADC overload")
                                : QStringLiteral("ADC overload on %1").arg(overloaded.join(','));
@@ -602,8 +603,8 @@ QStringList ReceiverManager::describeIqLevels(const IqLevelMonitor::Report& repo
         if (hw != m_hwToLogical.constEnd()) {
             const auto rx = m_receivers.constFind(hw.value());
             const int adc = rx != m_receivers.constEnd() ? rx->adcIndex : -1;
-            receiver = adc >= 0 ? QStringLiteral("receiver %1 (ADC%2)").arg(hw.value()).arg(adc)
-                                : QStringLiteral("receiver %1").arg(hw.value());
+            receiver = adc >= 0 ? QStringLiteral("stream %1 (ADC%2)").arg(hw.value()).arg(adc)
+                                : QStringLiteral("stream %1").arg(hw.value());
             if (adc >= 0 && adc < 32) {
                 overload = QStringLiteral("ADC%1 overload %2")
                                .arg(adc)

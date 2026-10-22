@@ -169,13 +169,13 @@ private slots:
         QTest::ignoreMessage(
             QtInfoMsg,
             QRegularExpression(QStringLiteral(
-                "^I/Q level: DDC2 -> receiver 0 \\(ADC0\\): RMS -60\\.0 dBFS, peak -60\\.0 dBFS "
-                "over 4 pairs, non-finite pairs 0; ADC0 overload yes; DDC map hw2->rx0$")));
+                "^I/Q level: DDC2 -> stream 0 \\(ADC0\\): RMS -60\\.0 dBFS, peak -60\\.0 dBFS "
+                "over 4 pairs, non-finite pairs 0; ADC0 overload yes; DDC map DDC2->stream0$")));
         QTest::ignoreMessage(
             QtInfoMsg,
             QRegularExpression(QStringLiteral(
-                "^I/Q level: DDC3 -> no receiver: RMS 0\\.0 dBFS, peak 0\\.0 dBFS over 4 pairs, "
-                "non-finite pairs 0; ADC overload on ADC0; DDC map hw2->rx0$")));
+                "^I/Q level: DDC3 -> no stream: RMS 0\\.0 dBFS, peak 0\\.0 dBFS over 4 pairs, "
+                "non-finite pairs 0; ADC overload on ADC0; DDC map DDC2->stream0$")));
         rm.feedIqData(3, constantPairs(4, 1.0f, 0.0f));
     }
 };

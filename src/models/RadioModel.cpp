@@ -1294,9 +1294,10 @@
 //                AI-assisted transformation via Claude Code.
 //   2026-10-22 - The I/Q level log hears ADC overloads
 //                (RadioConnection::adcOverflow to
-//                ReceiverManager::noteAdcOverflow), and reportSlowNrCalls
-//                logs each receiver's noise-reduction calls over 50 ms (the
-//                load sampler's tick). Diagnostics only; NR and DSP
+//                ReceiverManager::noteAdcOverflow), and reportDspDiagnostics
+//                logs each slice's noise-reduction calls over 50 ms with the
+//                stages that ran, and non-finite WDSP output (the load
+//                sampler's tick). Diagnostics only; NR and DSP
 //                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
 // =================================================================
@@ -2246,9 +2247,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
         connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
             governNnrLoad(m_nnrGovernorClock.elapsed());
         });
-        // 2026-10-22: noise-reduction calls over 50 ms, on the same tick.
-        connect(m_dspLoadTimer, &QTimer::timeout,
-                this, &RadioModel::reportSlowNrCalls);
+        // 2026-10-22: noise-reduction calls over 50 ms and non-finite WDSP
+        // output, on the same tick. The slow-call labels were recorded at
+        // call time, so the governor's step above cannot relabel them.
+        connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
+            reportDspDiagnostics(m_nnrGovernorClock.elapsed());
+        });
         m_dspLoadTimer->start();
     }
 
@@ -15479,39 +15483,90 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
 
 namespace {
 
-// The receiver's NR mode as the slow-call log names it.
-QString nrModeLogName(const SliceModel& slice)
+// "A (index 0)": the slice letter and its index, which is also its WDSP
+// channel.
+QString sliceLogName(int sliceIndex)
 {
-    switch (slice.activeNr()) {
-        case NrSlot::Off:  return QStringLiteral("off");
-        case NrSlot::NR1:  return QStringLiteral("NR1");
-        case NrSlot::NR2:  return QStringLiteral("NR2");
-        case NrSlot::NR3:  return QStringLiteral("NR3");
-        case NrSlot::NR4:  return QStringLiteral("NR4");
-        case NrSlot::DFNR: return QStringLiteral("DFNR");
-        case NrSlot::BNR:  return QStringLiteral("BNR");
-        case NrSlot::MNR:  return QStringLiteral("MNR");
-        case NrSlot::NNR:
-            return slice.nnrModelSlot() == 1 ? QStringLiteral("NNR Premium")
-                                             : QStringLiteral("NNR Standard");
+    if (sliceIndex >= 0 && sliceIndex < 26) {
+        return QStringLiteral("%1 (index %2)")
+            .arg(QChar(QLatin1Char('A').unicode() + sliceIndex))
+            .arg(sliceIndex);
     }
-    return QStringLiteral("unknown");
+    return QStringLiteral("index %1").arg(sliceIndex);
+}
+
+QString nnrModelNames(int stages, int standardBit, int premiumBit)
+{
+    QStringList names;
+    if ((stages & standardBit) != 0) {
+        names << QStringLiteral("Standard");
+    }
+    if ((stages & premiumBit) != 0) {
+        names << QStringLiteral("Premium");
+    }
+    return names.isEmpty() ? QStringLiteral("off") : names.join('/');
 }
 
 } // namespace
 
-QString RadioModel::slowNrCallLogLine(int receiver, const QString& nrMode,
-                                      qint64 count, qint64 maxUs)
+QString RadioModel::nrStagesLogName(int stages)
 {
-    return QStringLiteral("Receiver %1: a noise reduction call took %2 ms (NR mode %3); "
-                          "%4 calls over 50 ms since the last report")
-        .arg(receiver)
-        .arg(static_cast<double>(maxUs) / 1000.0, 0, 'f', 1)
-        .arg(nrMode)
-        .arg(count);
+    struct Stage {
+        int bit;
+        const char* name;
+    };
+    static constexpr Stage kStages[] = {
+        {WDSP_NR_STAGE_ANR, "NR1"},
+        {WDSP_NR_STAGE_EMNR, "NR2"},
+        {WDSP_NR_STAGE_RNNR, "NR3"},
+        {WDSP_NR_STAGE_SBNR, "NR4"},
+        {WDSP_NR_STAGE_NNR_STANDARD, "NNR Standard"},
+        {WDSP_NR_STAGE_NNR_PREMIUM, "NNR Premium"},
+        {WDSP_NR_STAGE_DFNR, "DFNR"},
+        {WDSP_NR_STAGE_MNR, "MNR"},
+    };
+    QStringList names;
+    for (const Stage& stage : kStages) {
+        if ((stages & stage.bit) != 0) {
+            names << QString::fromLatin1(stage.name);
+        }
+    }
+    if ((stages & WDSP_NR_NNR_LIMIT_APPLIED) != 0) {
+        names << QStringLiteral("the NNR limit switched NNR from %1 to %2 inside the call")
+                     .arg(nnrModelNames(stages, WDSP_NR_NNR_FROM_STANDARD,
+                                        WDSP_NR_NNR_FROM_PREMIUM),
+                          nnrModelNames(stages, WDSP_NR_NNR_TO_STANDARD,
+                                        WDSP_NR_NNR_TO_PREMIUM));
+    }
+    return names.isEmpty() ? QStringLiteral("no stage recorded") : names.join(QStringLiteral(", "));
 }
 
-void RadioModel::reportSlowNrCalls()
+QString RadioModel::slowNrCallLogLine(int sliceIndex, qint64 count, qint64 longestUs,
+                                      int longestStages, int stages)
+{
+    const QString longest =
+        longestUs > 0
+            ? QStringLiteral("%1 ms, ran %2")
+                  .arg(static_cast<double>(longestUs) / 1000.0, 0, 'f', 1)
+                  .arg(nrStagesLogName(longestStages))
+            : QStringLiteral("over 50 ms");
+    return QStringLiteral("Slice %1: %2 noise reduction call(s) over 50 ms since the last "
+                          "report, running %3; the longest took %4")
+        .arg(sliceLogName(sliceIndex))
+        .arg(count)
+        .arg(nrStagesLogName(stages))
+        .arg(longest);
+}
+
+QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
+{
+    return QStringLiteral("Slice %1: %2 non-finite samples in WDSP's output since the last "
+                          "report")
+        .arg(sliceLogName(sliceIndex))
+        .arg(samples);
+}
+
+void RadioModel::reportDspDiagnostics(qint64 nowMs)
 {
     if (!m_wdspEngine) {
         return;
@@ -15525,13 +15580,21 @@ void RadioModel::reportSlowNrCalls()
         if (channel == nullptr) {
             continue;
         }
-        qint64 count = 0;
-        qint64 maxUs = 0;
-        if (!channel->takeSlowNrCalls(count, maxUs) || count == 0) {
-            continue;
+        RxChannel::SlowNrCalls calls;
+        if (channel->takeSlowNrCalls(calls) && calls.count > 0) {
+            qCInfo(lcDsp).noquote()
+                << slowNrCallLogLine(sliceId, calls.count, calls.longestUs,
+                                     calls.longestStages, calls.stages);
         }
-        qCInfo(lcDsp).noquote()
-            << slowNrCallLogLine(sliceId, nrModeLogName(*slice), count, maxUs);
+        OutputNonFiniteLog& nonFinite = m_outputNonFiniteLog[sliceId];
+        nonFinite.pending += channel->takeOutputNonFiniteSamples();
+        if (nonFinite.pending > 0
+            && (nonFinite.lastLogMs < 0
+                || nowMs - nonFinite.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
+            qCWarning(lcDsp).noquote() << outputNonFiniteLogLine(sliceId, nonFinite.pending);
+            nonFinite.pending = 0;
+            nonFinite.lastLogMs = nowMs;
+        }
     }
 }
 
