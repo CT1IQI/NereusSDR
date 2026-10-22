@@ -37,6 +37,10 @@
 // 2026-10-15: FakeStationLink moved unchanged to tests/fakes/FakeStationLink.h
 // so the visual preview can use it too. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-22: test flaw: the three tests that move between two ports take
+// the second from freePortOtherThan(), since two freePort() calls in a row
+// can return the same port (CI Linux, PR 605). J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 #include "MultiDeviceHarness.h"
 
 #include <QtTest/QtTest>
@@ -80,6 +84,18 @@ quint16 freePort()
     if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
     const quint16 port = reservation.serverPort();
     reservation.close();
+    return port;
+}
+
+// A second free port that is not `taken`. freePort() closes its
+// reservation, so two calls in a row can return the same port; a test
+// that moves a server from one port to another would then see no move.
+quint16 freePortOtherThan(quint16 taken)
+{
+    quint16 port = freePort();
+    while (port == taken) {
+        port = freePort();
+    }
     return port;
 }
 
@@ -1096,7 +1112,7 @@ private slots:
     void windowFollowsTheCoresSwitchOnAnotherComputer()
     {
         const quint16 port = freePort();
-        const quint16 other = freePort();
+        const quint16 other = freePortOtherThan(port);
         RadioModel window(RadioModel::Role::Remote);
         FakeStationLink link;
         window.attachStation(&link);
@@ -1166,7 +1182,7 @@ private slots:
     void coresStoredSwitchWinsAtConnect()
     {
         const quint16 port = freePort();
-        const quint16 corePort = freePort();
+        const quint16 corePort = freePortOtherThan(port);
         RadioModel window(RadioModel::Role::Remote);
         FakeStationLink link;
         link.ready = false;
@@ -1238,7 +1254,7 @@ private slots:
     void windowFollowsAgainAfterItsRequestEnds()
     {
         const quint16 port = freePort();
-        const quint16 other = freePort();
+        const quint16 other = freePortOtherThan(port);
         const auto coreSays = [](RadioModel& window, bool on, quint16 p) {
             StationTciModel::State state;
             state.enabled = on;
