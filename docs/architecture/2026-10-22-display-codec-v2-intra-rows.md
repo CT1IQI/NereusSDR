@@ -1,6 +1,6 @@
 # Display codec v2: every row stands alone
 
-Status: design for JJ's approval (2026-10-22, revised after spec review). No
+Status: design for JJ's approval (2026-10-22, revised after two spec reviews). No
 code yet.
 
 JJ's decision of 2026-10-22: "yes do C then build A". Step 1 (C) is a Core
@@ -262,8 +262,13 @@ bytes of a split frame.
 
 For JJ's 783-pixel pan (peak scene) a whole v2 frame averages 892 bytes, just
 over one datagram, so 91 percent of frames split into two parts of about 467
-bytes, each one datagram. Average and smoothed scenes, and scenes whose trace
-is averaged, fit one datagram whole.
+bytes, each one datagram. Of the study's receiver scenes, only the
+167-bins-per-pixel average and smoothed scenes fit one datagram whole: the
+average scene, the peak and average scenes with the trace log-averaged, and
+peak with IIR on both (section 6, 1.00 datagrams each; the synthetic flat and
+ramp rows fit too). Every 8-bins-per-pixel frame splits: the average scene
+(1,064 bytes) and its averaged-trace variant (949 bytes) both split on 100
+percent of frames, as do the raw, noise, 1,024-pixel and 4,096-pixel scenes.
 
 Send order: the row part first, then the trace part. The display channel
 holds at most one message when SCTP cannot take it at once, and refuses the
@@ -339,59 +344,95 @@ What a lost datagram costs:
 
 ## 7. Version negotiation
 
-Pattern: the media `start` echo that `remoteTxVersion` and `txDisplayVersion`
-use ([remote media control v1](2026-09-20-remote-media-control-v1.md),
-`start`): the Core advertises a version in its capabilities, and a client
-that reads it adds the version it wants to its media `start`.
+Pattern: `spectrumPicture`, step for step
+([remote media control v1](2026-09-20-remote-media-control-v1.md), "The
+picture a context continues"): the client's hello declares a feature, the
+Core advertises a capability only to a peer that declared it, and that peer
+adds the version to its media `start`. Old peers keep their exact capability
+descriptor.
 
-- **Core advertises** `displayCodecVersion` 2 in the minor-11 capabilities
-  block (after the last entry there today) while media is enabled and its
-  `RemoteDisplayCodecV2` setting is on (below); otherwise it sends no entry.
-- **Client asks** by adding `displayCodecVersion` 2 to its media `start`,
-  only when the Core advertised it and the client's decoder reads v2. The
-  desktop window does this in the same change as the Core encoder. The
-  iPhone app does it only when its decoder lands (section 8). A Core that did
-  not advertise it refuses a `start` carrying it, as it refuses any field it
-  cannot read today, so a client never sends it to an older Core.
+- **Client declares** `displayCodec: 2` in its hello, beside
+  `spectrumPicture: 1` (StationClient.cpp:1069), only in a build whose
+  decoder reads v2.
+- **Core advertises** `displayCodecVersion` 2 only to a peer at agreed
+  session minor 11 whose hello declared `displayCodec` 2, while media is
+  available and the `RemoteDisplayCodecV2` setting is on (below); any other
+  peer is sent no entry, so its capabilities are today's. The gate is a
+  `StationServer` function modeled on `spectrumPictureAvailable`
+  (StationServer.cpp:13181-13189, `peerDeclares(session, "displayCodec", 2)`),
+  the capabilities field is set the way `spectrumPictureVersion` is
+  (StationServer.cpp:13826-13831), and the entry is appended after
+  `rxMeterStampsVersion` and before `coreBuildInfo`, which stays last
+  (StationCapabilities.cpp:589-618).
+- **Client asks** by adding `displayCodecVersion` 2 to its media `start`
+  (as RemoteMediaController.cpp:5461-5463 adds `spectrumPictureVersion`),
+  only when the Core advertised it. The desktop window does this in the same
+  change as the Core encoder. The iPhone app declares and asks only when its
+  decoder lands (section 8).
+- **Core accepts** the `start` field in `DaemonMediaController::handleStart`
+  exactly as it accepts `spectrumPictureVersion`
+  (DaemonMediaController.cpp:2367-2380): refused unless the same gate holds
+  for this session and the value is exactly 2. A Core that did not advertise
+  it refuses a `start` carrying it, as it refuses any field it cannot read
+  today, so a client never sends it to an older Core. This `start` field
+  remains the per-connection switch.
 - **Core encodes** every display endpoint of a media connection whose `start`
   carried it in v2, the transmit display included; every other connection
   gets exactly today's v1 bytes. `tst_display_extras`' older-peer golden
   (`tests/OlderPeerDisplayRun.h`) and the link conformance fixtures hold that
   byte for byte.
-- **Per media connection.** Every media connection, whether direct, relayed
-  or through the media tunnel, and every replacement after a handover, begins
-  with its own `start`, so the codec is agreed again for each one. Relays and
-  the tunnel forward the display channel's datagrams without reading them,
-  so nothing changes there.
+- **Per media connection, kept across a replace.** Every new media
+  connection, whether direct, relayed or through the media tunnel, begins with
+  its own `start`, so the codec is agreed for each one. A `replace` after a
+  handover has no `start` of its own: it carries exactly `op`, `connectionId`
+  and `replaces` (plus `mediaDirectVersion` on the direct ladder,
+  DaemonMediaController.cpp:2904-2913), and the replacement inherits what the
+  `start` agreed, which the Core keeps in `m_startOfferedLossless` and
+  `m_startMicLine` (:2462-2465) and hands to the new peer (:3024-3026). The
+  agreed codec version is stored beside `m_startMicLine` and kept across a
+  `replace` the same way, so a replacement stays on the codec its `start`
+  agreed. `finishReplacement` forces a keyframe on every endpoint
+  (:3121-3124); for a v2 connection that flag is a no-op (section 9.3).
+  Relays and the tunnel forward the display channel's datagrams without
+  reading them, so nothing changes there.
 - **Decoders read both.** The window's decoder chooses by the version byte,
   so a frame of either version decodes whatever the `start` said.
 - **The `start` field also stops keyframe requests.** A window whose media
   `start` carried `displayCodecVersion` 2 sends no `keyframe` operation for
   a context accept, a re-grant or a transmit context (section 9.3); a window
-  on a v1 connection keeps asking as today.
+  on a v1 connection keeps asking as today. The window keeps this "`start`
+  carried v2" flag for the media connection, not for its current transport,
+  so it too survives a `replace`: a replaced connection stays v2 and the
+  window sends no `keyframe` operation for it. The flag clears only when the
+  media connection stops.
 - **Fallback switch.** A Core setting `RemoteDisplayCodecV2` (AppSettings,
-  `"True"` by default, no UI). Set to `"False"`, the Core stops advertising
-  the capability, so every new media connection is v1. It is read when a
-  media connection starts; a running connection keeps what its `start`
-  agreed. It exists for side-by-side bench runs and as a field fallback.
+  `"True"` by default, no UI). It is read once, when the Core starts, and
+  that one value feeds both the capability gate and the `start` check, so
+  what a session was told and what its `start` is held to never disagree.
+  Set to `"False"` (and the Core restarted), the Core advertises the
+  capability to no peer, so every new media connection is v1. It exists for
+  side-by-side bench runs and as a field fallback.
 - The Step 1 keyframe-every-frame setting applies to v1 connections only.
 
-No client breaks: an old window or phone never asks and sees nothing new; a
-new window with an old Core sees no capability and stays on v1; a new window
-with a new Core asks and gets v2, or gets v1 when the fallback switch is off.
+No client breaks: an old window or phone never declares `displayCodec`, so
+it is sent no new capability entry and no new bytes, and its `start` is
+today's; a new window with an old Core sees no capability and stays on v1; a
+new window with a new Core asks and gets v2, or gets v1 when the fallback
+switch is off.
 
 ## 8. The iPhone app
 
 The phone decodes NSDC v1 in `DisplayFrameDecoder.swift` and asks for
 keyframes through `MediaControlClient` (5 a second per endpoint). Plan:
 
-- **Meanwhile:** it never adds the `start` field, so the new Core sends it v1,
+- **Meanwhile:** it never declares `displayCodec` or adds the `start` field,
+  so the new Core sends it no new capability entry and v1 frames,
   and Step 1's keyframe-every-frame setting removes its smear when JJ turns it
   on.
 - **Then, in a follow-up change right after the desktop one:** a v2 path in
   `DisplayFrameDecoder` (header and flag rules, the Rice plane, the part
-  pairing of section 9.2), `displayCodecVersion` 2 in the phone's media
-  `start` when the Core advertises it, and its keyframe requests kept for v1
+  pairing of section 9.2), `displayCodec: 2` in the phone's hello and
+  `displayCodecVersion` 2 in its media `start` when the Core advertises it, and its keyframe requests kept for v1
   connections only. The desktop change writes golden vectors (encoder input
   rows, v2 messages, split and whole, plus malformed cases) under
   `tests/data/display_codec_v2/`, and both the C++ and the NereusKit tests
@@ -412,15 +453,38 @@ A v2 decoder keeps no history a message depends on. It keeps:
   it is, its header and planes), waiting for its partner;
 - the last decoded trace, waterfall row and wide row of the context, used
   only to fill a released frame's absent planes (section 9.2), never to
-  decode.
+  decode. `reset()` and a change of generation both clear these fill planes,
+  so a fill never carries a row or trace across contexts; until the context
+  decodes a plane of its own, a fill is minimum dBm.
 
 Order of checks is v1's: the whole message's structure first (header, flag
 combination, every plane), then endpoint, context, generation and sequence,
 then the message is applied. A message of an older generation is `Rejected`
-`OldContext`. A message of a newer generation releases any held part first
-(as a partial frame, below), then the decoder takes the new context with no
-`L`, and the message is handled as below. There is no `NeedKeyframe` and no
+`OldContext`. A message of a newer generation first releases any held part
+as a partial frame under the old context (its fills from the old context's
+fill planes; counters as for any release, below: `partsLost` 1, and
+`framesLost` from `h` against the old `L`). The decoder then takes the new
+context with no `L` and empty fill planes, and the message is handled as
+below. Frames lost across the generation change are not counted, since the
+two sequences are not comparable. There is no `NeedKeyframe` and no
 `NoHistory` in v2.
+
+**Dispositions.** v1's `DisplayCodecDisposition` has `Accepted`,
+`NeedKeyframe` and `Rejected` (DisplayCodec.h:40-44), and the window branches
+on them (RemoteMediaController.cpp:8487-8509). v2 adds one value and uses
+three:
+
+- `Accepted`: one or two frames released, oldest first. The result's `frame`
+  holds the first; it gains a frame count (0 to 2) and a second frame, which
+  the v1 path never fills.
+- `Held` (new): the message was valid and is held as `H`; nothing is
+  released, the reason is `None`, and the window does nothing more with it
+  (no loss, no keyframe request, no presentation).
+- `Rejected`, with the reason in the table below.
+
+A message that releases a frame and is itself held (a part newer than `h`,
+or a part of a newer generation while a part is held) is `Accepted` with one
+frame.
 
 ### 9.2 Pairing the parts of a split frame
 
@@ -429,21 +493,29 @@ newer" use v1's unsigned half-range rule: `s` is not newer than `t` when
 `staleOrEqual(s, t)` (DisplayCodec.cpp:136-140, used at 573). "Stale" means
 not newer than `L`; with no `L` (a fresh context) nothing is stale.
 
+**Releasing a frame** of sequence `q` (whole, merged or partial) always does
+the same two things: when there is an `L`, `framesLost += (q - L - 1) mod
+2^32`, in 32-bit unsigned arithmetic; then `L = q`. A released frame is
+always newer than `L`, so the difference is 0 to 2^31 - 1 and never wraps
+negative. With no `L` (the first release of a context) `framesLost` does not
+change. A partial frame also adds 1 to `partsLost`. The "Counter" column
+below lists what moves besides that rule.
+
 Within one generation, for a message of sequence `s`:
 
-| Held | Message | Action | Counter |
-| --- | --- | --- | --- |
-| Nothing | Stale (whole or part) | `Rejected` `StaleSequence`; nothing changes | `staleMessages` |
-| Nothing | Whole, newer than `L` | Release it; `L = s` | `framesLost += s - L - 1` when positive |
-| Nothing | Part, newer than `L` | Hold it | none |
-| `H` | Stale (whole or part) | `Rejected` `StaleSequence`; `H` stays | `staleMessages` |
-| `H` | Whole or part, newer than `L` and older than `h` | Release it now (a part as a partial frame); `L = s`; `H` stays | `framesLost` as above; `partsLost` for a part |
-| `H` | Part, `s = h`, the other part, headers agree | Release the merged frame; `L = h`; nothing held | `framesLost` as above |
-| `H` | Part, `s = h`, the same part again | `Rejected` `StaleSequence` (a duplicate); `H` stays | `duplicateParts` |
-| `H` | Part, `s = h`, the other part, headers disagree | `Rejected` `Malformed`; `H` stays | `malformed` |
-| `H` | Whole, `s = h` | `Rejected` `Malformed` (a sequence is whole or split, never both); `H` stays | `malformed` |
-| `H` | Whole, newer than `h` | Release `H` as a partial frame, then release the whole frame; `L = s`; nothing held | `partsLost`; `framesLost` |
-| `H` | Part, newer than `h` | Release `H` as a partial frame (`L = h`), then hold the new part | `partsLost`; `framesLost` |
+| Held | Message | Action | Disposition | Counter |
+| --- | --- | --- | --- | --- |
+| Nothing | Stale (whole or part) | Nothing changes | `Rejected` `StaleSequence` | `staleMessages` |
+| Nothing | Whole, newer than `L` | Release it | `Accepted`, 1 frame | release rule |
+| Nothing | Part, newer than `L` | Hold it | `Held` | none |
+| `H` | Stale (whole or part) | `H` stays | `Rejected` `StaleSequence` | `staleMessages` |
+| `H` | Whole or part, newer than `L` and older than `h` | Release it now (a part as a partial frame); `H` stays | `Accepted`, 1 frame | release rule |
+| `H` | Part, `s = h`, the other part, headers agree | Release the merged frame; nothing held | `Accepted`, 1 frame | release rule |
+| `H` | Part, `s = h`, the same part again | A duplicate; `H` stays | `Rejected` `StaleSequence` | `duplicateParts` |
+| `H` | Part, `s = h`, the other part, headers disagree | `H` stays | `Rejected` `Malformed` | `malformed` |
+| `H` | Whole, `s = h` | A sequence is whole or split, never both; `H` stays | `Rejected` `Malformed` | `malformed` |
+| `H` | Whole, newer than `h` | Release `H` as a partial frame, then release the whole frame; nothing held | `Accepted`, 2 frames | release rule, twice |
+| `H` | Part, newer than `h` | Release `H` as a partial frame, then hold the new part | `Accepted`, 1 frame | release rule |
 
 "Headers agree" means every header field except the flags is equal: magic,
 version, header size, endpoint, generation, sequence, timestamp, interval and
@@ -511,7 +583,8 @@ The decoder's counters (`framesLost`, `partsLost`, `staleMessages`,
   bool measurementCurrent = true)`, which sets that item's
   `measurementCurrent`; the window passes `false` for a `traceCarried` frame.
 - **The window's other changes, none of them visual:** route version 2 to the
-  decoder, loop over the frames `decode()` returns, skip the keyframe
+  decoder, loop over the frames an `Accepted` result carries, return early on
+  `Held` (section 9.1), skip the keyframe
   requests above, and add `displayMessagesLost` and `displayPartsLost` to its
   display diagnostics beside today's `keyframeWaits` (which stays, and should
   read 0 on v2).
@@ -568,24 +641,34 @@ section 11; the Core session installs those builds.
    byte, and structure checked before state (as v1's tests do). Plus every row
    of the pairing table in section 9.2, including either part first, a lost
    part, a duplicate, a part older than the held one, disagreeing headers and
-   a generation change while a part is held.
+   a generation change while a part is held, each checked for its disposition
+   (`Accepted` with its frame count, `Held` or `Rejected` with its reason) and
+   its counters; `framesLost` with no `L` and across the 2^32 sequence wrap;
+   and fills of minimum dBm after `reset()` and after a generation change.
 2. **Presenter test:** v2 frames through the decoder and
    `RemoteDisplayPresenter` under the same loss: real rows drawn equals rows
    sent minus rows lost; one blended row per lost row (bursts up to
    `kMaxGapRows`); no repeated rows; no keyframe waits; a `traceCarried` frame
    pushed with `measurementCurrent` false never advances the IMD measurement.
 3. **Interop:**
-   - a new Core and a client whose `start` lacks the field: byte-identical v1
-     (the older-peer golden and link conformance fixtures);
-   - a new Core and a v2 window: `displayCodecVersion` 2 advertised, the
+   - a new Core and a client whose hello does not declare `displayCodec`: no
+     `displayCodecVersion` entry (its capabilities byte-identical to today's,
+     `coreBuildInfo` still last), a `start` carrying the field refused, and
+     byte-identical v1 frames (the older-peer golden and link conformance
+     fixtures);
+   - a new Core and a v2 window: `displayCodec` 2 declared,
+     `displayCodecVersion` 2 advertised before `coreBuildInfo`, the
      `start` field sent, v2 frames, and no `keyframe` operation at all,
      through context accepts, re-grants and transmit contexts;
    - an old Core (no capability) and a v2 window: no `start` field, v1 frames,
      keyframe requests and recovery as today;
-   - the fallback switch off: no capability, v1 to a v2 window, which keeps
-     asking for keyframes;
-   - a relayed and a tunneled media connection, and a handover: each new
-     `start` agrees the codec again;
+   - the fallback switch off at Core start: no capability to any peer, v1 to
+     a v2 window, which keeps asking for keyframes, and a `start` carrying
+     the field refused;
+   - a relayed and a tunneled media connection: each `start` agrees the
+     codec;
+   - a handover: a `replace` keeps v2 (the replacement's frames are v2) and
+     the window sends no `keyframe` operation;
    - the golden vectors read by the C++ test now and by NereusKit's test in
      the phone change.
 4. **Bench**, 30 to 45 minutes on the STRIX link, Step 1 first, then v2:
@@ -599,11 +682,19 @@ section 11; the Core session installs those builds.
 
 - `DisplayCodec.{h,cpp}`: a v2 encoder and the decoder's v2 path, `decode()`
   returning 0 to 2 frames, the new counters.
-- `DaemonMediaController`: the encoder chosen per media connection from its
-  `start`, split and send order, totals for pacing, the diagnostics fields.
-- `StationServer` / `StationCapabilities`: `displayCodecVersion` and the
-  `RemoteDisplayCodecV2` setting; the media `start` parser takes the field.
-- `RemoteMediaController`: the `start` field, routing, the frame loop,
+- `DaemonMediaController`: the media `start` parser takes the field
+  (`handleStart`, about DaemonMediaController.cpp:2215-2384); the agreed
+  version is kept beside `m_startMicLine` across a `replace`; the encoder
+  chosen per media connection from it, split and send order, totals for
+  pacing, the diagnostics fields.
+- `StationServer`: the gate function (the hello declaration, media, minor 11
+  and the `RemoteDisplayCodecV2` setting read once at Core start), used both
+  for the capability and by the `start` parser.
+- `StationCapabilities`: the `displayCodecVersion` entry, before
+  `coreBuildInfo`, for a peer that declared `displayCodec` 2.
+- `StationClient`: the `displayCodec: 2` hello declaration.
+- `RemoteMediaController`: the `start` field, routing, the frame loop and
+  `Held`, the "`start` carried v2" flag kept across a `replace`,
   `traceCarried`, the skipped keyframe requests, the new counters.
 - `RemoteDisplayPresenter`: `push()` gains `measurementCurrent` (its drawing
   is unchanged).
@@ -612,9 +703,13 @@ section 11; the Core session installs those builds.
   `tests/tools/nereus_rendezvous_peer.cpp:966`. Either can later add the field
   and read v2 with the same decoder.
 - Fixtures: `tests/data/link/v1/surface.json` and the link conformance
-  fixtures gain the capability and the `start` field.
+  fixtures gain the hello declaration, the capability (only for a peer that
+  declared it) and the `start` field; every existing fixture for a peer that
+  does not declare it stays byte for byte.
 - Docs: this file, a pointer from the v1 document, the media control
-  document's `start` row, and station link v1's capability list.
+  document's `start` row and a "display codec" section beside "The picture a
+  context continues", and station link v1's hello features and capability
+  list.
 - Unchanged: `DisplayBudget`, the allocators, the presenter's drawing, the
   mini displays, the NSDX extras, the PS3D codec, relays and the tunnel, the
   phone (until its own change).
@@ -627,7 +722,8 @@ Each of these is settled in the design above; say no to any and it changes.
    first,** when the whole frame would need two datagrams. On your 783-pixel
    pan a lost datagram then costs one row or one trace, not both, for about 5
    percent more bytes on those frames. Recommendation: split.
-2. **Keep a hidden Core setting that sends the old format to everyone.** No
+2. **Keep a hidden Core setting that sends the old format on every new media
+   connection.** No
    UI; it lets the bench compare old and new on the same Core and is a quick
    way back if something goes wrong in the field. Recommendation: keep it.
 3. **The new format is on by default once merged.** Recommendation: on by
