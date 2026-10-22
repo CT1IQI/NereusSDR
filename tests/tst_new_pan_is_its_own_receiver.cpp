@@ -42,8 +42,14 @@
 //               the moving slices' blanker state and device, and the
 //               receivers' own C-Tune pins under the station-wide lock.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: third review round: Protocol 1 Diversity's remapped ADCs,
+//               one-ADC boards under a two-ADC word, the G2E's codec, no
+//               codec, receivers at different rates, and the routing word
+//               cleared by a scope guard. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
+#include <QScopeGuard>
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
@@ -53,12 +59,23 @@
 #include "core/SliceOwnership.h"
 #include "core/SliceStreamAllocator.h"
 #include "core/WdspTypes.h"
+#include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecStandard.h"
+#include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+namespace {
+// Clears a test MAC's settings when the test leaves, pass or fail, so a
+// routing word it persisted cannot reach the next test.
+auto clearP1Word(const QString& mac)
+{
+    return qScopeGuard([mac] { AppSettings::instance().clearHardwareValues(mac); });
+}
+} // namespace
 
 class TestNewPanIsItsOwnReceiver : public QObject
 {
@@ -715,6 +732,28 @@ private slots:
         QVERIFY(!model.streamAllocator().isStreamActive(1));
     }
 
+    // A Protocol 1 station: `hpsdr`'s board, a P1 codec, a pool of `pool`
+    // receivers, connected under `mac` (so the per-MAC routing word
+    // `hardware/<mac>/p1AdcCntrl` applies) with `word` persisted there, or
+    // none when `word` is empty. The caller clears the MAC's settings with
+    // clearP1Word first, so a failing check leaves nothing behind.
+    static void p1Station(RadioModel& model, HPSDRModel hpsdr, int pool, IP1Codec* codec,
+                          const QString& mac, const QString& word)
+    {
+        model.setHpsdrModelForTest(hpsdr);
+        model.configureStreamPool(/*userDdcCount*/ pool, /*maxSlices*/ 5, 192000);
+        model.receiverManager()->setP1Codec(codec);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol1;
+        info.macAddress = mac;
+        model.setLastRadioInfoForTest(info);
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        AppSettings::instance().clearHardwareValues(mac);
+        if (!word.isEmpty()) {
+            AppSettings::instance().setHardwareValue(mac, QStringLiteral("p1AdcCntrl"), word);
+        }
+    }
+
     // Second review round. The ADC: on Protocol 1 the bank-4 word routes
     // each frame slot to an ADC whatever the antenna label says. On a 7000D
     // (Orion class, two ADCs) stream 0 reads slot 0 and stream 1 slot 2. The
@@ -736,46 +775,227 @@ private slots:
         QFETCH(bool, split);
         static P1CodecStandard codec;
         const QString mac = QStringLiteral("00:1c:c0:a2:61:0a");
+        const auto cleanup = clearP1Word(mac);
         RadioModel model;
-        model.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
-        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 5, 192000);
-        model.receiverManager()->setP1Codec(&codec);
-        {
-            RadioInfo info;
-            info.protocol = ProtocolVersion::Protocol1;
-            info.macAddress = mac;
-            model.setLastRadioInfoForTest(info);
-        }
-        model.setConnectionStateForTest(ConnectionState::Connected);
-        AppSettings::instance().clearHardwareValues(mac);
-        if (split) {
-            AppSettings::instance().setHardwareValue(mac, QStringLiteral("p1AdcCntrl"),
-                                                     QStringLiteral("0x10"));
-        }
+        p1Station(model, HPSDRModel::ANAN7000D, 4, &codec, mac,
+                  split ? QStringLiteral("0x10") : QString());
         SliceModel* a = nullptr;
         SliceModel* b = nullptr;
         // fold: A alone on the lower receiver retunes next to B (B would come
         // down); join: A alone on the higher one tunes next to B.
         QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
                      : loneSliceOnTheHigherReceiver(model, a, b));
-        const int lower = 0;
-        QCOMPARE(model.ddcForStream(lower), 0);
+        QCOMPARE(model.ddcForStream(0), 0);
         QCOMPARE(model.ddcForStream(1), 2);
-        QCOMPARE(model.receiveAdcForStream(lower), 0);
+        QCOMPARE(model.receiveAdcForStream(0), 0);
         QCOMPARE(model.receiveAdcForStream(1), split ? 1 : 0);
 
         a->setFrequency(7268000.0);
 
-        AppSettings::instance().clearHardwareValues(mac);
         if (split) {
             QCOMPARE(a->streamIndex(), fold ? 0 : 1);
             QCOMPARE(b->streamIndex(), fold ? 1 : 0);
             QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
         } else {
-            QCOMPARE(a->streamIndex(), lower);
-            QCOMPARE(b->streamIndex(), lower);
+            QCOMPARE(a->streamIndex(), 0);
+            QCOMPARE(b->streamIndex(), 0);
             QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
         }
+    }
+
+    // Third review round (N1). Protocol 1 Diversity moves the receivers onto
+    // other frame slots, and the codec remaps the routing word with them so
+    // each receiver keeps its ADC (P1CodecStandard::ddcAssignmentOrionClass);
+    // the remapped word is what the radio is sent. A 7000D with slot 2 on
+    // ADC1: C on stream 0, B on stream 1 (ADC1), A on stream 2 in Diversity,
+    // D alone on stream 3. With A's stream on slots 0 and 1, B moves to slot
+    // 3 and D to slot 4. Read off the un-remapped word, slots 3 and 4 were
+    // both ADC0, so D joined B and moved to the RX2 input. With the default
+    // word every receiver is on ADC0 and D joins.
+    void a_diversity_remap_keeps_each_receivers_adc_data()
+    {
+        QTest::addColumn<bool>("split");
+        QTest::newRow("P1 2-ADC Diversity, slot 2 on ADC1") << true;
+        QTest::newRow("P1 2-ADC Diversity, one ADC") << false;
+    }
+    void a_diversity_remap_keeps_each_receivers_adc()
+    {
+        QFETCH(bool, split);
+        static P1CodecStandard codec;
+        const QString mac = QStringLiteral("00:1c:c0:a2:61:0b");
+        const auto cleanup = clearP1Word(mac);
+        RadioModel model;
+        p1Station(model, HPSDRModel::ANAN7000D, 4, &codec, mac,
+                  split ? QStringLiteral("0x10") : QString());
+        SliceModel* a = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(a);
+        QCOMPARE(a->sliceIndex(), 0);   // the slice a legacy Diversity request may enable
+        a->setFrequency(14200000.0);
+        SliceModel* b = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(b);
+        b->setFrequency(7262000.0);
+        SliceModel* c = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(c);
+        c->setFrequency(14210000.0);
+        QCOMPARE(c->streamIndex(), a->streamIndex());
+        a->setFrequency(21200000.0);     // leaves C: a receiver of its own
+        SliceModel* d = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(d);
+        d->setFrequency(3870000.0);
+        QCOMPARE(c->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 1);
+        QCOMPARE(a->streamIndex(), 2);
+        QCOMPARE(d->streamIndex(), 3);
+        a->setDiversityEnabled(true);
+        QVERIFY(a->diversityEnabled());
+        QCOMPARE(model.ddcForStream(2), 0);
+        QCOMPARE(model.ddcForStream(1), 3);
+        QCOMPARE(model.ddcForStream(3), 4);
+        QCOMPARE(model.receiveAdcForStream(1), split ? 1 : 0);
+        QCOMPARE(model.receiveAdcForStream(3), 0);
+
+        d->setFrequency(7268000.0);
+
+        QCOMPARE(d->streamIndex(), split ? 3 : 1);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), split ? 4 : 3);
+    }
+
+    // Third review round (N2). One-ADC boards: the 10E (Hermes II class) and
+    // the HL2 have one ADC whatever the routing word says, and their codecs
+    // publish ADC0. A two-ADC word persisted for the MAC (4: slot 1 on ADC1)
+    // must not turn the rejoin off.
+    void a_one_adc_board_ignores_a_two_adc_word_data()
+    {
+        QTest::addColumn<int>("hpsdr");
+        QTest::addColumn<bool>("fold");
+        QTest::newRow("ANAN-10E, join") << int(HPSDRModel::ANAN10E) << false;
+        QTest::newRow("ANAN-10E, fold") << int(HPSDRModel::ANAN10E) << true;
+        QTest::newRow("HL2, join") << int(HPSDRModel::HERMESLITE) << false;
+        QTest::newRow("HL2, fold") << int(HPSDRModel::HERMESLITE) << true;
+    }
+    void a_one_adc_board_ignores_a_two_adc_word()
+    {
+        QFETCH(int, hpsdr);
+        QFETCH(bool, fold);
+        static P1CodecStandard standard;
+        static P1CodecHl2 hl2;
+        const bool isHl2 = hpsdr == int(HPSDRModel::HERMESLITE);
+        const QString mac = QStringLiteral("00:1c:c0:a2:61:0c");
+        const auto cleanup = clearP1Word(mac);
+        RadioModel model;
+        p1Station(model, HPSDRModel(hpsdr), 2,
+                  isHl2 ? static_cast<IP1Codec*>(&hl2) : static_cast<IP1Codec*>(&standard),
+                  mac, QStringLiteral("4"));
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
+                     : loneSliceOnTheHigherReceiver(model, a, b));
+        QCOMPARE(model.ddcForStream(1), 1);
+        QCOMPARE(model.receiveAdcForStream(0), 0);
+        QCOMPARE(model.receiveAdcForStream(1), 0);
+
+        a->setFrequency(7268000.0);
+
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+    }
+
+    // Third review round (N3). JJ's ANAN-G2E on Protocol 2 runs
+    // P2CodecHermes (P2RadioConnection selects it for HermesC10); the rejoin
+    // works there both ways round.
+    void the_g2e_codec_rejoins_and_folds_data()
+    {
+        QTest::addColumn<bool>("fold");
+        QTest::newRow("G2E, join") << false;
+        QTest::newRow("G2E, fold") << true;
+    }
+    void the_g2e_codec_rejoins_and_folds()
+    {
+        QFETCH(bool, fold);
+        static P2CodecHermes codec;
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2E);
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 5, 192000);
+        model.receiverManager()->setP2Codec(&codec);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
+                     : loneSliceOnTheHigherReceiver(model, a, b));
+        QVERIFY(model.ddcForStream(0) >= 0);
+        QVERIFY(model.ddcForStream(1) >= 0);
+        QCOMPARE(model.receiveAdcForStream(0), 0);
+        QCOMPARE(model.receiveAdcForStream(1), 0);
+
+        a->setFrequency(7268000.0);
+
+        QCOMPARE(a->streamIndex(), 0);
+        QCOMPARE(b->streamIndex(), 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
+    }
+
+    // Third review round (N3). No codec has answered, so no receiver has a
+    // known DDC or ADC: nothing rejoins or folds, either way round.
+    void no_codec_means_no_rejoin_data()
+    {
+        QTest::addColumn<bool>("fold");
+        QTest::newRow("no codec, join") << false;
+        QTest::newRow("no codec, fold") << true;
+    }
+    void no_codec_means_no_rejoin()
+    {
+        QFETCH(bool, fold);
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
+                     : loneSliceOnTheHigherReceiver(model, a, b));
+        QCOMPARE(model.receiveAdcForStream(0), -1);
+        QCOMPARE(model.receiveAdcForStream(1), -1);
+
+        a->setFrequency(7268000.0);
+
+        QCOMPARE(a->streamIndex(), fold ? 0 : 1);
+        QCOMPARE(b->streamIndex(), fold ? 1 : 0);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+    }
+
+    // Third review round, controller ruling: the slices that move take the
+    // receiver's rate, so neither a join nor a fold happens between two
+    // receivers at different rates. Once the rates match, it does.
+    void a_receiver_at_another_rate_is_not_joined_data()
+    {
+        QTest::addColumn<bool>("fold");
+        QTest::newRow("join") << false;
+        QTest::newRow("fold") << true;
+    }
+    void a_receiver_at_another_rate_is_not_joined()
+    {
+        QFETCH(bool, fold);
+        RadioModel model;
+        seed(model);
+        SliceModel* a = nullptr;
+        SliceModel* b = nullptr;
+        QVERIFY(fold ? twoReceiversOnOnePan(model, a, b)
+                     : loneSliceOnTheHigherReceiver(model, a, b));
+        model.requestSliceSampleRate(b->sliceIndex(), 96000);
+        QCOMPARE(model.streamAllocator().streamSampleRateHz(b->streamIndex()), 96000);
+        QCOMPARE(model.streamAllocator().streamSampleRateHz(a->streamIndex()), 192000);
+        const int aStream = a->streamIndex();
+        const int bStream = b->streamIndex();
+
+        a->setFrequency(7268000.0);
+        QCOMPARE(a->streamIndex(), aStream);
+        QCOMPARE(b->streamIndex(), bStream);
+        QCOMPARE(b->sampleRateHz(), 96000);
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 2);
+
+        model.requestSliceSampleRate(b->sliceIndex(), 192000);
+        a->setFrequency(7269000.0);
+        QCOMPARE(a->streamIndex(), b->streamIndex());
+        QCOMPARE(model.streamAllocator().activeStreamCount(), 1);
     }
 
     // A fold moves the higher receiver's slices onto the lone slice's, where

@@ -7349,12 +7349,11 @@ public:
     QVector<int> rejoinCandidateStreams(const SliceModel* slice, int currentStream,
                                         const QString& joinLabel) const;
 
-    /// The ADC the radio has been told `stream`'s DDC reads, for the active
-    /// protocol: on Protocol 2 the codec's published assignment
-    /// (adcForStream); on Protocol 1 the bank-4 routing word the codec sends
-    /// (CodecContext::p1AdcCntrl, p1AdcForDdc), indexed by the stream's
-    /// frame slot. -1 when it is not known: no codec yet, or the stream has
-    /// no DDC.
+    /// The ADC the radio has been told `stream`'s DDC reads: the codec's
+    /// published assignment (adcForStream), which is what the wire carries
+    /// on either protocol, Protocol 1 Diversity's remapped routing word
+    /// included. -1 when it is not known: no codec has answered yet, or the
+    /// stream has no DDC.
     int receiveAdcForStream(int stream) const;
 
     /// Mirror a stream's liveness into ReceiverManager's active-receiver set,

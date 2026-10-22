@@ -26,8 +26,8 @@
 //                will have on its new band. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
 //   2026-10-22 - Second review round: a rejoin or fold needs both receivers'
-//                DDCs on the same ADC for the active protocol and routing
-//                word (receiveAdcForStream), the receivers' own C-Tune pins
+//                DDCs on the same ADC, as the codec's published assignment
+//                says (receiveAdcForStream), the receivers' own C-Tune pins
 //                to match, and, for a fold, every moving slice to share the
 //                lone slice's noise-blanker state and device. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -14646,28 +14646,19 @@ QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
 
 int RadioModel::receiveAdcForStream(int stream) const
 {
-    const int ddc = ddcForStream(stream);
-    if (ddc < 0) {
+    // What the codec's assignment says the stream's DDC reads, as
+    // publishDdcAssignment decoded it (m_streamAdc), on either protocol. That
+    // assignment is what the wire carries: on Protocol 2 its ADC bytes; on
+    // Protocol 1 the Orion class composes its ADC bytes from the bank-4 word
+    // p1AdcCntrl, remapped while Diversity moves streams onto other frame
+    // slots, and applyDiversityAssignment sends the remapped word. Decoding
+    // p1AdcCntrl here instead read the un-remapped word at the remapped slot.
+    // The Hermes class and the HL2 publish ADC0, and have one ADC.
+    //
+    // No DDC (no codec has answered yet, or the stream is suspended) is
+    // unknown, and an unknown ADC never matches.
+    if (ddcForStream(stream) < 0) {
         return -1;
-    }
-    // The protocol, decided as computeDdcAssignmentForContext picks the
-    // codec: the connection's when there is one, else ReceiverManager's.
-    bool p1 = false;
-    if (qobject_cast<P2RadioConnection*>(m_connection) != nullptr) {
-        p1 = false;
-    } else if (qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr) {
-        p1 = true;
-    } else if (m_receiverManager != nullptr && m_receiverManager->p2Codec() != nullptr) {
-        p1 = false;
-    } else if (m_receiverManager != nullptr && m_receiverManager->p1Codec() != nullptr) {
-        p1 = true;
-    } else {
-        return -1;
-    }
-    if (p1) {
-        // ddcForStream is the frame slot on Protocol 1 (publishDdcAssignment),
-        // which is what the bank-4 word is indexed by.
-        return NereusSDR::p1AdcForDdc(currentCodecContext().p1AdcCntrl, ddc);
     }
     return adcForStream(stream);
 }
