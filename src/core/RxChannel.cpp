@@ -76,6 +76,10 @@
 //                 last whole one and warns once.
 //                 NereusSDR-original, by J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22 - takeSlowNrCalls: the channel's noise-reduction calls over
+//                 50 ms since the previous take (dsplock.c), for the Core
+//                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -3250,6 +3254,27 @@ qint64 RxChannel::takeDspIntervalMaxBlockUs() const
     return std::max<qint64>(0, TakeChannelDspIntervalMaxBlockUs(m_channelId));
 #else
     return 0;
+#endif
+}
+
+bool RxChannel::takeSlowNrCalls(qint64& count, qint64& maxUs) const
+{
+    count = 0;
+    maxUs = 0;
+#ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return false;
+    }
+    long long calls = 0;
+    long long longestUs = 0;
+    if (TakeChannelSlowNrCalls(m_channelId, &calls, &longestUs) != 0) {
+        return false;
+    }
+    count = calls;
+    maxUs = longestUs;
+    return true;
+#else
+    return false;
 #endif
 }
 

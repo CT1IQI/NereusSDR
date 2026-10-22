@@ -243,6 +243,11 @@
 //                 NereusSDR-original test seam exported from
 //                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22  WdspNoteNrCallNs and TakeChannelSlowNrCalls declarations
+//                 added by J.J. Boyd (KG4VCF) for the slow noise-reduction
+//                 call log. NereusSDR-original, exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -492,6 +497,17 @@ int GetChannelDspLoad(int channel, WdspChannelLoad* out);
 // none completed; -1 for an invalid channel). One periodic reader owns it:
 // RadioModel's load sampler. Never waits for the worker.
 long long TakeChannelDspIntervalMaxBlockUs(int channel);
+
+// NereusSDR dsplock.c: records one noise-reduction stage group call of
+// elapsedNs on the channel; calls over 50 ms are counted. xrxa records its
+// own; exported for tests.
+void WdspNoteNrCallNs(int channel, long long elapsedNs);
+
+// NereusSDR dsplock.c: the channel's NR calls over 50 ms since the previous
+// take (*count) and the longest of them (*maxUs, microseconds), both 0 when
+// none; starts the next interval. Returns 0, or -1 for an invalid channel or
+// a null pointer. One periodic reader owns it: RadioModel's load sampler.
+int TakeChannelSlowNrCalls(int channel, long long* count, long long* maxUs);
 
 // NereusSDR dsplock.c: install (or, with nullptr, remove) a function every
 // WDSP lock entry, channel teardown wait, OpenChannel and SetChannelState

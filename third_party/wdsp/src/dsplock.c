@@ -151,6 +151,12 @@ boydsoftprez@gmail.com
 //                 while the caller runs ahead. One pointer test when none is
 //                 installed. By J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-22 - Slow noise-reduction call accounting (WdspNrCallStart,
+//                 WdspNrCallEnd, WdspNoteNrCallNs, TakeChannelSlowNrCalls):
+//                 xrxa times each of its two NR stage groups and counts the
+//                 calls over 50 ms per channel, for the Core log. Measures
+//                 only; NR behaviour is unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "comm.h"
@@ -224,6 +230,12 @@ static volatile long long block_start_ns[MAX_CHANNELS];
 // Odd while the worker is changing load_busy_ns or block_start_ns; each
 // change adds 2. GetChannelDspLoad reads the pair again when it moved.
 static volatile long long load_seq[MAX_CHANNELS];
+// NR calls over kWdspSlowNrCallNs since the last TakeChannelSlowNrCalls, and
+// the longest of them (microseconds).
+static volatile long long slow_nr_calls[MAX_CHANNELS];
+static volatile long long slow_nr_max_us[MAX_CHANNELS];
+// An NR call longer than this (50 ms) is slow.
+static const int64_t kWdspSlowNrCallNs = 50000000;
 // Most times GetChannelDspLoad reads the pair before it takes what it has.
 // The worker's changes are a few instructions long, so a second read almost
 // always succeeds.
@@ -650,6 +662,41 @@ void WdspWaitWorkerExit (int channel)
 		}
 	}
 	load_store64 (&last_exit_wait_us[channel], (long long)(dsplock_now_us () - start));
+}
+
+long long WdspNrCallStart (void)
+{
+	return (long long)dsplock_now_ns ();
+}
+
+void WdspNrCallEnd (int channel, long long startNs)
+{
+	WdspNoteNrCallNs (channel, (long long)dsplock_now_ns () - startNs);
+}
+
+PORT
+void WdspNoteNrCallNs (int channel, long long elapsedNs)
+{
+	if (!valid_channel (channel) || elapsedNs <= kWdspSlowNrCallNs)
+	{
+		return;
+	}
+	// The longest first, then the count: a take that sees the count also
+	// sees a longest at least this large, or a later interval's.
+	load_max64 (&slow_nr_max_us[channel], elapsedNs / 1000);
+	load_add64 (&slow_nr_calls[channel], 1);
+}
+
+PORT
+int TakeChannelSlowNrCalls (int channel, long long* count, long long* maxUs)
+{
+	if (!valid_channel (channel) || count == 0 || maxUs == 0)
+	{
+		return -1;
+	}
+	*count = load_exchange64 (&slow_nr_calls[channel], 0);
+	*maxUs = load_exchange64 (&slow_nr_max_us[channel], 0);
+	return 0;
 }
 
 PORT

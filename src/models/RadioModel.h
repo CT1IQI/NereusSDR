@@ -678,6 +678,9 @@
 //   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
 //                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-22 - reportSlowNrCalls and slowNrCallLogLine: the Core log
+//                names a receiver's noise-reduction calls over 50 ms. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2253,6 +2256,16 @@ public:
     /// place of receiverDspLoad (a missing slice, or nullopt, is not
     /// measured).
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
+
+    /// 2026-10-22: logs, for every receiver whose WDSP channel ran a
+    /// noise-reduction call over 50 ms since the last tick, the count, the
+    /// longest and the receiver's NR mode (RxChannel::takeSlowNrCalls). The
+    /// load sampler's timer calls it; measures only. Main thread.
+    void reportSlowNrCalls();
+
+    /// The line reportSlowNrCalls logs (lcDsp) for one receiver.
+    static QString slowNrCallLogLine(int receiver, const QString& nrMode,
+                                     qint64 count, qint64 maxUs);
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 

@@ -31,6 +31,11 @@ warren@wpratt.com
 // destroy, xrxa, setSamplerate, setBuffers and setSize), includes nnr, rnnr
 // and sbnr in the bpsnba check, and RXAbp1Check reads the stage run states
 // itself from the channel.
+//
+// 2026-10-22 (J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code): xrxa
+// times each of its two NR stage groups (WdspNrCallStart / WdspNrCallEnd in
+// dsplock.c) so the Core can log a noise-reduction call over 50 ms. The
+// stages, their order and their parameters are unchanged.
 
 #include "comm.h"
 
@@ -678,19 +683,27 @@ void xrxa (int channel)
 	xsnba (rxa[channel].snba.p);
 	xeqp (rxa[channel].eqp.p);
 	xanf (rxa[channel].anf.p, 0);
-	xanr (rxa[channel].anr.p, 0);
-	xemnr (rxa[channel].emnr.p, 0);
-	xnnr (rxa[channel].nnr.p, 0);
-	xrnnr (rxa[channel].rnnr.p, 0);
-	xsbnr (rxa[channel].sbnr.p, 0);
+	{
+		const long long nr_start = WdspNrCallStart ();
+		xanr (rxa[channel].anr.p, 0);
+		xemnr (rxa[channel].emnr.p, 0);
+		xnnr (rxa[channel].nnr.p, 0);
+		xrnnr (rxa[channel].rnnr.p, 0);
+		xsbnr (rxa[channel].sbnr.p, 0);
+		WdspNrCallEnd (channel, nr_start);
+	}
 	xbandpass (rxa[channel].bp1.p, 0);
 	xwcpagc (rxa[channel].agc.p);
 	xanf (rxa[channel].anf.p, 1);
-	xanr (rxa[channel].anr.p, 1);
-	xemnr (rxa[channel].emnr.p, 1);
-	xnnr(rxa[channel].nnr.p, 1);
-	xrnnr (rxa[channel].rnnr.p, 1);
-	xsbnr (rxa[channel].sbnr.p, 1);
+	{
+		const long long nr_start = WdspNrCallStart ();
+		xanr (rxa[channel].anr.p, 1);
+		xemnr (rxa[channel].emnr.p, 1);
+		xnnr(rxa[channel].nnr.p, 1);
+		xrnnr (rxa[channel].rnnr.p, 1);
+		xsbnr (rxa[channel].sbnr.p, 1);
+		WdspNrCallEnd (channel, nr_start);
+	}
 	xbandpass (rxa[channel].bp1.p, 1);
 	xmeter (rxa[channel].agcmeter.p);
 	xsiphon (rxa[channel].sip1.p, 0);

@@ -1253,6 +1253,13 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - The I/Q level log hears ADC overloads
+//                (RadioConnection::adcOverflow to
+//                ReceiverManager::noteAdcOverflow), and reportSlowNrCalls
+//                logs each receiver's noise-reduction calls over 50 ms (the
+//                load sampler's tick). Diagnostics only; NR and DSP
+//                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2182,6 +2189,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
         connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
             governNnrLoad(m_nnrGovernorClock.elapsed());
         });
+        // 2026-10-22: noise-reduction calls over 50 ms, on the same tick.
+        connect(m_dspLoadTimer, &QTimer::timeout,
+                this, &RadioModel::reportSlowNrCalls);
         m_dspLoadTimer->start();
     }
 
@@ -15129,6 +15139,64 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
     }
 }
 
+namespace {
+
+// The receiver's NR mode as the slow-call log names it.
+QString nrModeLogName(const SliceModel& slice)
+{
+    switch (slice.activeNr()) {
+        case NrSlot::Off:  return QStringLiteral("off");
+        case NrSlot::NR1:  return QStringLiteral("NR1");
+        case NrSlot::NR2:  return QStringLiteral("NR2");
+        case NrSlot::NR3:  return QStringLiteral("NR3");
+        case NrSlot::NR4:  return QStringLiteral("NR4");
+        case NrSlot::DFNR: return QStringLiteral("DFNR");
+        case NrSlot::BNR:  return QStringLiteral("BNR");
+        case NrSlot::MNR:  return QStringLiteral("MNR");
+        case NrSlot::NNR:
+            return slice.nnrModelSlot() == 1 ? QStringLiteral("NNR Premium")
+                                             : QStringLiteral("NNR Standard");
+    }
+    return QStringLiteral("unknown");
+}
+
+} // namespace
+
+QString RadioModel::slowNrCallLogLine(int receiver, const QString& nrMode,
+                                      qint64 count, qint64 maxUs)
+{
+    return QStringLiteral("Receiver %1: a noise reduction call took %2 ms (NR mode %3); "
+                          "%4 calls over 50 ms since the last report")
+        .arg(receiver)
+        .arg(static_cast<double>(maxUs) / 1000.0, 0, 'f', 1)
+        .arg(nrMode)
+        .arg(count);
+}
+
+void RadioModel::reportSlowNrCalls()
+{
+    if (!m_wdspEngine) {
+        return;
+    }
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice == nullptr) {
+            continue;
+        }
+        const int sliceId = slice->sliceIndex();
+        RxChannel* channel = m_wdspEngine->rxChannel(sliceId);
+        if (channel == nullptr) {
+            continue;
+        }
+        qint64 count = 0;
+        qint64 maxUs = 0;
+        if (!channel->takeSlowNrCalls(count, maxUs) || count == 0) {
+            continue;
+        }
+        qCInfo(lcDsp).noquote()
+            << slowNrCallLogLine(sliceId, nrModeLogName(*slice), count, maxUs);
+    }
+}
+
 void RadioModel::applyNnrLimit(SliceModel* slice, NnrLimit limit)
 {
     RxChannel* channel = m_wdspEngine ? m_wdspEngine->rxChannel(slice->sliceIndex()) : nullptr;
@@ -20730,6 +20798,13 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     connect(m_connection, &RadioConnection::iqDataReceived,
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
+    }, Qt::DirectConnection);
+    // 2026-10-22: the I/Q level log names an ADC overload reported in its
+    // interval. Lock-free on the ReceiverManager side, so it runs where the
+    // connection emits it.
+    connect(m_connection, &RadioConnection::adcOverflow,
+            this, [this](int adc) {
+        m_receiverManager->noteAdcOverflow(adc);
     }, Qt::DirectConnection);
     // One socket drain's I/Q goes to the DSP worker as one post per stream
     // (ReceiverManager::beginIqBatch). Both run on the connection thread.

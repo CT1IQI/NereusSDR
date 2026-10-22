@@ -104,6 +104,12 @@ boydsoftprez@gmail.com
 //                 while the caller runs ahead. One pointer test when none is
 //                 installed. By J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-22 - Slow noise-reduction call accounting (WdspNrCallStart,
+//                 WdspNrCallEnd, WdspNoteNrCallNs, TakeChannelSlowNrCalls):
+//                 xrxa times each of its two NR stage groups and counts the
+//                 calls over 50 ms per channel, for the Core log. Measures
+//                 only; NR behaviour is unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifndef _dsplock_h
@@ -225,6 +231,26 @@ PORT int GetChannelDspLoad (int channel, WdspChannelLoad* out);
 // sampler); a second caller would split its intervals. Returns -1 for an
 // invalid channel. Never takes csDSP.
 PORT long long TakeChannelDspIntervalMaxBlockUs (int channel);
+
+// Slow noise-reduction calls. xrxa (RXA.c) brackets each NR stage group
+// (anr, emnr, nnr, rnnr, sbnr at one position) with WdspNrCallStart and
+// WdspNrCallEnd; a call longer than kWdspSlowNrCallNs (50 ms) is counted for
+// the channel and raises the interval's longest. Two clock reads per group
+// per block; nothing else changes.
+long long WdspNrCallStart (void);
+void WdspNrCallEnd (int channel, long long startNs);
+
+// Records one NR call of elapsedNs on the channel (what WdspNrCallEnd does
+// with its own clock read); exported so a test can record one without a
+// slow NR stage. Invalid channels are ignored.
+PORT void WdspNoteNrCallNs (int channel, long long elapsedNs);
+
+// Takes the channel's slow NR calls since the previous take: *count calls
+// over 50 ms and *maxUs the longest of them (both 0 when none), and starts
+// the next interval. One periodic reader owns this (NereusSDR's RadioModel
+// load sampler). Returns 0, or -1 for an invalid channel or a null pointer.
+// Never takes csDSP.
+PORT int TakeChannelSlowNrCalls (int channel, long long* count, long long* maxUs);
 
 // Test-only: busy-wait this many microseconds inside the worker's locked
 // section on every block, to simulate an overloaded DSP chain. Default 0

@@ -80,6 +80,10 @@
 //                 if every attempt finds the lane mid-write. NereusSDR-original, by
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-22 - takeSlowNrCalls: the channel's noise-reduction calls over
+//                 50 ms since the previous take (dsplock.c), for the Core
+//                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -1216,6 +1220,13 @@ public:
     // periodic owner only: RadioModel's load sampler (a second caller would
     // split its intervals). Never waits for the worker.
     qint64 takeDspIntervalMaxBlockUs() const;
+
+    // The noise-reduction calls (WDSP's NR stage group at one position) over
+    // 50 ms since the previous call, and the longest of them in
+    // microseconds; starts the next interval. False (both 0) when the
+    // channel id is outside WDSP's range or WDSP is absent. One periodic
+    // owner only: RadioModel's load sampler. Never waits for the worker.
+    bool takeSlowNrCalls(qint64& count, qint64& maxUs) const;
 
     // --- Per-mode DSP-Options live-apply (Task 4.2) ---
     //
