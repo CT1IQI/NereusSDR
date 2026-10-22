@@ -116,6 +116,37 @@ struct LiveActivityShotTests {
         #expect(stale.count(Self.linkGreen, in: card) == 0, "no link time")
     }
 
+    /// The speaker's lit amber face (WorkspaceLook.litAmber, kAmberText on it).
+    static let mutedAmberMid = Pixel(0x33, 0x28, 0x0F)
+    /// Reconnect's glass face, between kGlassSelTop and kGlassSelBot.
+    static let glassMid = Pixel(0x27, 0x4E, 0x79)
+    /// The glass face's words, kGlassSelText.
+    static let glassText = Pixel(0xDB, 0xE9, 0xF8)
+
+    @Test("the lock-screen card: the speaker muted (lit amber) and Reconnect after Cancel (glass)")
+    func mutedAndReconnect() throws {
+        let size = CGSize(width: 402, height: 874)
+        let card = CGRect(x: 0, y: 560, width: 402, height: 314)
+        var mutedState = Self.listening()
+        mutedState.muted = true
+        let muted = try render("activity-lock-muted", LockScreen(state: mutedState), size: size)
+        let soundOn = try render("activity-lock-listening", LockScreen(state: Self.listening()), size: size)
+        #expect(muted.count(Self.mutedAmberMid, in: card, tolerance: 8) > 200, "the muted speaker is lit amber")
+        #expect(muted.count(Self.amber, in: card, tolerance: 16) > 20, "the speaker's glyph is kAmberText")
+        #expect(soundOn.count(Self.mutedAmberMid, in: card, tolerance: 8) == 0, "no lit amber with the sound on")
+        #expect(muted.count(Self.frequencyCyan, in: card) > 400)
+
+        var stopped = Self.lost(keyed: false)
+        stopped.retry = StationActivityAttributes.Retry(attempt: 4, at: nil, stopped: true)
+        let reconnect = try render("activity-lock-reconnect", LockScreen(state: stopped), size: size)
+        let cancel = try render("activity-lock-link-lost", LockScreen(state: Self.lost(keyed: false)), size: size)
+        #expect(reconnect.count(Self.glassMid, in: card, tolerance: 12) > 300, "Reconnect is the glass face")
+        #expect(reconnect.count(Self.glassText, in: card, tolerance: 16) > 20, "Reconnect's words are kGlassSelText")
+        #expect(cancel.count(Self.glassMid, in: card, tolerance: 12) == 0, "Cancel is not glass")
+        #expect(reconnect.count(Self.lostRed, in: card) > 300, "LINK LOST is still drawn")
+        #expect(reconnect.count(Self.unkeyRed, in: card) == 0)
+    }
+
     @Test("the lock-screen card stays under iOS's 160-point limit in every state")
     func cardHeight() {
         let states = [Self.listening(), Self.keyed, Self.lost(keyed: true),
