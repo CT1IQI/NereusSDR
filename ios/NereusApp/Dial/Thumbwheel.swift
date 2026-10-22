@@ -71,9 +71,9 @@ struct Thumbwheel: View {
                 .frame(width: 2)
                 .padding(.vertical, 4)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DialColours.stepBorder, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 6)) // kept-radius: thumbwheel
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DialColours.stepBorder, lineWidth: 1)) // kept-radius: thumbwheel
+        .contentShape(RoundedRectangle(cornerRadius: 6)) // kept-radius: thumbwheel
         .gesture(rolling)
         .onDisappear { spinner.halt() }
         .opacity(tuning.dialTunes ? 1 : 0.45)

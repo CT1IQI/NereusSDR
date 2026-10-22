@@ -17,7 +17,8 @@ carries is missing.
 WorkspaceColoursCheckTest covers scripts/verify-ios-workspace-colours.py,
 the navy check: it fails on an old navy chrome color written in an app
 view unless its KEPT table lists that file and value as a data color, and
-on a corner radius written as a number unless KEPT_RADII lists it (W11).
+on a corner radius written as a number unless a "// kept-radius: <tag>"
+marker on its line names a KEPT_RADII tag (W11).
 """
 
 from __future__ import annotations
@@ -350,27 +351,89 @@ class WorkspaceColoursCheckTest(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_kept_corner_passes_up_to_its_count(self) -> None:
-        bar = "context.fill(Path(roundedRect: bar, cornerRadius: 2), with: ground)\n"
-        kept = {(self.VIEW, "2"): (1, "meter bar")}
+    def test_uneven_corner_radius_fails(self) -> None:
+        text = ("VStack {}.background(fill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))\n"
+                "VStack {}.background(fill, in: UnevenRoundedRectangle(bottomLeadingRadius: 12,\n"
+                "                                                      bottomTrailingRadius: 12))\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={}), [
+                "FAIL " + self.VIEW + ":1: cornerRadius 14",
+                "FAIL " + self.VIEW + ":1: cornerRadius 14",
+                "FAIL " + self.VIEW + ":2: cornerRadius 12",
+                "FAIL " + self.VIEW + ":3: cornerRadius 12",
+            ])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL " + self.VIEW + ":1: cornerRadius 14", result.stdout)
+
+    def test_uneven_token_corner_passes(self) -> None:
+        text = ("VStack {}.background(fill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,\n"
+                "                                                      topTrailingRadius: WorkspacePalette.panelRadius))\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={}), [])
+
+    def test_corner_size_fails(self) -> None:
+        text = ("path.addRoundedRect(in: rect, cornerSize: CGSize(width: 3, height: 3))\n"
+                "path.addRoundedRect(in: rect, cornerSize: CGSize(width: 2.5, height: 2.5))\n"
+                "path.addRoundedRect(in: rect, cornerSize: CGSize(width: WorkspacePalette.chipRadius,\n"
+                "                                                 height: WorkspacePalette.chipRadius))\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={}), [
+                "FAIL " + self.VIEW + ":1: cornerRadius 3",
+                "FAIL " + self.VIEW + ":2: cornerRadius 2.5",
+            ])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL " + self.VIEW + ":1: cornerRadius 3", result.stdout)
+
+    def test_marked_corner_passes(self) -> None:
+        bar = "context.fill(Path(roundedRect: bar, cornerRadius: 2), with: ground) // kept-radius: meter\n"
         with tempfile.TemporaryDirectory() as folder:
             root = self.tree(folder, {self.VIEW: bar})
-            self.assertEqual(self.module.check(root, kept={}, kept_radii=kept), [])
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={"meter": "meter bar"}), [])
+
+    def test_unmarked_corner_beside_marked_ones_fails(self) -> None:
+        """N6: a wrong number cannot take a kept one's place in the same
+        file, whatever the count of kept ones."""
+        text = ("context.fill(Path(roundedRect: bar, cornerRadius: 2), with: ground) // kept-radius: meter\n"
+                "context.fill(Path(roundedRect: peak, cornerRadius: 2), with: ground) // kept-radius: meter\n"
+                "Text(\"Go\").background(fill, in: RoundedRectangle(cornerRadius: 2))\n")
         with tempfile.TemporaryDirectory() as folder:
-            root = self.tree(folder, {self.VIEW: bar + "Text(\"Go\").background(fill, in: RoundedRectangle(cornerRadius: 2))\n"})
-            self.assertEqual(self.module.check(root, kept={}, kept_radii=kept), [
-                "FAIL " + self.VIEW + ":1: cornerRadius 2",
-                "FAIL " + self.VIEW + ":2: cornerRadius 2",
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={"meter": "meter bar"}), [
+                "FAIL " + self.VIEW + ":3: cornerRadius 2",
+            ])
+            result = subprocess.run([sys.executable, str(COLOURS_SCRIPT), "--root", str(root)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL " + self.VIEW + ":3: cornerRadius 2", result.stdout)
+
+    def test_unknown_or_idle_marker_fails(self) -> None:
+        text = ("Text(\"Go\").background(fill, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: button\n"
+                "Text(\"Go\").background(fill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)) // kept-radius: meter\n")
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.tree(folder, {self.VIEW: text})
+            self.assertEqual(self.module.check(root, kept={}, kept_radii={"meter": "meter bar"}), [
+                "FAIL " + self.VIEW + ":1: kept-radius button is not a KEPT_RADII tag",
+                "FAIL " + self.VIEW + ":1: cornerRadius 4",
+                "FAIL " + self.VIEW + ":2: kept-radius meter keeps no number on its line",
             ])
 
-    def test_kept_radii_entries_match_the_tree(self) -> None:
-        for (path, value), (count, reason) in self.module.KEPT_RADII.items():
-            with self.subTest(path=path, value=value):
+    def test_kept_radii_tags_have_reasons_and_are_used(self) -> None:
+        used = set()
+        for path in self.module.scanned_files(PROJECT):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if self.module.marker(line):
+                    used.add(self.module.marker(line))
+        for tag, reason in self.module.KEPT_RADII.items():
+            with self.subTest(tag=tag):
                 self.assertTrue(reason.strip())
-                self.assertTrue((PROJECT / path).is_file(), path)
-                text = (PROJECT / path).read_text(encoding="utf-8")
-                found = [v for line in text.splitlines() for v in self.module.radii(line) if v == value]
-                self.assertEqual(len(found), count, "a KEPT_RADII count that no longer matches")
+                self.assertIn(tag, used, "a KEPT_RADII tag no marker in the tree names")
 
 
 if __name__ == "__main__":

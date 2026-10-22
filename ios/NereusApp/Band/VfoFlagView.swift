@@ -262,14 +262,14 @@ struct VfoFlagView: View {
         .padding(.horizontal, FlagMetrics.inset)
         .modifier(FlagFrame(grows: entry.rade?.wraps == true, height: height))
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { heightChanged?($0) })
-        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4))
+        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: flag
         .overlay {
             if entry.listening {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: 4) // kept-radius: flag
                     .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: Self.listenedDash))
                     .accessibilityHidden(true)
             } else {
-                RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1) // kept-radius: flag
             }
         }
         .overlay(alignment: .top) {
@@ -411,7 +411,7 @@ struct VfoFlagView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 3)
                         .frame(height: 18)
-                        .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 3))
+                        .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 3)) // kept-radius: flag
                         .accessibilityIdentifier("flagOnAir\(letter)")
                 } else {
                     Text("TX")
@@ -425,7 +425,7 @@ struct VfoFlagView: View {
             .modifier(OpenLine(lit: lit && !onAir, colour: Self.transmitOnLine))
             .overlay {
                 if txHint {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: 4) // kept-radius: flag
                         .strokeBorder(Self.hintRing, lineWidth: 2)
                         .padding(2)
                         .shadow(color: Self.hintRing.opacity(0.7), radius: 4)
@@ -513,7 +513,7 @@ struct VfoFlagView: View {
                     .minimumScaleFactor(0.7)
                     .padding(.horizontal, metrics.large ? 4 : 7)
                     .frame(width: metrics.takeWidth, height: FlagMetrics.ownerRow)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.takeEdge, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.takeEdge, lineWidth: 1)) // kept-radius: flag
                     .contentShape(Rectangle())
                     .opacity(refused || takeControl == nil ? Self.dimmed : 1)
             }
@@ -547,7 +547,7 @@ struct VfoFlagView: View {
                 .minimumScaleFactor(0.6)
                 .padding(.horizontal, 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(BandColours.frequencyBorder, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(BandColours.frequencyBorder, lineWidth: 1)) // kept-radius: flag
                 .contentShape(Rectangle())
                 .opacity(entry.listening ? Self.listened : 1)
         }

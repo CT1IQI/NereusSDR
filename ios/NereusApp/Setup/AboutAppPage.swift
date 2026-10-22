@@ -27,7 +27,7 @@ struct AboutAppPage: View {
                     Image("WelcomeMark")
                         .resizable()
                         .frame(width: 52, height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10)) // kept-radius: icon
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("NereusSDR").font(.title2.bold())

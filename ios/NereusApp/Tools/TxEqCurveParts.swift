@@ -238,7 +238,7 @@ enum TxEqCurveParts {
                             .foregroundStyle(TxEqCurveParts.bigText)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(TxEqCurveParts.plotGround.opacity(0.9), in: RoundedRectangle(cornerRadius: 4))
+                            .background(TxEqCurveParts.plotGround.opacity(0.9), in: RoundedRectangle(cornerRadius: 4)) // kept-radius: eq-plot
                             .position(x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2)
                             .accessibilityIdentifier("txEq.curveMissing")
                     }

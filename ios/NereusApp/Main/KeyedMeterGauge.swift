@@ -37,8 +37,8 @@ struct KeyedMeterGauge: View {
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {
         let bar = CGRect(x: 1, y: 1, width: max(0, size.width - 2), height: 14)
-        context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(ChromeColours.gaugeGround))
-        context.stroke(Path(roundedRect: bar.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
+        context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(ChromeColours.gaugeGround)) // kept-radius: meter
+        context.stroke(Path(roundedRect: bar.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: meter
                        with: .color(ChromeColours.gaugeBorder), lineWidth: 1)
         let inner = bar.insetBy(dx: 1, dy: 1)
         let yellow = sample.stage?.midAt ?? sample.linearPosition(sample.scale.yellowFrom)

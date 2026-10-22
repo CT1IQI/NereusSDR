@@ -20,7 +20,7 @@ struct ActivityBadge: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.white)
                 .frame(width: 18, height: 18)
-                .background(ActivityColours.slice(colour), in: RoundedRectangle(cornerRadius: 3))
+                .background(ActivityColours.slice(colour), in: RoundedRectangle(cornerRadius: 3)) // kept-radius: swatch
                 .accessibilityLabel("Slice \(letter)")
         case .tx:
             Text(ActivityWords.tx)

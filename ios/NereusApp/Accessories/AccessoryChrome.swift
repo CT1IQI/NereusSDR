@@ -305,13 +305,13 @@ enum AccessoryChrome {
                     .frame(width: 22, alignment: .leading)
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2).fill(ChromeColours.gaugeGround)
+                        RoundedRectangle(cornerRadius: 2).fill(ChromeColours.gaugeGround) // kept-radius: meter
                         if let value {
-                            RoundedRectangle(cornerRadius: 2)
+                            RoundedRectangle(cornerRadius: 2) // kept-radius: meter
                                 .fill(ChromeColours.gaugeNormal)
                                 .frame(width: proxy.size.width * CGFloat(min(max(value, 0), 255)) / 255)
                         }
-                        RoundedRectangle(cornerRadius: 2).strokeBorder(ChromeColours.gaugeBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 2).strokeBorder(ChromeColours.gaugeBorder, lineWidth: 1) // kept-radius: meter
                     }
                 }
                 .frame(height: 13)

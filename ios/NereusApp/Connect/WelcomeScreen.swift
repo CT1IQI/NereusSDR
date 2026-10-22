@@ -16,7 +16,7 @@ struct WelcomeScreen: View {
             Image("WelcomeMark")
                 .resizable()
                 .frame(width: 68, height: 68)
-                .clipShape(RoundedRectangle(cornerRadius: 15))
+                .clipShape(RoundedRectangle(cornerRadius: 15)) // kept-radius: icon
                 .accessibilityHidden(true)
             Text("NereusSDR")
                 .font(.system(size: 28, weight: .heavy))
@@ -68,14 +68,14 @@ private struct StationPicture: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
             part("Your radio", width: 48, height: 26) { size in
-                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 3)
+                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 3) // kept-radius: illustration
                 path.addEllipse(in: CGRect(x: size.width - 20, y: 6, width: 14, height: 14))
                 path.addRect(CGRect(x: 6, y: 7, width: 18, height: 6))
                 return path
             }
             link
             part("The Core", width: 48, height: 22) { size in
-                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 3)
+                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 3) // kept-radius: illustration
                 path.addEllipse(in: CGRect(x: 8, y: size.height / 2 - 2, width: 4, height: 4))
                 path.move(to: CGPoint(x: 18, y: size.height / 2))
                 path.addLine(to: CGPoint(x: size.width - 8, y: size.height / 2))
@@ -83,7 +83,7 @@ private struct StationPicture: View {
             }
             link
             part("This phone", width: 24, height: 40) { size in
-                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 5)
+                var path = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 5) // kept-radius: illustration
                 path.move(to: CGPoint(x: 5, y: 26))
                 path.addLine(to: CGPoint(x: 9, y: 18))
                 path.addLine(to: CGPoint(x: 13, y: 24))

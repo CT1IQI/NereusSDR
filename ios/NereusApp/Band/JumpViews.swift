@@ -325,9 +325,9 @@ struct EdgeMarker: View {
         }
         .padding(.horizontal, 8)
         .frame(height: FlagLayout.foldedHeight)
-        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4))
+        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: edge-marker
         .overlay {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 4) // kept-radius: edge-marker
                 .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.listening ? [4, 3] : []))
         }
         .contentShape(Rectangle())
@@ -355,9 +355,9 @@ struct EdgeMarker: View {
         }
         .padding(.horizontal, 8)
         .frame(minHeight: large ? EdgeMarkers.largeHeight : EdgeMarkers.height)
-        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4))
+        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: edge-marker
         .overlay {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 4) // kept-radius: edge-marker
                 .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.listening ? [4, 3] : []))
         }
         .contentShape(Rectangle())

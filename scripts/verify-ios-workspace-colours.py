@@ -30,12 +30,21 @@ It also refuses a corner radius written as a number (W11: buttons, chips
 and fields round at WorkspacePalette.chipRadius, 7; panels at panelRadius,
 10): cornerRadius: 4, .cornerRadius(4), cornerRadius = 4, and a numeric
 radius: given to WorkspaceFace, WorkspaceButtonStyle, workspacePanel or
-workspaceInset, printing "FAIL <file>:<line>: cornerRadius <n>". The
-instruments that keep their own corners (meter bars and gauges, Canvas
-meter drawings, slice color swatches, the app icon clip, the Live
-Activity's 24 point card, the VFO flag, the spectrum's spot labels) are
-listed in KEPT_RADII by file and value, with how many times the value
-may appear there and the reason.
+workspaceInset, a numeric top or bottom, leading or trailing radius
+(UnevenRoundedRectangle(topLeadingRadius: 14, ...)), and a rounded path's
+cornerSize: CGSize(width: 3, ...), printing
+"FAIL <file>:<line>: cornerRadius <n>". The instruments that keep their
+own corners (meter bars and gauges, Canvas meter drawings, slice color
+swatches, the app icon clip, the Live Activity's 24 point card, the VFO
+flag, the spectrum's spot labels) carry a marker on the line that holds
+the number,
+
+    ... cornerRadius: 2) // kept-radius: meter
+
+whose tag KEPT_RADII lists with its reason. A marker covers only its own
+line, so a wrong number elsewhere in the same file cannot take a kept
+one's place. A marker whose tag KEPT_RADII does not list, or on a line
+with no number to keep, fails too.
 
 Usage:
   python3 scripts/verify-ios-workspace-colours.py [--root REPO_ROOT]
@@ -119,49 +128,34 @@ KEPT: Dict[Tuple[str, str], str] = {
     ("ios/NereusApp/Tools/ConnectionPerformanceCatalog.swift", "#ff6060"): _GRAPH,
 }
 
-_METER = "meter bar or gauge (W11: instruments keep their own corners)"
-_CANVAS = "Canvas meter drawing (W11)"
-_SWATCH = "slice color swatch (W11)"
-_ICON = "the app icon clip (W11)"
-_FLAG = "the VFO flag keeps its own shape (W11)"
-# Corners kept on purpose: (path under the repository root, the number as
-# written) -> (how many times it may appear in that file, reason).
-KEPT_RADII: Dict[Tuple[str, str], Tuple[int, str]] = {
-    ("ios/NereusApp/Accessories/AccessoryChrome.swift", "2"): (3, _METER),
-    ("ios/NereusApp/Main/KeyedMeterGauge.swift", "2"): (2, _METER),
-    ("ios/NereusApp/Main/LinearGauge.swift", "2"): (2, _METER),
-    ("ios/NereusApp/Main/TxStageMeters.swift", "2"): (2, _METER),
-    ("ios/NereusApp/Modes/TransmitSection.swift", "3"): (2, "the CFC bars' greyed meter place (W11)"),
-    ("ios/NereusApp/Tools/PureSignalPage.swift", "3"): (2, _METER),
-    ("ios/NereusApp/Tools/VaxAudioPage.swift", "3"): (3, _METER),
-    ("ios/NereusApp/Main/ModMonitorView.swift", "2"): (3, _CANVAS),
-    ("ios/NereusApp/Main/ModMonitorView.swift", "6"): (1, _CANVAS),
-    ("ios/NereusApp/Main/PanelGlyph.swift", "2"): (1, "a glyph drawn in a Canvas (W11)"),
-    ("ios/NereusApp/Dial/Knob.swift", "2"): (1, "the knob's index mark, an instrument (W11)"),
-    ("ios/NereusApp/Dial/Thumbwheel.swift", "6"): (3, "the drawn thumbwheel, an instrument like the knob (W11)"),
-    ("ios/NereusApp/Tools/TxEqCurveParts.swift", "4"): (1, "a label drawn inside the TX EQ plot (W11)"),
-    ("ios/NereusApp/Spots/SpotLayer.swift", "3"): (2, "spot labels on the spectrum (W11: spectrum drawing)"),
-    ("ios/NereusApp/Band/SliceLetterBadge.swift", "3"): (1, _SWATCH),
-    ("ios/NereusApp/Main/SliceListSheet.swift", "2"): (1, _SWATCH),
-    ("ios/NereusApp/Setup/DevicesPage.swift", "2"): (1, _SWATCH),
-    ("ios/Shared/Activity/ActivityBadge.swift", "3"): (1, _SWATCH),
-    ("ios/NereusApp/Connect/WelcomeScreen.swift", "15"): (1, _ICON),
-    ("ios/NereusApp/Setup/AboutAppPage.swift", "10"): (1, _ICON),
-    ("ios/Shared/Activity/ActivityAppIcon.swift", "6"): (1, _ICON),
-    ("ios/NereusApp/Connect/WelcomeScreen.swift", "3"): (2, "the station picture, an illustration (W11)"),
-    ("ios/NereusApp/Connect/WelcomeScreen.swift", "5"): (1, "the station picture, an illustration (W11)"),
-    ("ios/Shared/Activity/ActivityCard.swift", "24"): (2, "the Live Activity card's 24 point corner is Apple's (spec 8)"),
-    ("ios/NereusApp/Band/VfoFlagView.swift", "4"): (4, _FLAG),
-    ("ios/NereusApp/Band/VfoFlagView.swift", "3"): (2, _FLAG),
-    ("ios/NereusApp/Band/VfoFlagView.swift", "6"): (1, _FLAG),
-    ("ios/NereusApp/Band/FoldedTagView.swift", "4"): (2, _FLAG),
-    ("ios/NereusApp/Band/JumpViews.swift", "4"): (4, "the edge markers, drawn as the folded flag (W11)"),
+# Corners kept on purpose: the tag a "// kept-radius: <tag>" marker names
+# on the line that holds the number -> the reason.
+KEPT_RADII: Dict[str, str] = {
+    "meter": "meter bar or gauge (W11: instruments keep their own corners)",
+    "canvas": "Canvas meter drawing (W11)",
+    "glyph": "a glyph drawn in a Canvas or path (W11)",
+    "knob": "the knob's index mark, an instrument (W11)",
+    "thumbwheel": "the drawn thumbwheel, an instrument like the knob (W11)",
+    "cfc-bars": "the CFC bars' greyed meter place (W11)",
+    "eq-plot": "a label drawn inside the TX EQ plot (W11)",
+    "spot-label": "spot labels on the spectrum (W11: spectrum drawing)",
+    "swatch": "slice color swatch (W11)",
+    "icon": "the app icon clip (W11)",
+    "illustration": "the station picture, an illustration (W11)",
+    "live-activity": "the Live Activity card's 24 point corner is Apple's (spec 8)",
+    "flag": "the VFO flag keeps its own shape (W11)",
+    "edge-marker": "the edge markers, drawn as the folded flag (W11)",
 }
+
+# The marker that keeps the numbers on its line.
+MARKER_RE = re.compile(r"//\s*kept-radius:\s*([A-Za-z0-9-]+)")
 
 # A corner radius written as a number.
 RADIUS_RE = re.compile(
     r"\bcornerRadius\s*(?::|\(|=)\s*(\d+(?:\.\d+)?)\b"
     r"|\b(?:WorkspaceFace|WorkspaceButtonStyle|workspacePanel|workspaceInset)\([^)]*?\bradius:\s*(\d+(?:\.\d+)?)\b"
+    r"|\b(?:top|bottom)(?:Leading|Trailing)Radius:\s*(\d+(?:\.\d+)?)\b"
+    r"|\bcornerSize:\s*CGSize\(\s*width:\s*(\d+(?:\.\d+)?)\b"
 )
 
 HEX_RE = re.compile(
@@ -240,34 +234,43 @@ def scanned_files(root: Path) -> List[Path]:
 
 def radii(line: str) -> List[str]:
     """The corner radii written as numbers on a line, as written ("4", "2.5")."""
-    return [match.group(1) or match.group(2) for match in RADIUS_RE.finditer(line)]
+    return [next(group for group in match.groups() if group) for match in RADIUS_RE.finditer(line)]
+
+
+def marker(line: str) -> str:
+    """The tag of the line's "// kept-radius: <tag>" marker, or "" when it has none."""
+    match = MARKER_RE.search(line)
+    return match.group(1) if match else ""
 
 
 def check(root: Path, kept: Dict[Tuple[str, str], str] = KEPT,
-          kept_radii: Dict[Tuple[str, str], Tuple[int, str]] = KEPT_RADII) -> List[str]:
+          kept_radii: Dict[str, str] = KEPT_RADII) -> List[str]:
     """One "FAIL <file>:<line>: <hex>" line per navy chrome color, one
     "FAIL <file>:<line>: <what>" line per use of the system blue, and one
     "FAIL <file>:<line>: cornerRadius <n>" line per corner written as a
-    number that KEPT_RADII does not cover. When a file holds more of a kept
-    value than its entry allows, every one of them is reported."""
+    number on a line without a "// kept-radius: <tag>" marker whose tag
+    kept_radii lists. A marker with a tag kept_radii does not list, or on a
+    line with no number to keep, is reported as well."""
     findings: List[str] = []
     for path in scanned_files(root):
         shown = path.relative_to(root).as_posix()
         lines = path.read_text(encoding="utf-8").splitlines()
-        corners: Dict[str, List[int]] = {}
         for number, line in enumerate(lines, 1):
+            where = "FAIL " + shown + ":" + str(number) + ": "
             for value in colours(line):
                 if value in NAVY and (shown, value) not in kept:
-                    findings.append("FAIL " + shown + ":" + str(number) + ": " + value)
+                    findings.append(where + value)
             for what in system_blue(line):
-                findings.append("FAIL " + shown + ":" + str(number) + ": " + what)
-            for value in radii(line):
-                corners.setdefault(value, []).append(number)
-        for value, numbers in corners.items():
-            allowed = kept_radii.get((shown, value), (0, ""))[0]
-            if len(numbers) > allowed:
-                for number in numbers:
-                    findings.append("FAIL " + shown + ":" + str(number) + ": cornerRadius " + value)
+                findings.append(where + what)
+            tag = marker(line)
+            found = radii(line)
+            if tag and tag not in kept_radii:
+                findings.append(where + "kept-radius " + tag + " is not a KEPT_RADII tag")
+            elif tag and not found:
+                findings.append(where + "kept-radius " + tag + " keeps no number on its line")
+            if not tag or tag not in kept_radii:
+                for value in found:
+                    findings.append(where + "cornerRadius " + value)
     return findings
 
 
@@ -285,7 +288,8 @@ def main() -> int:
               " color in KEPT with its reason; draw a button in a workspace style and"
               " a mark in a WorkspacePalette token, never the system blue; round a"
               " control at WorkspacePalette.chipRadius and a panel at panelRadius, or"
-              " list an instrument's corner in KEPT_RADII with its reason")
+              " mark an instrument's corner with a \"// kept-radius: <tag>\" comment"
+              " whose tag KEPT_RADII lists")
         return 1
     print("ios/ chrome is in the workspace look")
     return 0

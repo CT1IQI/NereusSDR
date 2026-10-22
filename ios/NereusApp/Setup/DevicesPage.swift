@@ -185,7 +185,7 @@ struct DevicesPage: View {
                         .font(.system(size: 10, weight: .heavy))
                         .foregroundStyle(Color.black)
                         .frame(width: 14, height: 14)
-                        .background(BandColours.slice(slice.colour), in: RoundedRectangle(cornerRadius: 2))
+                        .background(BandColours.slice(slice.colour), in: RoundedRectangle(cornerRadius: 2)) // kept-radius: swatch
                         .accessibilityLabel("Slice \(slice.letter)")
                     if !slice.band.isEmpty {
                         Text(slice.band)

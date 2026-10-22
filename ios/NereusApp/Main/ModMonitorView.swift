@@ -476,7 +476,7 @@ struct ModMonitorPeakBar: View {
                     context.fill(Path(CGRect(x: at - 1, y: 0, width: 2, height: size.height)), with: .color(.white))
                 }
                 context.stroke(Path(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5),
-                                    cornerRadius: 2), with: .color(ChromeColours.insetBorder), lineWidth: 1)
+                                    cornerRadius: 2), with: .color(ChromeColours.insetBorder), lineWidth: 1) // kept-radius: canvas
             }
             .frame(height: height)
             GeometryReader { proxy in
@@ -531,7 +531,7 @@ struct ModMonitorScope: View {
             } else {
                 drawTrace(context, rect)
             }
-            context.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
+            context.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: canvas
                            with: .color(vintage ? ChromeColours.iconMuted : ChromeColours.insetBorder), lineWidth: 1)
         }
     }
@@ -671,7 +671,7 @@ struct ModMeterDial: View {
             }
             let ink = Color(red: 0x1A / 255, green: 0x1A / 255, blue: 0x1A / 255)
             let red = Color(red: 0xC0 / 255, green: 0x20 / 255, blue: 0x20 / 255)
-            let face = Path(roundedRect: CGRect(x: 1, y: 1, width: 126, height: 94), cornerRadius: 6)
+            let face = Path(roundedRect: CGRect(x: 1, y: 1, width: 126, height: 94), cornerRadius: 6) // kept-radius: canvas
             context.fill(face, with: .color(lit ? Color(red: 0xF3 / 255, green: 0xE2 / 255, blue: 0xB0 / 255)
                                             : Color(red: 0x3A / 255, green: 0x34 / 255, blue: 0x26 / 255)))
             context.stroke(face, with: .color(lit ? Color(red: 0xB0 / 255, green: 0x8A / 255, blue: 0x40 / 255)
@@ -735,7 +735,7 @@ struct ModMonitorAsymmetryBar: View {
             let label = ChromeColours.textDim
             context.draw(Text("Pos").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 5))
             context.draw(Text("Neg").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 91))
-            let track = Path(roundedRect: CGRect(x: 6, y: 10, width: 10, height: 76), cornerRadius: 2)
+            let track = Path(roundedRect: CGRect(x: 6, y: 10, width: 10, height: 76), cornerRadius: 2) // kept-radius: canvas
             context.fill(track, with: .color(ChromeColours.inset))
             context.stroke(track, with: .color(ChromeColours.insetBorder), lineWidth: 1)
             var zero = Path()

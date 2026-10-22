@@ -41,12 +41,12 @@ struct ActivityCard: View {
         .background {
             // The panel's top laid over iOS's tint, which carries its bottom.
             if !state.keyed {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 24, style: .continuous) // kept-radius: live-activity
                     .fill(LinearGradient(colors: [ActivityColours.cardLift, ActivityColours.cardLift.opacity(0)],
                                          startPoint: .top, endPoint: .bottom))
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(edge, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(edge, lineWidth: 1)) // kept-radius: live-activity
     }
 
     /// The card's color under it (iOS's tint): the panel, or the TX badge's red while keyed.

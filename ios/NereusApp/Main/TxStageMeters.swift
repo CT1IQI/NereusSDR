@@ -266,13 +266,13 @@ private struct TxStageRow: View {
     private func drawTrack(in context: inout GraphicsContext, size: CGSize) {
         let track = CGRect(origin: .zero, size: size)
         let midX = track.width * stage.midAt
-        let shape = Path(roundedRect: track, cornerRadius: 2)
+        let shape = Path(roundedRect: track, cornerRadius: 2) // kept-radius: meter
         context.fill(shape, with: .color(ChromeColours.gaugeGround))
         var red = context
         red.clip(to: shape)
         red.fill(Path(CGRect(x: midX, y: 0, width: track.width - midX, height: track.height)),
                  with: .color(TxStageRow.redGround))
-        context.stroke(Path(roundedRect: track.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
+        context.stroke(Path(roundedRect: track.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: meter
                        with: .color(ChromeColours.gaugeBorder), lineWidth: 1)
         let inner = track.insetBy(dx: 1, dy: 1)
         if let reading {

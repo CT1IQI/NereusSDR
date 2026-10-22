@@ -422,7 +422,7 @@ private struct SliceListRow: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2).fill(colour).frame(width: 3).padding(.vertical, 8)
+            RoundedRectangle(cornerRadius: 2).fill(colour).frame(width: 3).padding(.vertical, 8) // kept-radius: swatch
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sliceListSlice\(row.letter)")
