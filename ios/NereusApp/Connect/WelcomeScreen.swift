@@ -58,6 +58,7 @@ struct WelcomeScreen: View {
         )
         .sheet(isPresented: $showingAbout) {
             NavigationStack { AboutAppPage(showsDone: true) }
+                .workspacePresentationRoot()
         }
     }
 }

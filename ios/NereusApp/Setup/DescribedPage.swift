@@ -262,6 +262,7 @@ struct DisplayV29Presentation: ViewModifier {
         content
             .sheet(item: $model.gradientEditor) { editor in
                 DisplayGradientEditor(main: main, band: main.band, editor: editor)
+                    .workspacePresentationRoot()
             }
             .fileImporter(isPresented: $model.choosingBackgroundPicture,
                           allowedContentTypes: [.png, .jpeg, .bmp]) { result in

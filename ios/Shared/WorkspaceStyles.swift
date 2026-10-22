@@ -213,6 +213,16 @@ struct WorkspaceSwitchStyle: ToggleStyle {
 }
 
 extension View {
+    /// The root of everything presented: the app's root, and the content of
+    /// every sheet, popover and full-screen cover, which do not inherit the
+    /// root's environment. Every switch draws as the workspace switch (W7),
+    /// and the workspace accent is the tint, so a control that reads the
+    /// tint never falls back to the system blue (W6).
+    func workspacePresentationRoot() -> some View {
+        toggleStyle(WorkspaceSwitchStyle())
+            .tint(WorkspacePalette.accentFill)
+    }
+
     /// A panel: kGlassPanelTop to kGlassPanelBot, rim kBorder, radius 10
     /// (WorkspacePalette.h:348-350, :369).
     func workspacePanel(radius: CGFloat = WorkspacePalette.panelRadius) -> some View {

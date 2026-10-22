@@ -90,6 +90,7 @@ struct DevicesPage: View {
         }
         .sheet(isPresented: $showingBackup) {
             KeyBackupSheet(model: model) { showingBackup = false }
+                .workspacePresentationRoot()
                 .presentationDetents([.medium, .large])
                 .preferredColorScheme(.dark)
         }

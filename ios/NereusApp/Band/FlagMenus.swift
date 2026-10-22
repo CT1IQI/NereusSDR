@@ -684,6 +684,7 @@ struct FlagDiversitySheet: ViewModifier {
                     }
                 }
             }
+            .workspacePresentationRoot()
         }
     }
 }

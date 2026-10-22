@@ -57,6 +57,7 @@ struct ModMonitorView: View {
         .onDisappear { model.disappear() }
         .sheet(isPresented: $settingsOpen) {
             ModMonitorSettingsSheet(model: model)
+                .workspacePresentationRoot()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("AM Mod Monitor")

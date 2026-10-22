@@ -229,6 +229,7 @@ struct Toolbar: View {
         .buttonStyle(.plain)
         .popover(isPresented: $soundPanelOpen, arrowEdge: .top) {
             SoundPanel(app: app)
+                .workspacePresentationRoot()
                 .presentationCompactAdaptation(.popover)
                 .presentationBackground(SoundPanel.background)
                 .preferredColorScheme(.dark)

@@ -97,7 +97,6 @@ struct SoundPanel: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Self.rowText)
             }
-            .tint(ChromeColours.accent)
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
             .accessibilityIdentifier("soundMute")
@@ -257,7 +256,6 @@ private struct SoundPanelCoreSpeaker: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(SoundPanel.rowText)
                     }
-                    .tint(ChromeColours.accent)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 44)
                     .opacity(speaker.isEnabled ? 1 : SoundPanel.greyed)
