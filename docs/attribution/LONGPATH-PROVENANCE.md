@@ -15,10 +15,10 @@ License section below.
 |---|---|
 | Project | Longpath |
 | Repository | https://github.com/oe5sos/Longpath |
-| Revision | 551576e30c42731c6d51ce005c5f23ec38be391c (v0.6.7-1) |
+| Revision | 383f058991e9f6a2f5fdc8575a6476b530ab6081 (v0.8.0) |
 | Lineage | a fork of NereusSDR, renamed; rotor work since 2026-08-07 |
 | Primary author | Martin Fischer (OE5SOS) |
-| Local reference clone | `../Longpath/`, pinned at `551576e`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
+| Local reference clone | `../Longpath/`, pinned at `383f0589`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
 | Language | C++20 / Qt6 |
 | License | GPLv3 at project level (the project's LICENSE file) |
 
@@ -123,6 +123,9 @@ Derivation type:
 | `src/core/RadioDiscovery.cpp` | `src/core/RadioDiscovery.cpp` | 656-697 (`quietPollAttempt()`) at `@988fa77e` and `@2e967e3f`; 733-1018 (`scanAllNics()` to `finishScan()`) at `@279ab925` | `reference` | The NIC walk runs from the event loop instead of blocking in waitForReadyRead (Longpath PR 251, `279ab925`); the quiet-poll counter no longer resets on a readable poll, as Thetis (PR 10, `2e967e3f`); an attempt has a hard deadline (PR 9, `988fa77e`). Written for NereusSDR's structure: a poll window restarts on each readable event (Thetis's next Poll), the deadline has its own timer at 2 quiet budgets (Longpath: one extra poll window, checked per tick), a start during a walk joins it, test NIC and timing seams. Longpath's MainWindow change (PR 9) not taken. Date: 2026-10-22. |
 | `src/core/RadioDiscovery.h` | `src/core/RadioDiscovery.h` | 349-442 (the walk's state) at `@279ab925` | `reference` | Walk state members and the step functions; `ScanNic` and `ScanStats` are NereusSDR's. Date: 2026-10-22. |
 | `tests/tst_radio_discovery_probe.cpp` | `tests/tst_radio_discovery_scan_bound.cpp`; `tests/tst_suche_blockiert_den_start.cpp` | scan_bound 1-378 at `@1ca46ba2`; suche_blockiert 1-166 at `@279ab925` | `reference` | The flood, the frozen counter and the not-blocking cases, checked by counts rather than milliseconds (PR 267, `1ca46ba2`). NereusSDR's tests drive the real walk over a loopback fake radio; Longpath's drove the extracted loop. Date: 2026-10-22. |
+| `src/models/RadioModel.cpp` | `src/models/RadioModel.cpp` | 13736-13747 (`setConnectionState()`) | `port` | The connection's sample rate and active RX count are cleared only on Disconnected, so a Probing or Connecting state queued after `connectToRadio()` keeps them (Longpath PR 37, `fd894ded`). The uptime clearing on every state other than Connected stays as it was. Longpath banner copied. Date: 2026-10-22. |
+| `src/models/RadioModel.h` | `src/models/RadioModel.h` | 1685-1690 (`setConnectionRateForTest()`) | `port` | Test seam standing in for the `connectToRadio()` write (Longpath PR 37, `fd894ded`). Longpath banner copied. Date: 2026-10-22. |
+| `tests/tst_sample_rate_live_apply.cpp` | `tests/tst_sample_rate_live_apply.cpp` | 1-24 (banner), 126-156 (`stored_rate_survives_probing_and_connecting`) | `port` | The case verbatim, comments kept (Longpath PR 37, `fd894ded`). Date: 2026-10-22. |
 
 NereusSDR-original files that use the palette but port nothing
 (QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h,

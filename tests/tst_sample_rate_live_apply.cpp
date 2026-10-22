@@ -21,6 +21,39 @@
 // The "under glitch budget" test is vacuously satisfied in the unconnected
 // case; the full timing path is verified by the integration bench when
 // a real ANAN-G2 is attached (see Task 1.8).
+//
+// Modification history (NereusSDR):
+//   2026-10-22 - stored_rate_survives_probing_and_connecting, ported from
+//                Longpath PR 37 (fd894ded, Martin Fischer OE5SOS) by J.J.
+//                Boyd (KG4VCF), with AI-assisted transformation via Claude
+//                Code.
+// =================================================================
+
+// --- From tst_sample_rate_live_apply.cpp (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte.
+// =================================================================
+// tests/tst_sample_rate_live_apply.cpp  (Longpath)
+// =================================================================
+// no-port-check: Longpath-original test infrastructure; the Thetis filename
+// reference below is a comment-only provenance note, not a code port.
+//
+// Longpath-original infrastructure — no Thetis source ported here.
+// RadioModel::setSampleRateLive() is a Longpath coordinator; the P1
+// restart it delegates to mirrors the onReconnectTimeout() sequence
+// from P1RadioConnection (itself ported from
+// ChannelMaster/networkproto1.c SendStopToMetis/SendStartToMetis [v2.10.3.13]).
+//
+// Test scope (Task 1.6):
+//   changes_rate_without_dropping_channel —
+//       guards: unconnected → returns -1, idempotent same-rate → returns 0.
+//   rebuild_completes_under_glitch_budget —
+//       with no WDSP session the coordinator returns -1 from the guard
+//       before any of the 8 steps execute; elapsed is always < 200 ms.
+//
+// Both tests run without a live WDSP session or radio connection.
+// The "under glitch budget" test is vacuously satisfied in the unconnected
+// case; the full timing path is verified by the integration bench when
+// a real ANAN-G2 is attached (see Task 1.8).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -121,6 +154,39 @@ private slots:
         radio.setSampleRateLive(0);  // same as m_connectionSampleRateHz{0}
 
         QCOMPARE(spy.count(), 0);
+    }
+
+    // From Longpath tests/tst_sample_rate_live_apply.cpp:126-156 [@383f058]
+    // ── The stored rate survives Probing/Connecting ─────────────────────────
+    //
+    // connectToRadio() writes the wire rate and the active-RX count, then
+    // the worker thread reports Probing → Connecting → Connected one event-
+    // loop turn later. Until 2026-09-21 every non-Connected state cleared
+    // both fields, so the write was undone before Connected ever arrived:
+    // the model reported rate 0 and rx2Enabled()==false for the whole
+    // session (HL2 simulator bench). The idempotent guard of
+    // setSampleRateLive() is the probe here: it returns 0 exactly when the
+    // requested rate equals the stored one, and -1 otherwise (no radio).
+    void stored_rate_survives_probing_and_connecting()
+    {
+        RadioModel radio;
+        radio.setConnectionRateForTest(192000, 2);
+
+        radio.setConnectionStateForTest(ConnectionState::Probing);
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+        QCOMPARE(radio.setSampleRateLive(192000), qint64(0));
+        QVERIFY(radio.rx2Enabled());
+
+        // A lost link may come back; it is not a teardown.
+        radio.setConnectionStateForTest(ConnectionState::LinkLost);
+        QCOMPARE(radio.setSampleRateLive(192000), qint64(0));
+        QVERIFY(radio.rx2Enabled());
+
+        // Only Disconnected clears the pair.
+        radio.setConnectionStateForTest(ConnectionState::Disconnected);
+        QCOMPARE(radio.setSampleRateLive(0), qint64(0));
+        QVERIFY(!radio.rx2Enabled());
     }
 };
 
