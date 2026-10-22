@@ -1,5 +1,10 @@
 // Modification history (NereusSDR):
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 pan's waterfall scrolls by a steady row clock read each
+//                 frame; its rows are handed over early with the time each
+//                 is due and go in on a grid locked to those due times
+//                 (RemoteWaterfallRowClock).
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
 //                 pan's waterfall ticks and glides at the Core's row period.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -425,6 +430,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/ImdMeasurementPresenter.h"
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/RemoteSpectrumCapture.h"
+#include "gui/spectrum/RemoteWaterfallRowClock.h"
 #include "gui/NereusGuiExport.h"
 
 #include <QElapsedTimer>
@@ -446,6 +452,7 @@ mw0lge@grange-lane.co.uk
 #include <QPropertyAnimation>
 
 #include <functional>
+#include <deque>
 #include <optional>
 #include <QStringList>
 
@@ -700,9 +707,11 @@ public:
     };
     RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
+    /// queueRow false: the frame's waterfall row is not queued (it was
+    /// handed over early with its due time); the trace is drawn as ever.
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture,
-                              bool measurementCurrent = true);
+                              bool measurementCurrent = true, bool queueRow = true);
     /// R-R3-21 / R-R3-08: one remote waterfall row, captured at centreHz and
     /// spanHz, queued for the ticker without touching the trace: a gap row
     /// (blended or repeated) or a row presented after its pan was tuned. It
@@ -714,6 +723,22 @@ public:
     bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
                                    const QVector<float>& wideDbm,
                                    const NereusSDR::RemoteSpectrumCapture& capture);
+    /// A row handed over before it is due: dueInNs from now (negative when
+    /// already past), on the caller's clock, so the caller's clock and this
+    /// widget's need not be the same. The row clock slides it in by then.
+    /// frameEncoderSequence: the row is a decoded frame's own row (its
+    /// trace is drawn at the due time by updateRemoteSpectrum with
+    /// queueRow false), not a synthesized one. The rows queued without a
+    /// due time (the overloads above) are due when queued.
+    bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
+                                   const QVector<float>& wideDbm,
+                                   const NereusSDR::RemoteSpectrumCapture& capture,
+                                   qint64 dueInNs,
+                                   std::optional<quint32> frameEncoderSequence = std::nullopt);
+    /// Forget the rows handed over early that are not due yet (the
+    /// presenter forgot their items: a key, a new context, a teardown).
+    /// Returns how many were forgotten.
+    int forgetEarlyRemoteRows();
     /// Rows the ticker has not drawn yet; beyond this the oldest is dropped.
     static constexpr int kMaxRemoteRowQueue = 32;
     /// R-R3-21: a remote trace captured at centreHz and spanHz, drawn on the
@@ -1432,6 +1457,13 @@ public:
     qint64 waterfallTickerPeriodNsForTest() const;
     double waterfallRowPeriodMsForTest() const { return waterfallRowPeriodMs(); }
     void tickWaterfallForTest() { onWaterfallTick(); }
+    // The remote row clock run by hand, at a time of the test's choosing.
+    void setRemoteRowNowNsForTest(qint64 ns) { m_remoteRowNowNsForTest = ns; }
+    void pumpRemoteWaterfallForTest() { pumpRemoteWaterfallRows(); }
+    const RemoteWaterfallRowClock& remoteRowClockForTest() const { return m_remoteRowClock; }
+    qint64 remoteRowNowNsForTest() const { return remoteRowNowNs(); }
+    // When the queued row at index is due, on remoteRowNowNs()'s clock.
+    qint64 remoteRowDueNsForTest(int index) const { return m_remoteRowQueue.at(index).dueNs; }
     // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
     const QImage& liveWaterfallForTest() const { return m_waterfall; }
@@ -3273,6 +3305,10 @@ private:
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
                            bool imdEligible = false, quint64 acceptedOrdinal = 0);
+    // The IMD correction edge's annotation on history row rowSequence, if
+    // that row is the first eligible one accepted after the edge.
+    void  recordImdAnnotationForRow(quint64 rowSequence, bool imdEligible,
+                                    quint64 acceptedOrdinal);
     int   historyRowIndexForAge(int ageRows) const;
     std::optional<qreal> imdEventY(quint64 sequence, qreal glideRows) const;
     QString pausedTimeLabelForAge(int ageRows) const;
@@ -3818,7 +3854,25 @@ private:
         NereusSDR::RemoteSpectrumCapture capture;
         WaterfallRowDiagnostics diagnostics;
         quint64 imdAcceptedOrdinal{0};
+        // When the row was queued and when it is due on screen, on
+        // remoteRowNowNs()'s clock. A row queued with no due time is due
+        // when queued.
+        qint64 queuedNs{0};
+        qint64 dueNs{0};
+        // Handed over before it was due (enqueueRemoteWaterfallRow with a
+        // due time): forgotten with the presenter's items.
+        bool handedEarly{false};
     };
+    // An early frame row goes in about a row period before its trace is
+    // accepted for IMD: the history row each one wrote, by its encoder
+    // sequence, so the acceptance can tag it (attachImdOrdinalToEarlyRow).
+    struct ImdEarlyHistoryRow {
+        quint32 encoderSequence{0};
+        quint64 rowSequence{0};
+    };
+    std::deque<ImdEarlyHistoryRow> m_imdEarlyHistoryRows;
+    static constexpr int kMaxImdEarlyHistoryRows = 16;
+    void attachImdOrdinalToEarlyRow(quint32 encoderSequence, quint64 acceptedOrdinal);
     QList<RemoteWaterfallRow> m_remoteRowQueue;
     quint64 m_remoteRowsDropped{0};
     quint64 m_remoteRowsPushed{0};
@@ -3828,6 +3882,19 @@ private:
     float m_wfGlideRowsForTest{-1.0f};
     void onWaterfallTick();
     void drainRemoteWaterfallRows();
+    // Put the queue's oldest rows into the waterfall, at most rows of them.
+    void putRemoteWaterfallRows(int rows);
+    // The remote row clock: advance it to now and put in the rows it says
+    // are due. Run on every frame the pan draws and on every ticker tick.
+    void pumpRemoteWaterfallRows();
+    // The steady clock the remote rows are queued and put in by, in ns.
+    qint64 remoteRowNowNs() const;
+    // A remote pan's waterfall scrolls by this clock, at the Core's row
+    // period, on a grid locked to the rows' due times
+    // (RemoteWaterfallRowClock.h).
+    RemoteWaterfallRowClock m_remoteRowClock;
+    QElapsedTimer m_remoteRowSteadyClock;
+    std::optional<qint64> m_remoteRowNowNsForTest;
     // A remote pan's row period on the Core's clock: framesPerLine frames
     // at the context's frame rate, in ns. 0 before the first context.
     qint64 remoteWaterfallRowPeriodNs() const;

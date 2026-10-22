@@ -233,6 +233,12 @@
 //               two (TestFunctionGroups): the audio functions in two, every
 //               other function in three. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-21  J.J. Boyd (KG4VCF)  A pan's waterfall row reaches its
+//                                    widget when its frame is pushed, due
+//                                    when its trace is drawn; a key forgets
+//                                    rows not yet due (panRowsAreHanded-
+//                                    OverEarlyWithTheirDueTime).
+//                                    AI-assisted via Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -7966,6 +7972,175 @@ private slots:
         QTest::qWait(300);
         QVERIFY(!widget->renderedPixels().isEmpty());
 
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A pan's waterfall row goes to its widget when its frame is pushed,
+    // with the time the presenter will present the frame's trace, so the
+    // widget's row clock can slide the row in by then; the trace is still
+    // drawn at that time. A key forgets the rows handed over before it
+    // that are not due yet.
+    void panRowsAreHandedOverEarlyWithTheirDueTime()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setWfUpdatePeriodMs(20);
+        // Rows stay queued: neither the ticker nor a frame puts them in.
+        widget->setWaterfallTickerPausedForTest(true);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        // When each trace is drawn, on the widget's row clock.
+        std::vector<qint64> drawnAtNs;
+        connect(&controller, &RemoteMediaController::displayFrameReceived, widget,
+                [&drawnAtNs, widget] { drawnAtNs.push_back(widget->remoteRowNowNsForTest()); });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QVERIFY(controller.displayClockNegotiated());
+        const QString panId = applet->panId();
+        const QJsonObject subscription = lastControl(controls, QStringLiteral("subscribe"));
+        const quint32 id = quint32(subscription.value(QStringLiteral("endpointId")).toDouble());
+        WidebandDisplayContext wideband;
+        wideband.available = true;
+        wideband.physicalAdcIndex = 0;
+        wideband.filterChainIndex = 0;
+        wideband.adcRateHz = 4000000;
+        const QJsonObject context{
+            {QStringLiteral("op"), QStringLiteral("context")},
+            {QStringLiteral("connectionId"), subscription.value(QStringLiteral("connectionId"))},
+            {QStringLiteral("endpointId"), double(id)},
+            {QStringLiteral("revision"), subscription.value(QStringLiteral("revision"))},
+            {QStringLiteral("contextGeneration"), 1}, {QStringLiteral("sourceStream"), 0},
+            {QStringLiteral("sourceCentreHz"), 14225000}, {QStringLiteral("sampleRateHz"), 192000},
+            {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
+            {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
+            {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
+            {QStringLiteral("maxDbm"), 0}, {QStringLiteral("fps"), 30},
+            {QStringLiteral("framesPerLine"), 1},
+            {QStringLiteral("wideband"), wideband.toJson()},
+            {QStringLiteral("grantedFftSize"), 8192}, {QStringLiteral("grantedTier"), QStringLiteral("wide")},
+            {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
+            {QStringLiteral("limit"), QStringLiteral("none")}};
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 1);
+
+        DisplayCodecEncoder encoder;
+        const auto frameAt = [&](int index, qint64 producerNs, float level) {
+            DisplayCodecFrame frame;
+            frame.context = {id, 1, -180, 0, 128, 128, 0};
+            frame.encoderSequence = quint32(index + 1);
+            frame.producerTimestamp = quint64(producerNs);
+            frame.waterfallAdvance = true;
+            frame.traceDbm = QVector<float>(128, level);
+            frame.waterfallDbm = QVector<float>(128, level);
+            return frame;
+        };
+
+        // No echo yet: a first frame draws on arrival, and its row, with no
+        // due time, is queued at once.
+        media->deliver(encoder.encode(frameAt(0, 1'000'000'000, -100.0f)));
+        QCOMPARE(int(drawnAtNs.size()), 1);
+        const int queuedBefore = widget->remoteRowQueueDepthForTest();
+        QVERIFY(queuedBefore >= 1);
+
+        // Clock echoes from a Core whose clock reads 10 s ahead: frames now
+        // wait for their Core time plus the audio's delay.
+        constexpr qint64 kCoreAheadNs = 10'000'000'000;
+        QTRY_VERIFY_WITH_TIMEOUT(countControl(controls, QStringLiteral("clock-probe")) >= 1, 3000);
+        const QJsonObject probe = lastControl(controls, QStringLiteral("clock-probe"));
+        QElapsedTimer sinceProbe;
+        sinceProbe.start();
+        const qint64 t0 = probe.value(QStringLiteral("t0")).toInteger();
+        const QJsonObject echo{
+            {QStringLiteral("op"), QStringLiteral("clock-echo")},
+            {QStringLiteral("connectionId"), probe.value(QStringLiteral("connectionId"))},
+            {QStringLiteral("id"), probe.value(QStringLiteral("id"))},
+            {QStringLiteral("t0"), t0},
+            {QStringLiteral("t1"), t0 + kCoreAheadNs},
+            {QStringLiteral("t2"), t0 + kCoreAheadNs},
+            {QStringLiteral("generation"), 0},
+            {QStringLiteral("rtpTimestamp"), 0},
+            {QStringLiteral("capturedNs"), 0}};
+        QVERIFY(server.sendMediaControl(echo, server.mediaSessionEpoch()));
+        QTest::qWait(30);
+        const auto coreNow = [&] { return t0 + kCoreAheadNs + sinceProbe.nsecsElapsed(); };
+
+        // The row is in the widget's queue the moment its frame is pushed,
+        // before its trace is drawn, due when the trace will be.
+        const qint64 handedAtNs = widget->remoteRowNowNsForTest();
+        media->deliver(encoder.encode(frameAt(1, coreNow(), -90.0f)));
+        QCOMPARE(int(drawnAtNs.size()), 1);
+        QCOMPARE(widget->remoteRowQueueDepthForTest(), queuedBefore + 1);
+        const qint64 dueNs = widget->remoteRowDueNsForTest(queuedBefore);
+        // An audio delay on: the base delay is the one-way trip plus the
+        // audio's 80 ms base hold.
+        QVERIFY2(dueNs - handedAtNs >= 60'000'000,
+                 qPrintable(QString::number(dueNs - handedAtNs)));
+        QTRY_COMPARE_WITH_TIMEOUT(int(drawnAtNs.size()), 2, 2000);
+        // The trace is drawn at that time: never before it, and within the
+        // presentation timer's millisecond and an event-loop turn after.
+        QVERIFY2(drawnAtNs[1] >= dueNs - 1'000'000,
+                 qPrintable(QString::number(drawnAtNs[1] - dueNs)));
+        QVERIFY2(drawnAtNs[1] < dueNs + 50'000'000,
+                 qPrintable(QString::number(drawnAtNs[1] - dueNs)));
+        // Its row was not queued a second time at the trace.
+        QCOMPARE(widget->remoteRowQueueDepthForTest(), queuedBefore + 1);
+
+        // A key forgets the rows handed over before it that are not due
+        // yet: their slots would fall in the over. The rows already due
+        // stay. The next frame comes some periods after the last, so rows
+        // blended across the gap come with it, some of them already due.
+        media->deliver(encoder.encode(frameAt(2, coreNow(), -80.0f)));
+        const int queuedAtKey = widget->remoteRowQueueDepthForTest();
+        QVERIFY(queuedAtKey >= queuedBefore + 2);
+        const qint64 keyedAtNs = widget->remoteRowNowNsForTest();
+        int notYetDue = 0;
+        for (int i = queuedBefore + 1; i < queuedAtKey; ++i) {
+            if (widget->remoteRowDueNsForTest(i) > keyedAtNs) {
+                ++notYetDue;
+            }
+        }
+        QVERIFY(notYetDue >= 1); // the frame's own row
+        controller.setPanTransmitting(panId, true, false);
+        QCOMPARE(widget->remoteRowQueueDepthForTest(), queuedAtKey - notYetDue);
+        QTest::qWait(300);
+        QCOMPARE(int(drawnAtNs.size()), 2);
+        controller.setPanTransmitting(panId, false, false);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

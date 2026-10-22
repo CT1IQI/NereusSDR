@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: handOverEarlyRows (a pan's waterfall rows go to its widget
+//               with their due times). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 //   2026-10-16: scheduleAudioRetry (a speaker failure is asked for again on
 //               the restart backoff); a held restart step no longer
 //               replaces another; setSpeakerDeviceListWaitForTest. J.J. Boyd
@@ -756,6 +759,7 @@ private:
     // R-R3-21 / R-R3-08: display presentation on the audio's clock.
     std::optional<qint64> displayMapNs();
     void presentDueDisplay();
+    void handOverEarlyRows(quint32 endpointId, qint64 nowNs, std::optional<qint64> mapNs);
     void scheduleDisplayPresentation(std::optional<qint64> mapNs);
     // Task 36: the microphone uplink.
     bool micUplinkWanted() const;

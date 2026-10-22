@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-21: a pan's waterfall rows go to its widget as the presenter
+//               queues them, with the time each is due, so the widget's
+//               row clock slides each in by then; the trace is still drawn
+//               at its due time, and a mini display still gets row and
+//               trace together. Wherever the presenter forgets its items,
+//               the rows handed over early for them are forgotten too.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-17: a playback failure's disable that cannot be sent (the old
 //               peer not ready while the Core moves) is still owed
 //               (audioDisableUnsent) and the move sends it; before, a
@@ -1192,6 +1199,20 @@ struct RemoteMediaController::Private {
         // R-R3-21 / R-R3-08: decoded frames waiting for their presentation
         // time, and the rows filling a lost message's gap.
         RemoteDisplayPresenter presenter;
+        // A pan's waterfall rows (not a mini display's) go to its widget as
+        // the presenter queues them, with their due times, so the widget's
+        // row clock slides each in by then (RemoteWaterfallRowClock.h).
+        bool handsRowsEarly() const { return !isMini(); }
+        // The presenter forgets its queued items, and the widget the rows
+        // handed over early for them: nothing queued before a key, a new
+        // context or a teardown is drawn after it.
+        void resetPresenter()
+        {
+            presenter.reset();
+            if (handsRowsEarly() && widget) {
+                widget->forgetEarlyRemoteRows();
+            }
+        }
         // This pan's display arrivals (audio clock) and the waits between
         // them, each with its arrival time, for the last 10 s.
         std::optional<qint64> lastArrivalNs;
@@ -2697,7 +2718,7 @@ void RemoteMediaController::setPanTransmitting(const QString& panId, bool transm
             Q_UNUSED(id);
             if (binding.panId != panId) { continue; }
             if (transmitting) {
-                binding.presenter.reset();
+                binding.resetPresenter();
             } else {
                 binding.presenter.restartChain();
             }
@@ -5861,7 +5882,7 @@ void RemoteMediaController::refreshLegacyMiniSubscriptions()
         binding.rejected = false;
         if (!binding.drawing) {
             binding.decoder.reset();
-            binding.presenter.reset();
+            binding.resetPresenter();
         }
         QJsonObject wire = desired;
         wire.insert(QStringLiteral("op"), QStringLiteral("subscribe"));
@@ -6541,7 +6562,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
             if (!binding.drawing) {
                 binding.decoder.reset();
-                binding.presenter.reset();
+                binding.resetPresenter();
             }
         }
         if (binding.askAgain) {
@@ -7594,7 +7615,7 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.drawing.reset();
             binding.shownPicture.reset();
             binding.decoder.reset();
-            binding.presenter.reset();
+            binding.resetPresenter();
             if (reason == QLatin1String(kRetireReasonStreamBindingChanged)) {
                 // The Core says so at once; the slice's new frequency and
                 // receiver are still on their way. The next ask is for the
@@ -7674,7 +7695,7 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 binding.drawing.reset();
                 binding.shownPicture.reset();
                 binding.decoder.reset();
-                binding.presenter.reset();
+                binding.resetPresenter();
                 binding.pending.reset();
                 if (reason == QLatin1String(kRetireReasonStreamBindingChanged)) {
                     binding.sliceLeftReceiver = true;
@@ -7716,7 +7737,7 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.drawing.reset();
             binding.shownPicture.reset();
             binding.decoder.reset();
-            binding.presenter.reset();
+            binding.resetPresenter();
             d->bindings.erase(found);
             if (widget) {
                 // Capacity suspension freezes painted history. Only reject
@@ -7970,7 +7991,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             binding.drawing.reset();
             binding.shownPicture.reset();
             binding.decoder.reset();
-            binding.presenter.reset();
+            binding.resetPresenter();
             if (binding.isMini()) {
                 emit miniDisplayUnavailable(binding.miniSliceId);
                 return;
@@ -8206,7 +8227,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         binding.transmitContext = *decoded;
         // Merge with R-R3-21: a transmit context that beats the window's
         // own rise also forgets the receive frames waiting to be drawn.
-        binding.presenter.reset();
+        binding.resetPresenter();
         binding.receivedFrameTimesMs.clear();
         const QPointer<RemoteMediaController> self(this);
         const QString connectionId = d->connectionId;
@@ -8600,6 +8621,8 @@ void RemoteMediaController::presentDueDisplay()
     for (const quint32 id : ids) {
         auto it = d->bindings.find(id);
         if (it == d->bindings.end()) { continue; }
+        handOverEarlyRows(id, now, map);
+        const bool rowsHandedEarly = it->second.handsRowsEarly();
         std::vector<RemoteDisplayPresenter::Item> items = it->second.presenter.takeDue(now, map);
         for (RemoteDisplayPresenter::Item& item : items) {
             it = d->bindings.find(id);
@@ -8678,6 +8701,10 @@ void RemoteMediaController::presentDueDisplay()
                 row.sliceId = widget->m_wfDiagnosticSliceId;
                 row.bindingStreamEpoch = widget->m_wfDiagnosticStreamEpoch;
             };
+            if (item.kind == RemoteDisplayPresenter::Kind::Blended && rowsHandedEarly) {
+                // Handed over when it was queued (handOverEarlyRows).
+                continue;
+            }
             if (item.kind != RemoteDisplayPresenter::Kind::Frame) {
                 if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm, item.frame.wideDbm,
                                                       item.capture)) {
@@ -8690,8 +8717,10 @@ void RemoteMediaController::presentDueDisplay()
                 }
                 continue;
             }
+            // The frame's row was handed over when it was queued; its trace
+            // is drawn now, at its due time.
             const bool rendered = widget->updateRemoteSpectrum(
-                item.frame, item.capture, item.measurementCurrent);
+                item.frame, item.capture, item.measurementCurrent, !rowsHandedEarly);
             // Rendering emits application signals; a receiver may end this session.
             if (!self || d->connectionId != connectionId) { return; }
             if (!rendered) {
@@ -8701,7 +8730,7 @@ void RemoteMediaController::presentDueDisplay()
                 const bool presented = widget
                     && widget->presentRemoteTraceCaptured(item.frame.traceDbm,
                                                           item.centreHz, item.spanHz);
-                if (item.frame.waterfallAdvance && widget) {
+                if (item.frame.waterfallAdvance && widget && !rowsHandedEarly) {
                     if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
                                                           item.frame.wideDbm,
                                                           item.capture)) {
@@ -8738,6 +8767,46 @@ void RemoteMediaController::presentDueDisplay()
         }
     }
     scheduleDisplayPresentation(map);
+}
+
+void RemoteMediaController::handOverEarlyRows(quint32 endpointId, qint64 nowNs,
+                                              std::optional<qint64> mapNs)
+{
+    auto found = d->bindings.find(endpointId);
+    if (found == d->bindings.end()) { return; }
+    Private::Binding& binding = found->second;
+    // The rows the last push() queued go to the pan's widget now, each with
+    // the time it is due on the same map and clock takeDue() presents its
+    // trace by, so the row slides in by the time its trace is drawn. Taken
+    // for every binding, so they never pile up; a mini display keeps its
+    // rows with its traces, at their due time.
+    std::vector<RemoteDisplayPresenter::Item> rows = binding.presenter.takeQueuedRows();
+    if (rows.empty() || !binding.handsRowsEarly() || !binding.widget) { return; }
+    // As presentDueDisplay: no receive row while the Core's transmit context
+    // holds this binding or the pan is keyed.
+    if (binding.transmit || d->transmittingPans.contains(binding.panId)) { return; }
+    SpectrumWidget* widget = binding.widget;
+    const bool traceWaterfall = qEnvironmentVariableIntValue("NEREUS_TRACE_WF_STATE") == 1;
+    for (const RemoteDisplayPresenter::Item& item : rows) {
+        const bool frame = item.kind == RemoteDisplayPresenter::Kind::Frame;
+        const qint64 dueInNs = binding.presenter.dueNs(item, nowNs, mapNs) - nowNs;
+        if (!widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm, item.frame.wideDbm,
+                item.capture, dueInNs,
+                frame ? std::optional<quint32>(item.frame.encoderSequence) : std::nullopt)) {
+            continue;
+        }
+        if (traceWaterfall) {
+            auto& diagnostics = widget->m_remoteRowQueue.last().diagnostics;
+            diagnostics.presentationKind = static_cast<int>(item.kind);
+            diagnostics.encoderSequence = frame
+                ? std::optional<quint32>(item.frame.encoderSequence) : std::nullopt;
+            diagnostics.sliceId = binding.slice ? binding.slice->sliceIndex() : -1;
+            diagnostics.bindingStreamEpoch = binding.observedStreamEpoch;
+        }
+        if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
+            ++d->displayCounters.rowsBlended;
+        }
+    }
 }
 
 void RemoteMediaController::scheduleDisplayPresentation(std::optional<qint64> mapNs)
