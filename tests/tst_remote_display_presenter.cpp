@@ -10,6 +10,8 @@
 // repeats.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: the rows each push() queues, for the early hand-off.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-26: created for R-R3-21 / R-R3-08. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -613,6 +615,71 @@ private slots:
         QCOMPARE(presenter.nextDueNs(0, -4'000 * kMs).value_or(-1), 1'000 * kMs);
         presenter.reset();
         QCOMPARE(presenter.queued(), 0);
+    }
+
+    // A pan's widget is handed each waterfall row as the presenter queues
+    // it, with its due time, so its row clock can slide the row in by then.
+    void pushRecordsTheRowsItQueues()
+    {
+        RemoteDisplayPresenter presenter;
+        presenter.setRowPeriodNs(kPeriodNs);
+        const qint64 map = 100 * kMs;
+        presenter.push(frameAt(0, 0, -100.0f), 14.0e6, 24000.0);
+        std::vector<RemoteDisplayPresenter::Item> rows = presenter.takeQueuedRows();
+        QCOMPARE(int(rows.size()), 1);
+        QCOMPARE(rows[0].kind, RemoteDisplayPresenter::Kind::Frame);
+        QCOMPARE(rows[0].producerNs, qint64(0));
+        QCOMPARE(presenter.dueNs(rows[0], 0, map), map);
+        // Taken once; the items stay queued for takeDue().
+        QVERIFY(presenter.takeQueuedRows().empty());
+        QCOMPARE(presenter.queued(), 1);
+
+        // After a gap of two rows: the two blended rows, then the frame's
+        // own, in order, with their producer times.
+        presenter.push(frameAt(1, 3 * kPeriodNs, -40.0f), 14.0e6, 24000.0);
+        rows = presenter.takeQueuedRows();
+        QCOMPARE(int(rows.size()), 3);
+        QCOMPARE(rows[0].kind, RemoteDisplayPresenter::Kind::Blended);
+        QCOMPARE(rows[0].producerNs, kPeriodNs);
+        QCOMPARE(rows[1].kind, RemoteDisplayPresenter::Kind::Blended);
+        QCOMPARE(rows[1].producerNs, 2 * kPeriodNs);
+        QCOMPARE(rows[2].kind, RemoteDisplayPresenter::Kind::Frame);
+        QCOMPARE(rows[2].producerNs, 3 * kPeriodNs);
+        QCOMPARE(rows[2].frame.encoderSequence, quint32(2));
+        QVERIFY(std::abs(rows[0].frame.waterfallDbm.at(0) + 80.0f) < 0.01f);
+        QCOMPARE(presenter.dueNs(rows[1], 0, map), 2 * kPeriodNs + map);
+        // A frame with no row (its trace only) queues none.
+        DisplayCodecFrame traceOnly = frameAt(2, 4 * kPeriodNs, -100.0f);
+        traceOnly.waterfallAdvance = false;
+        presenter.push(traceOnly, 14.0e6, 24000.0);
+        QVERIFY(presenter.takeQueuedRows().empty());
+
+        // Repeats stand in for rows while a keyframe is awaited; a keyframe
+        // later than them owes its row back: that row is not handed over.
+        RemoteDisplayPresenter owed;
+        owed.setRowPeriodNs(kPeriodNs);
+        owed.push(frameAt(0, 0, -100.0f), 14.0e6, 24000.0);
+        owed.takeQueuedRows();
+        QCOMPARE(int(owed.takeDue(map, map).size()), 1);
+        owed.noteLoss();
+        int repeats = 0;
+        for (int slot = 1; slot <= 3; ++slot) {
+            repeats += int(owed.takeDue(map + slot * kPeriodNs, map).size());
+        }
+        QCOMPARE(repeats, 3);
+        owed.push(frameAt(1, kPeriodNs, -100.0f), 14.0e6, 24000.0);
+        QVERIFY(owed.takeQueuedRows().empty());
+        owed.push(frameAt(2, 2 * kPeriodNs, -100.0f), 14.0e6, 24000.0);
+        QVERIFY(owed.takeQueuedRows().empty());
+        owed.push(frameAt(3, 3 * kPeriodNs, -100.0f), 14.0e6, 24000.0);
+        QVERIFY(owed.takeQueuedRows().empty());
+        owed.push(frameAt(4, 4 * kPeriodNs, -100.0f), 14.0e6, 24000.0);
+        QCOMPARE(int(owed.takeQueuedRows().size()), 1);
+
+        // A reset forgets them with the queue.
+        presenter.push(frameAt(3, 5 * kPeriodNs, -100.0f), 14.0e6, 24000.0);
+        presenter.reset();
+        QVERIFY(presenter.takeQueuedRows().empty());
     }
 };
 

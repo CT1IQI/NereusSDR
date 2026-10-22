@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  Declares radioAntennaRows 2 (RX-only
+//                                    antennas 0..5) and takes version 1 or
+//                                    2. AI-assisted via Anthropic Claude
+//                                    Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares rxMeterStamps
 //                                    1; a slice delta stamped with the
 //                                    Core's meterReadingNs has its RX meter
@@ -974,7 +978,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_declaredFeatures.insert(QByteArrayLiteral("coreBuildInfo"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("coreAddresses"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("settingsBackup"), 1);
-    m_declaredFeatures.insert(QByteArrayLiteral("radioAntennaRows"), 1);
+    // 2: the Alex tab's RX-only boxes write Thetis's checkbox sum, 0..5.
+    m_declaredFeatures.insert(QByteArrayLiteral("radioAntennaRows"), kRadioAntennaRowsVersion);
     // R-IOS-26 / R-R3-49: this window knows 2 m as its own band (Band 27).
     m_declaredFeatures.insert(QByteArray(BandLinkFit::kFeature), 1);
     // Manage Radios offers the models the Core accepts for each radio's
@@ -6045,7 +6050,7 @@ StationClient::CommandOutcome StationClient::requestAlexRxAntenna(Band band, int
         return {false, station2mUnavailableReason()};
     }
     const bool radioBound = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
-        && m_capabilities.radioAntennaRowsVersion == 1;
+        && m_capabilities.radioAntennaRowsVersion >= 1;
     const QString mac = m_radioModel ? m_radioModel->currentRadioMac() : QString();
     if (radioBound && (mac.isEmpty() || AppSettings::normalizedRadioMac(mac) != mac)) {
         return {false, QStringLiteral("The Core's connected radio is not ready for this antenna change.")};
@@ -6070,7 +6075,7 @@ StationClient::CommandOutcome StationClient::requestAlexTxAntenna(Band band, int
         return {false, station2mUnavailableReason()};
     }
     const bool radioBound = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
-        && m_capabilities.radioAntennaRowsVersion == 1;
+        && m_capabilities.radioAntennaRowsVersion >= 1;
     const QString mac = m_radioModel ? m_radioModel->currentRadioMac() : QString();
     if (radioBound && (mac.isEmpty() || AppSettings::normalizedRadioMac(mac) != mac)) {
         return {false, QStringLiteral("The Core's connected radio is not ready for this antenna change.")};

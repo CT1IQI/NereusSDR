@@ -189,6 +189,7 @@
         {"id": "session-verbs-filter-policy", "file": "sessions/verbs-filter-policy.json", "kind": "session", "requires": {"radioHardwareVersion": 4}},
         {"id": "session-verbs-tx-antenna", "file": "sessions/verbs-tx-antenna.json", "kind": "session", "requires": {"radioHardwareVersion": 6}},
         {"id": "session-verbs-radio-bound-antenna-rows", "file": "sessions/verbs-radio-bound-antenna-rows.json", "kind": "session", "requires": {"radioAntennaRowsVersion": 1}},
+        {"id": "session-verbs-radio-antenna-rows-v2", "file": "sessions/verbs-radio-antenna-rows-v2.json", "kind": "session", "requires": {"radioAntennaRowsVersion": 2}},
         {"id": "session-verbs-io-board", "file": "sessions/verbs-io-board.json", "kind": "session", "requires": {"radioHardwareVersion": 7}},
         {"id": "session-verbs-radio-sample-rate", "file": "sessions/verbs-radio-sample-rate.json", "kind": "session", "requires": {"radioHardwareVersion": 9}},
         {"id": "session-verbs-level-calibration", "file": "sessions/verbs-level-calibration.json", "kind": "session", "requires": {"radioHardwareVersion": 12}},
