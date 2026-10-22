@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares rxMeterStamps
+//                                    1; a slice delta stamped with the
+//                                    Core's meterReadingNs has its RX meter
+//                                    readings held until stamp + the display
+//                                    map (setRxMeterHoldClock), the rest
+//                                    applied at once. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-21  J.J. Boyd / KG4VCF  Declares tuneDriveSource 1: this window
 //                                    changes TUNE's drive source only from
 //                                    Setup. AI-assisted via Anthropic
@@ -995,6 +1002,9 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // RADE reason: the VFO flag's RADE row says why the Core's RADE slice
     // has no working decoder (radeReasonVersion 1), as a local window's does.
     m_declaredFeatures.insert(QByteArrayLiteral("radeReason"), 1);
+    // RX meter stamps: the window holds each slice's RX meter readings until
+    // their audio plays, on the spectrum's map (rxMeterStampsVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("rxMeterStamps"), 1);
     // HL2 port part 2: this window shows why the Core's transmit is held
     // off (radio's txInhibitReason; txInhibitReasonVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("txInhibitReason"), 1);
@@ -1255,6 +1265,13 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_handshakeDeadlineTimer->setSingleShot(true);
     connect(m_handshakeDeadlineTimer, &QTimer::timeout,
             this, &StationClient::onHandshakeDeadline);
+
+    // RX meter stamps: armed for the next held reading's due time.
+    m_rxMeterHoldTimer = new QTimer(this);
+    m_rxMeterHoldTimer->setSingleShot(true);
+    m_rxMeterHoldTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_rxMeterHoldTimer, &QTimer::timeout,
+            this, &StationClient::applyDueRxMeterReadings);
 
     // Task 19: the automatic-reconnect timer. Owned (parented to this,
     // dies with it), single-shot (armed fresh by scheduleReconnect() for
@@ -2437,6 +2454,8 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     m_forwardLocalChanges = false;
     m_pendingWrites.clear();
     m_coreValues.clear();
+    // RX meter stamps: readings from the session that ended never apply.
+    clearHeldRxMeterReadings();
     // Desktop remote transmit: the Core unkeys this device when the link
     // drops and never keys it again by itself; nothing of it is kept.
     if (m_remoteTransmit != nullptr) {
@@ -2527,6 +2546,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // ids (resolveOrCreate(), unchanged by this task), which is what lets
     // a GUI holding a raw pointer to one survive a reconnect unchanged.
     m_objects.clear();
+    clearHeldRxMeterReadings();
     m_audioOpusBitrates.reset();
     m_outboundMirror->unwatchAll();
     m_outboundCoalescer.clear();
@@ -4567,10 +4587,117 @@ void StationClient::handleDelta(const SessionMessage& message)
             held.append(value);
         }
     }
+    // RX meter stamps: a stamped slice delta's RX meter readings wait for
+    // their audio; everything else in it applies now.
+    takeRxMeterReadings(target, message.objectKey, current);
     applyUpdates(target, message.objectKey, current, SideEffectRule::Delta, held);
     // What the Core holds, applied or not: a later cancel falls back to it.
     for (const auto& value : held) {
         m_coreValues[message.objectKey].insert(value.name, value);
+    }
+    if (!m_heldRxMeters.empty()) {
+        applyDueRxMeterReadings();
+    }
+}
+
+namespace {
+
+// RX meter stamps: the slice readings SliceMeterPump writes each tick, and
+// the stamp that says when they were measured.
+constexpr const char* kRxMeterStampProperty = "meterReadingNs";
+bool isRxMeterReading(const QByteArray& name)
+{
+    return name == "signalStrengthDbm" || name == "signalPeakDbm"
+        || name == "signalAverageDbm" || name == "adcPeakDbfs"
+        || name == "adcAverageDbfs" || name == "agcGainDb" || name == "agcPeakDb"
+        || name == "agcAverageDb";
+}
+
+} // namespace
+
+void StationClient::setRxMeterHoldClock(std::function<qint64()> nowNs,
+                                        std::function<std::optional<qint64>()> mapNs)
+{
+    m_rxMeterNowNs = std::move(nowNs);
+    m_rxMeterMapNs = std::move(mapNs);
+    if (!m_heldRxMeters.empty()) {
+        applyDueRxMeterReadings();
+    }
+}
+
+void StationClient::takeRxMeterReadings(QObject* target, const QByteArray& objectKey,
+                                        QList<MirrorUpdate>& updates)
+{
+    if (qobject_cast<SliceModel*>(target) == nullptr) {
+        return;
+    }
+    HeldRxMeterReadings item;
+    item.objectKey = objectKey;
+    for (auto it = updates.begin(); it != updates.end();) {
+        if (it->name == kRxMeterStampProperty) {
+            if (it->kind == MirrorWireKind::Int64) {
+                item.stamped = true;
+                item.producerNs = it->value.toLongLong();
+            }
+            item.updates.append(*it);
+            it = updates.erase(it);
+        } else if (isRxMeterReading(it->name)) {
+            item.updates.append(*it);
+            it = updates.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (item.updates.isEmpty()) {
+        return;
+    }
+    // An unstamped reading (an older Core sends none) applies at once,
+    // unless this slice has readings held: then it goes in behind them, so
+    // readings never apply out of order.
+    const bool sliceHeld = std::any_of(
+        m_heldRxMeters.cbegin(), m_heldRxMeters.cend(),
+        [&](const HeldRxMeterReadings& held) { return held.objectKey == objectKey; });
+    if (!item.stamped && !sliceHeld) {
+        updates.append(item.updates);
+        return;
+    }
+    m_heldRxMeters.push_back(std::move(item));
+}
+
+void StationClient::applyDueRxMeterReadings()
+{
+    while (!m_heldRxMeters.empty()) {
+        const HeldRxMeterReadings& next = m_heldRxMeters.front();
+        // Due at stamp + map, the rule RemoteDisplayPresenter shows a
+        // spectrum frame by. No clock or no map yet: now. A wait beyond the
+        // presenter's cap means the map and the stamps disagree: now.
+        qint64 waitNs = 0;
+        if (next.stamped && m_rxMeterNowNs && m_rxMeterMapNs) {
+            if (const std::optional<qint64> map = m_rxMeterMapNs()) {
+                const qint64 wait = next.producerNs + *map - m_rxMeterNowNs();
+                waitNs = wait > kRxMeterMaxHoldNs ? 0 : wait;
+            }
+        }
+        if (waitNs > 0) {
+            constexpr qint64 kNsPerMs = 1'000'000;
+            m_rxMeterHoldTimer->start(static_cast<int>((waitNs + kNsPerMs - 1) / kNsPerMs));
+            return;
+        }
+        HeldRxMeterReadings due = std::move(m_heldRxMeters.front());
+        m_heldRxMeters.pop_front();
+        // A slice the Core has removed since: its readings are dropped.
+        if (QObject* target = m_objects.value(due.objectKey).data()) {
+            applyUpdates(target, due.objectKey, due.updates, SideEffectRule::Delta);
+        }
+    }
+    m_rxMeterHoldTimer->stop();
+}
+
+void StationClient::clearHeldRxMeterReadings()
+{
+    m_heldRxMeters.clear();
+    if (m_rxMeterHoldTimer != nullptr) {
+        m_rxMeterHoldTimer->stop();
     }
 }
 
@@ -5260,6 +5387,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
     // Read only on the wire, set here as the Core worded it.
     if (propertyName == "radeReason") {
         slice->setRadeReason(native.toString());
+        return true;
+    }
+    // rxMeterStampsVersion 1: when the Core measured the readings applied
+    // with it (held with them until their audio plays).
+    if (propertyName == "meterReadingNs") {
+        slice->setMeterReadingNs(native.toLongLong());
         return true;
     }
     if (propertyName == "band") {

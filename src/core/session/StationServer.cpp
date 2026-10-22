@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-22: RX meter stamps: rxMeterStampsVersion 1 and each slice's
+//               meterReadingNs only to a peer that declared rxMeterStamps 1
+//               (fitPeerOnlyProperties; before coreBuildInfo). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-21: TUNE's drive source: transmit's tuneDrivePowerSource is
 //               taken only from a peer that declared tuneDriveSource 1, so
 //               an older client's power slider no longer moves it.
@@ -1630,6 +1634,8 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"SliceModel", "slice:", true, "radeFreqOffsetHz", "radeStatus"},
     // Why a RADE slice has no working decoder (radeReasonVersion 1).
     {"SliceModel", "slice:", true, "radeReason", "radeReason"},
+    // When each slice's RX meter readings were measured (rxMeterStampsVersion 1).
+    {"SliceModel", "slice:", true, "meterReadingNs", "rxMeterStamps"},
     // The Alex-1 low-pass in use, for the Alex tab's lamps (alexLpf 1,
     // radioHardwareVersion 10).
     {"RadioModel", "radio", false, "alexLpfBits", "alexLpf"},
@@ -13763,6 +13769,12 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
                 caps.firmwareBetaEntry = true;
                 caps.firmwareBetaVersion = m_radioModel->firmwareBetaVersion();
             }
+            // RX meter stamps: each slice's meterReadingNs, for a peer that
+            // declared rxMeterStamps 1 (after waveformVersion and before
+            // coreBuildInfo on the wire), the same test that sends it the
+            // property (fitPeerOnlyProperties).
+            caps.rxMeterStampsVersion =
+                peerGetsFeatureProperties(transport, QByteArrayLiteral("rxMeterStamps")) ? 1 : 0;
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.

@@ -124,6 +124,9 @@
 //                [v2.10.3.15]. A restored threshold is clamped to its
 //                ControlRanges range; one that is not a number is skipped.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - setMeterReadingNs, the RX meter readings' measurement time
+//                (rxMeterStampsVersion 1). NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1281,6 +1284,15 @@ void SliceModel::setRadeReason(const QString& reason)
     }
     m_radeReason = reason;
     emit radeReasonChanged(reason);
+}
+
+void SliceModel::setMeterReadingNs(qint64 ns)
+{
+    if (m_meterReadingNs == ns) {
+        return;
+    }
+    m_meterReadingNs = ns;
+    emit meterReadingNsChanged(ns);
 }
 
 QString SliceModel::diversityPattern() const
