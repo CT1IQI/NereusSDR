@@ -869,8 +869,9 @@ enum ToolPageParts {
             let text: Color
             let opacity: Double
 
-            /// The face with its outline, for a label's background.
-            var background: some View {
+            /// The face with its outline, for a label's background; built
+            /// on the main actor, as every view is.
+            @MainActor var background: some View {
                 WorkspaceFace(face)
                     .overlay {
                         if let outline {
