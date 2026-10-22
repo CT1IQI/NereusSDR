@@ -1268,6 +1268,12 @@
 //                (moxChanging) and the poll is gated on MOX as `if (_mox)`.
 //                Modified by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-22 - PR 604 second pass: an open-antenna drop sets Stop All TX's
+//                latch so a held PTT or VOX does not key again until
+//                released (a deliberate departure from Thetis, JJ's ruling),
+//                and raises its stop reason so a remote window shows the
+//                antenna warning. Modified by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1751,12 +1757,6 @@ float swrAlexFwdLimit(HPSDRModel model, int pwrSlider) noexcept
     return kSwrAlexFwdLimitW;
 }
 
-// The open-antenna warning, checkAntennaWarning's text and caption.
-// From Thetis console.cs:26177-26185 [v2.10.3.15]:
-//   MessageBox.Show("Please check your antenna connection.",
-//   "High SWR condition detected",
-constexpr const char* kOpenAntennaWarning =
-    "High SWR condition detected. Please check your antenna connection.";
 
 // scaleFwdPowerWatts: lifted from this anonymous namespace into the
 // public PaTelemetryScaling API in Phase 1 Agent 1B of issue #167.
@@ -4844,7 +4844,18 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //   HighSWR = false;
     // Thetis runs UIMOXChangedFalse on every unkey, synchronously. Here the
     // release is hooked to moxChanging(true -> false), which MoxController
-    // emits on every real unkey before it commits MOX off. moxChanged
+    // emits on every real unkey before it commits MOX off. That is earlier
+    // than Thetis, which resets after the hardware unkey (console.cs:29721
+    // [v2.10.3.15]). It is safe: the factor it puts back to 1.0
+    // (TransmitModel::swrProtectFactor) is read only by pumpAudioVolume,
+    // which runs on a drive change (the PWR slider, TUNE, two-tone, the
+    // next key's drive restore), not on this reset, so the folded-back
+    // byte already sent stays until something sets the drive again. The
+    // caveat: the TX channel's drain and a RADE end-of-over tail still
+    // transmit after this point with the protection released; the poll no
+    // longer runs then (isMox() is false), so a high SWR during that tail
+    // is not acted on, and the drive byte already sent (folded back or
+    // not) stays until the walk ends. moxChanged
     // fires only at the end of the TX-to-RX walk, which a quick re-key
     // cancels, so a latch released there could survive into the next key.
     // The SWR poll in handlePaTelemetry is gated on isMox() as Thetis's
@@ -21472,11 +21483,10 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // meters show the physical truth (no TX → no forward power).
     //
     // Predicate: MoxController::state() == MoxState::Tx — the authoritative
-    // wire-level TX-active state.  TransmitModel's m_mox / m_tune flags are
-    // orphan state in the current codebase (never set true by any code
-    // path), so consulting them returned false during TUNE and force-zeroed
-    // the meters mid-transmit.  MoxController is the single source of truth
-    // for whether the radio is actually transmitting RF.
+    // wire-level TX-active state.  TransmitModel's mox flag only follows a
+    // key when no MoxController is present, and its tune flag is set by
+    // setTune, so neither tells whether the radio is transmitting RF right
+    // now; MoxController's walk state does.
     //
     // PA current / temperature / supply voltage are slow physical
     // quantities valid off-air; leave those samples alone.
@@ -21553,23 +21563,27 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
         return;
     }
     const float oldSwrProtect = m_transmitModel.swrProtectFactor();
+    // The model for the open-antenna check's 8000D test, which belongs to
+    // the open-antenna block (console.cs:26030-26057 [v2.10.3.15]):
     // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
-    // From Thetis console.cs:26040 and 26112-26114 [v2.10.3.15], worked out
-    // on every poll from the model and the PWR slider (ptbPWR.Value), MOX
-    // and TUNE alike:
+    // From Thetis console.cs:26039 [v2.10.3.15]:
+    //       && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+    m_swrProt.setHpsdrModel(model);
+    // From Thetis console.cs:26112-26114 [v2.10.3.15], worked out on every
+    // poll from the model and the PWR slider (ptbPWR.Value), MOX and TUNE
+    // alike:
     // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
     //   float alex_fwd_limit = 5.0f;
     //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
     //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
-    m_swrProt.setHpsdrModel(model);
     m_swrProt.setAlexFwdLimit(swrAlexFwdLimit(model, m_transmitModel.power()));
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
 
     // Open antenna: Thetis drops MOX and warns.
-    // From Thetis console.cs:26041-26055 [v2.10.3.15]:
     // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26041-26055 [v2.10.3.15]:
     //   swr = 50.0f;
     //   NetworkIO.SWRProtect = 0.01f;
     //   chkMOX.Checked = false;
@@ -21584,11 +21598,28 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // chkMOX.Checked = false is MoxController's own unkey (the controller's
     // key, as stopAllTx releases it), so the normal TX-to-RX walk and the
     // release above run. The warning goes out on transmitStopped, which
-    // MainWindow already shows; no new UI. Thetis has no TUNE arm here: the
-    // check does not run while tuning (!chkTUN.Checked).
+    // MainWindow already shows; no new UI. A remote window gets the same
+    // words through transmitStopReasonRaised (TransmitState records them
+    // instead of "The Core stopped transmitting."), as the amplifier's own
+    // stops do. Thetis has no TUNE arm here: the check does not run while
+    // tuning (!chkTUN.Checked).
+    //
+    // Deliberate departure from Thetis (JJ, 2026-10-22: "A, hold the key off
+    // until release"): before the drop, Stop All TX's latch is set
+    // (latchStopAllTx), so a PTT, VOX, CAT or TCI key still held does not key
+    // again until it is released. Thetis does not: chkMOX.Checked = false
+    // here (PollPAPWR, console.cs:26036-26057 [v2.10.3.15]) leaves PollPTT
+    // (console.cs:25470-25555 [v2.10.3.15]) free to key again from a held
+    // source on its next pass, which then keys into the open antenna, trips,
+    // drops and keys again. The latch stops that key/unkey chatter into an
+    // open antenna; the release (or a fresh press) keys normally.
     if (m_swrProt.openAntennaDetected() && m_moxController && m_moxController->isMox()) {
+        m_lastTransmitStopReason =
+            TransmitStopReason{QByteArray(kOpenAntennaStopCode), QByteArray(), -1};
+        m_moxController->latchStopAllTx();
         m_moxController->setMox(false);
-        emit transmitStopped(QString::fromLatin1(kOpenAntennaWarning));
+        emit transmitStopped(openAntennaStopText());
+        emit transmitStopReasonRaised(m_lastTransmitStopReason.code, -1);
     }
 
     // From Thetis console.cs:26151-26158 [v2.10.3.15]:
@@ -33844,6 +33875,15 @@ QString RadioModel::ampNotSwitchedText()
     // words (trying again never helps an amplifier that does not answer).
     return QStringLiteral("The amplifier did not answer. Put it in standby or disconnect it"
                           " in Setup to transmit without it.");
+}
+
+// The open-antenna warning, checkAntennaWarning's caption and text.
+// From Thetis console.cs:26177-26185 [v2.10.3.15]:
+//   MessageBox.Show("Please check your antenna connection.",
+//   "High SWR condition detected",
+QString RadioModel::openAntennaStopText()
+{
+    return QStringLiteral("High SWR condition detected. Please check your antenna connection.");
 }
 
 QString RadioModel::ampOperatedUnderKeyText()

@@ -34,6 +34,9 @@ private slots:
     void moxOff_keepsTripCountAndMeasuredSwr();
     void disableOnTuneOff_tuneDoesNotBypass();
 
+    // PR 604 second pass:
+    void latched_cleanSample_resetsTripCount();
+
     // F.3 TODO ports — console.cs:26067 + 26020-26057 [v2.10.3.13]:
     void alexFwdLimit_default5W_belowFloor_noTrip();
     void alexFwdLimit_default5W_aboveFloor_trips();
@@ -407,6 +410,31 @@ void TestSwrProtectionController::tuneBypass_sliderAt71_doesNotBypass()
     QVERIFY(m_ctrl->highSwr());
     QVERIFY(m_ctrl->windBackLatched());
     QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+}
+
+// With the wind-back latch held, a clean sample still runs Thetis's else
+// branch (console.cs:26126-26131 [v2.10.3.15]): high_swr_count = 0. The
+// count survives an unkey (UIMOXChangedFalse leaves it), so after three
+// high samples, a clean one and an unkey, one high sample does not trip.
+void TestSwrProtectionController::latched_cleanSample_resetsTripCount()
+{
+    m_ctrl->setWindBackEnabled(true);
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    QVERIFY(m_ctrl->windBackLatched());
+    for (int i = 0; i < 3; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    m_ctrl->ingest(100.0f, 0.0f, false); // clean
+    QVERIFY(m_ctrl->windBackLatched());
+    QVERIFY(m_ctrl->highSwr());          // NereusSDR keeps it up while latched
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+
+    m_ctrl->onMoxOff();
+    m_ctrl->ingest(100.0f, 25.0f, false);
+    QVERIFY(!m_ctrl->highSwr());
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
 }
 
 QTEST_GUILESS_MAIN(TestSwrProtectionController)

@@ -30,6 +30,10 @@
 //                high_swr_count and alex_swr as UIMOXChangedFalse does, by
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-22 - PR 604 second pass: a clean sample zeroes high_swr_count
+//                while the wind-back latch holds too (console.cs:26126-26131
+//                [v2.10.3.15]), by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -143,7 +147,7 @@ void SwrProtectionController::setTunePowerSliderValue(int value) noexcept
 
 void SwrProtectionController::setHpsdrModel(HPSDRModel model) noexcept
 {
-    // console.cs:26040 [v2.10.3.15]: HardwareSpecific.Model
+    // console.cs:26039 [v2.10.3.15]: HardwareSpecific.Model
     m_model = model;
 }
 
@@ -290,15 +294,18 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
                 m_protectFactor = m_limit / (swr + 1.0f);
                 m_highSwr = true;
             }
-        } else if (!m_enabled || !m_windBackLatched) {
+        } else {
+            m_tripCount = 0;
+            m_protectFactor = 1.0f;
             // NereusSDR keeps HighSWR up while the wind-back latch holds and
             // protection is on, so the overlay stays lit with the drive
             // folded back (Thetis shows Display.PowerFoldedBack for that);
-            // with protection off HighSWR clears as upstream. The factor is
-            // 0.01 either way once latched (below).
-            m_tripCount = 0;
-            m_protectFactor = 1.0f;
-            m_highSwr = false;
+            // with protection off HighSWR clears as upstream. The trip count
+            // and the factor follow Thetis either way; the factor is 0.01
+            // once latched (below).
+            if (!m_enabled || !m_windBackLatched) {
+                m_highSwr = false;
+            }
         }
 
         // ── Catch-all: windback latch ─────────────────────────────────────

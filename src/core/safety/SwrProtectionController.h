@@ -35,6 +35,9 @@
 //                the measured SWR, all as PollPAPWR and UIMOXChangedFalse in
 //                console.cs [v2.10.3.15], by J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
+//   2026-10-22 - PR 604 second pass: cite lines corrected (26030, 26039),
+//                by J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -106,7 +109,7 @@ namespace NereusSDR::safety {
 /// Open-antenna heuristic: fwd > 10W and (fwd-rev) < 1W, not tuning, not the
 ///   ANAN-8000D → swr=50, factor=0.01, highSwr=true, openAntennaDetected=true.
 ///   The caller drops MOX on it, as Thetis does (chkMOX.Checked = false).
-///   Cite: console.cs:26034-26057 [v2.10.3.15].
+///   Cite: console.cs:26030-26057 [v2.10.3.15].
 ///
 /// Tune-time bypass: disableOnTune=true + tuneActive=true + fwd in [1, tunePowerSwrIgnore]
 ///   + tunePowerSliderValue ≤ 70 → factor=1.0, highSwr cleared.
@@ -177,7 +180,7 @@ public:
 
     /// The radio model (HardwareSpecific.Model). The open-antenna check does
     /// not run on the ANAN-8000D.
-    /// Cite: console.cs:26039-26040 [v2.10.3.15].
+    /// Cite: console.cs:26039 [v2.10.3.15].
     void setHpsdrModel(HPSDRModel model) noexcept;
 
     /// Feed a new forward/reflected power pair.
@@ -246,7 +249,7 @@ private:
     static constexpr int kTripDebounceCount = 4;
 
     // Alex / Apollo presence for the PollPAPWR gate,
-    // console.cs:26034 [v2.10.3.15]: if (alexpresent || apollopresent).
+    // console.cs:26030 [v2.10.3.15]: if (alexpresent || apollopresent).
     // Thetis defaults alexpresent to true (console.cs:19135 [v2.10.3.15]:
     // private bool alexpresent = true; setup.designer.cs:8620 [v2.10.3.15]:
     // this.chkAlexPresent.Checked = true;) and Setup sets it for every ANAN
@@ -272,7 +275,7 @@ private:
     float m_alexFwdLimit        = 5.0f;
     // console.cs:26020-26057 [v2.10.3.13]: tunePowerSliderValue (bypass only when ≤ 70)
     int   m_tunePowerSliderValue = 0;
-    // console.cs:26040 [v2.10.3.15]: HardwareSpecific.Model
+    // console.cs:26039 [v2.10.3.15]: HardwareSpecific.Model
     HPSDRModel m_model          = HPSDRModel::FIRST;
 
     float m_protectFactor       = 1.0f;  // NetworkIO.SWRProtect

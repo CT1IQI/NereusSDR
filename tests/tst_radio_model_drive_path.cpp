@@ -702,11 +702,83 @@ private slots:
         QCOMPARE(stopped.count(), 1);
         QCOMPARE(stopped.at(0).at(0).toString(),
                  QString::fromLatin1(kOpenAntennaWarningText));
+        QCOMPARE(RadioModel::openAntennaStopText(),
+                 QString::fromLatin1(kOpenAntennaWarningText));
+        QCOMPARE(model.lastTransmitStopReason().code,
+                 QByteArray(RadioModel::kOpenAntennaStopCode));
         QTRY_COMPARE(mox->state(), MoxState::Rx);
         // The normal unkey ran UIMOXChangedFalse's reset.
         QCOMPARE(prot.protectFactor(), 1.0f);
         QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
         QVERIFY(!prot.windBackLatched());
+    }
+
+    // PR 604 second pass, item 1 (JJ 2026-10-22: "A, hold the key off until
+    // release"): a mic PTT or VOX still held after an open-antenna drop does
+    // not key again until it is released, then keys normally. A deliberate
+    // departure from Thetis, whose PollPTT re-keys from a held source.
+    void openAntenna_heldPttOrVox_doesNotRekeyUntilReleased_data()
+    {
+        QTest::addColumn<bool>("vox");
+        QTest::newRow("mic PTT") << false;
+        QTest::newRow("VOX") << true;
+    }
+
+    void openAntenna_heldPttOrVox_doesNotRekeyUntilReleased()
+    {
+        QFETCH(bool, vox);
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN7000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        MoxController* mox = model.moxController();
+        mox->setMoxCheck({});
+        if (vox) {
+            model.transmitModel().setVoxEnabled(true);
+        }
+        auto press = [&](bool down) {
+            if (vox) {
+                mox->onVoxActive(down);
+            } else {
+                mox->onMicPttFromRadio(down);
+            }
+        };
+        press(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+
+        model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        QVERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+
+        // The source stays held and keeps reporting: nothing keys.
+        for (int i = 0; i < 5; ++i) {
+            press(true);
+            pump();
+        }
+        QVERIFY(!mox->isMox());
+        QCOMPARE(mox->state(), MoxState::Rx);
+        QVERIFY(mox->isStopAllTxLatched());
+
+        // Released, then pressed again: a new press keys normally.
+        press(false);
+        pump();
+        QVERIFY(!mox->isStopAllTxLatched());
+        press(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        press(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
     }
 
     // PR 604 fix wave, item 2: the ANAN-8000D skips the open-antenna check.

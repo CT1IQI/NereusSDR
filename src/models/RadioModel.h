@@ -4155,6 +4155,11 @@ public:
     /// its front panel): the key is stopped with these words.
     static QString ampOperatedUnderKeyText();
     static constexpr char kAmpOperatedUnderKeyStopCode[] = "ampOperatedUnderKey";
+    /// PR 604: the SWR protection saw an open antenna while keyed and
+    /// dropped MOX; Thetis's checkAntennaWarning words
+    /// (console.cs:26177-26185 [v2.10.3.15]), for local and remote windows.
+    static QString openAntennaStopText();
+    static constexpr char kOpenAntennaStopCode[] = "openAntenna";
     /// Task 77 fix round 4: a SmartSDR `amplifier set <key>=<value>` for
     /// the amp model `model` ("PowerGeniusXL" or "TunerGeniusXL"), relayed
     /// to its own connection. A Power Genius operate=1 is held while the
