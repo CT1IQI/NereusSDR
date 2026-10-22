@@ -35,8 +35,8 @@ struct PlaceTakenScreen: View {
         }
         .padding(18)
         .frame(maxWidth: 390)
-        .background(ConnectChrome.sheetFill, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ConnectChrome.sheetEdge, lineWidth: 1))
+        .background(ConnectChrome.sheetFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.sheetEdge, lineWidth: 1))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("placeTakenScreen")
     }

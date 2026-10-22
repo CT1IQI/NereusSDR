@@ -159,8 +159,8 @@ struct TroubleSheet: View {
             }
         }
         .padding(12)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
     }
 }
 
