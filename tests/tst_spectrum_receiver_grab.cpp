@@ -115,32 +115,34 @@ private slots:
 
     void wide_band_edge_zones()
     {
-        // A 30 px band from the center line up.
-        const int loX = xForHz(kCenterHz);
+        // A 30 px band whose low edge sits 20 px above the center line, so
+        // every press below is outside the center line's 8 px strip (which
+        // wins over an edge, center_line_wins_over_a_near_edge).
+        const int loX = xForHz(kCenterHz + 2000.0);
         {
             Pan p;
-            p.receiver(0, kCenterHz, 0, 3000, true);
+            p.receiver(0, kCenterHz, 2000, 5000, true);
             QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
             press(&p.sw, loX + 3);   // 3 px inside the low edge
             moveTo(&p.sw, loX + 13);
             release(&p.sw, loX + 13);
             QCOMPARE(edged.count(), 1);
-            QCOMPARE(edged.first().at(0).toInt(), 1000);
-            QCOMPARE(edged.first().at(1).toInt(), 3000);
+            QCOMPARE(edged.first().at(0).toInt(), 3000);
+            QCOMPARE(edged.first().at(1).toInt(), 5000);
         }
         {
             Pan p;
-            p.receiver(0, kCenterHz, 0, 3000, true);
+            p.receiver(0, kCenterHz, 2000, 5000, true);
             QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
             press(&p.sw, loX - 7);   // 7 px outside
             moveTo(&p.sw, loX - 17);
             release(&p.sw, loX - 17);
             QCOMPARE(edged.count(), 1);
-            QCOMPARE(edged.first().at(0).toInt(), -1000);
+            QCOMPARE(edged.first().at(0).toInt(), 1000);
         }
         {
             Pan p;
-            p.receiver(0, kCenterHz, 0, 3000, true);
+            p.receiver(0, kCenterHz, 2000, 5000, true);
             QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
             QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
             QSignalSpy panned(&p.sw, &SpectrumWidget::centerChanged);
@@ -150,6 +152,32 @@ private slots:
             QCOMPARE(edged.count(), 0);
             QCOMPARE(tuned.count(), 0);
             QVERIFY(panned.count() >= 1);
+        }
+    }
+
+    // The center line wins within its strip: a selected USB receiver whose
+    // low edge is 1 px above its center line (100 Hz low cut) tunes from a
+    // press on the line or on its triangle, rather than resizing the low
+    // edge. Outside the strip the edge still resizes (wide_band_edge_zones).
+    void center_line_wins_over_a_near_edge()
+    {
+        const int centerX = xForHz(kCenterHz);
+        const QPoint presses[] = {
+            QPoint(centerX, kSpecY),      // the center line
+            QPoint(centerX - 4, 3),       // the triangle at the spectrum's top
+        };
+        for (const QPoint& at : presses) {
+            Pan p;
+            p.receiver(0, kCenterHz, 100, 3000, true);
+            QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
+            QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+            QVERIFY(p.sw.spectrumRectForTest().contains(at));
+            press(&p.sw, at.x(), at.y());
+            moveTo(&p.sw, at.x() + 10, at.y());
+            release(&p.sw, at.x() + 10, at.y());
+            QCOMPARE(edged.count(), 0);
+            QCOMPARE(tuned.count(), 1);
+            QCOMPARE(tuned.first().first().toDouble(), kCenterHz + 10 * kHzPerPx);
         }
     }
 

@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): the center line wins within its strip.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): every receiver this pan shows can be
 //                 grabbed (AetherSDR's 8 px edge zones with a 6 px body,
@@ -12514,9 +12516,11 @@ int receiverEdgeHitAtPixel(int mx, int loX, int hiX, int grabPx, int minBodyPx)
 // Each receiver this pan shows offers its filter edges (AetherSDR's
 // filterEdgeHitAtPixel: 8 px outside the band, shrinking inside it so 6 px
 // of body remain), its band body, and a strip 8 px either side of its center
-// line over the spectrum (which covers the triangle under its flag). The
-// selected receiver is tested first and wins any overlap; then the others,
-// topmost first. sliceMarkerGeometry() lists them in paint order with the
+// line over the spectrum (which covers the triangle under its flag). Within
+// that strip the center line wins over the receiver's own edges, so a press
+// on the line or triangle tunes even when an edge lies a pixel away; outside
+// it the edges resize. The selected receiver is tested first and wins any
+// overlap; then the others, topmost first. sliceMarkerGeometry() lists them in paint order with the
 // selected one last, so walking it backwards is exactly that order.
 //
 // Only the selected receiver's edges resize; on any other receiver the edges
@@ -12533,6 +12537,13 @@ SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
         const int centerX = hzToX(g.centreHz, specRect);
         const int loX = hzToX(g.centreHz + g.filterLowHz, specRect);
         const int hiX = hzToX(g.centreHz + g.filterHighHz, specRect);
+        // The center line wins within its strip (2026-10-21): a filter edge
+        // a pixel or two from the line (a 100 Hz low cut) would otherwise
+        // turn every press on the line or its triangle into a resize.
+        if (my >= specRect.top() && my <= specRect.bottom()
+            && std::abs(mx - centerX) <= kReceiverCenterGrabPx) {
+            return ReceiverGrab{ReceiverGrabPart::Tune, g};
+        }
         const int edge = receiverEdgeHitAtPixel(mx, loX, hiX, kReceiverEdgeGrabPx,
                                                 kReceiverMinBodyPx);
         if (edge != 0) {
@@ -12543,10 +12554,6 @@ SpectrumWidget::receiverGrabAt(int mx, int my, const QRect& specRect) const
                                          : ReceiverGrabPart::HighEdge, g};
         }
         if (mx >= std::min(loX, hiX) && mx <= std::max(loX, hiX)) {
-            return ReceiverGrab{ReceiverGrabPart::Tune, g};
-        }
-        if (my >= specRect.top() && my <= specRect.bottom()
-            && std::abs(mx - centerX) <= kReceiverCenterGrabPx) {
             return ReceiverGrab{ReceiverGrabPart::Tune, g};
         }
     }
