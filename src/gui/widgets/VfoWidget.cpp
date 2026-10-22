@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - setFilterFromDrag: a filter edge drag on the pan sets this
+//                flag's slice's filter. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code (Claude Opus 5.5).
 //   2026-10-18 - Drag the flag to tune (fold and unfold wait for the
 //                release; a press on an RIT/XIT or offset value selects
 //                but never drags), and the wheel steps through
@@ -4153,6 +4156,19 @@ void VfoWidget::endFlagDrag()
         unsetCursor();
         emit flagDragFinished();
     }
+}
+
+bool VfoWidget::setFilterFromDrag(int low, int high)
+{
+    if (isListening()) {
+        return false;
+    }
+    if (low == m_filterLowHz && high == m_filterHighHz) {
+        return false;
+    }
+    setFilter(low, high);
+    emit filterChanged(low, high);
+    return true;
 }
 
 bool VfoWidget::tuneFromDrag(double hz)

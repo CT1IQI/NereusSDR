@@ -10,7 +10,8 @@
 // Modification history (NereusSDR):
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): the center line wins within its strip;
-//                 a drag tunes by its pixel travel from the press.
+//                 a drag tunes by its pixel travel from the press; a drag
+//                 moves the receiver grabbed, through its flag.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): every receiver this pan shows can be
 //                 grabbed (AetherSDR's 8 px edge zones with a 6 px body,
@@ -13096,20 +13097,25 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_filterDragStartX = mx;
         m_filterDragStartHz = (m_draggingFilter == FilterEdge::Low)
             ? grab.marker.filterLowHz : grab.marker.filterHighHz;
-        // The edge that stays put is the grabbed receiver's own.
-        m_filterLowHz = grab.marker.filterLowHz;
-        m_filterHighHz = grab.marker.filterHighHz;
+        // The edge that stays put is the grabbed receiver's own. A receiver
+        // with a flag has its filter set through that flag (2026-10-21);
+        // the pan's own pair is left for its own slice.
+        m_filterDragSliceIndex = grab.marker.flag ? grab.marker.sliceIndex : -1;
+        m_filterDragLowHz = grab.marker.filterLowHz;
+        m_filterDragHighHz = grab.marker.filterHighHz;
         setCursor(Qt::SizeHorCursor);
         return;
     }
     if (grab.part == ReceiverGrabPart::Tune) {
         // A receiver that is not selected becomes the selected one, through
-        // its flag's own activation, and this same press drags it. It is
-        // tuned through its flag: selecting it may not make it this pan's
-        // tuning target before the drag's first move (a hosting window's
-        // select goes through the Core).
-        const bool viaFlag = !grab.marker.active && grab.marker.flag;
-        if (viaFlag) {
+        // its flag's own activation, and this same press drags it. Any
+        // receiver with a flag is tuned through that flag: selecting it may
+        // not make it this pan's tuning target before the drag's first move
+        // (a hosting window's select goes through the Core), and the slice
+        // the pan's frequencyClicked resolves to (sliceForPan) need not be
+        // the one grabbed (2026-10-21).
+        const bool viaFlag = grab.marker.flag != nullptr;
+        if (!grab.marker.active && viaFlag) {
             if (VfoWidget* flag = m_vfoWidgets.value(grab.marker.sliceIndex, nullptr)) {
                 flag->requestActivation();
             }
@@ -13365,8 +13371,8 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         double hzPerPx = m_bandwidthHz / specRect.width();
         int newHz = m_filterDragStartHz +
             static_cast<int>(std::round((mx - m_filterDragStartX) * hzPerPx));
-        int low = m_filterLowHz;
-        int high = m_filterHighHz;
+        int low = m_filterDragLowHz;
+        int high = m_filterDragHighHz;
         if (m_draggingFilter == FilterEdge::Low) {
             low = newHz;
         } else {
@@ -13374,9 +13380,19 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
         // Ensure minimum 10 Hz width
         if (std::abs(high - low) >= 10) {
-            m_filterLowHz = low;
-            m_filterHighHz = high;
-            emit filterEdgeDragged(low, high);
+            m_filterDragLowHz = low;
+            m_filterDragHighHz = high;
+            // The grabbed receiver's own filter (2026-10-21): through its
+            // flag when it has one, else the pan's own.
+            if (m_filterDragSliceIndex >= 0) {
+                if (VfoWidget* flag = m_vfoWidgets.value(m_filterDragSliceIndex, nullptr)) {
+                    flag->setFilterFromDrag(low, high);
+                }
+            } else {
+                m_filterLowHz = low;
+                m_filterHighHz = high;
+                emit filterEdgeDragged(low, high);
+            }
         }
         update();
         return;

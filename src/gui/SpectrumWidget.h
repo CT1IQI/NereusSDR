@@ -1,7 +1,8 @@
 // Modification history (NereusSDR):
 //   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): a drag keeps the receiver's press
-//                 frequency, not an offset against the press-time view.
+//                 frequency, not an offset against the press-time view;
+//                 the filter edge drag's own slice and filter.
 //   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): receiver grab hit test, drag offset
 //                 state and the wheel step accumulator.
@@ -4592,6 +4593,14 @@ private:
     FilterEdge m_draggingFilter{FilterEdge::None};
     int  m_filterDragStartX{0};     // pixel X at grab time
     int  m_filterDragStartHz{0};    // filter edge Hz at grab time
+    // The grabbed receiver's flag (-1: the pan's own filter, no flag) and
+    // its filter as the drag has set it (2026-10-21). A flagged receiver's
+    // filter is set through its flag, never through this pan's
+    // m_filterLowHz/m_filterHighHz and filterEdgeDragged, which belong to
+    // the pan's own slice.
+    int  m_filterDragSliceIndex{-1};
+    int  m_filterDragLowHz{0};
+    int  m_filterDragHighHz{0};
 
     // Passband center drag (slide-to-tune) — AetherSDR:434
     bool m_draggingVfo{false};
@@ -4618,8 +4627,10 @@ private:
     // frequency and the press column are kept, so the receiver moves by the
     // cursor's pixel travel at the current Hz per pixel and never jumps to
     // the cursor, nor by a view change mid-drag (2026-10-21).
-    // A receiver other than the selected one is tuned through its own flag
-    // (VfoWidget::tuneFromDrag), the path the flag's wheel uses.
+    // A receiver with a flag, the selected one included, is tuned through
+    // its own flag (VfoWidget::tuneFromDrag), the path the flag's wheel
+    // uses, so the drag moves the receiver grabbed and not whichever slice
+    // the pan's frequencyClicked resolves to (2026-10-21).
     struct ReceiverDrag {
         int    sliceIndex{-1};   // -1: the pan's own VFO, no flag
         bool   viaFlag{false};

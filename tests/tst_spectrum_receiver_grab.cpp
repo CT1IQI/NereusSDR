@@ -8,7 +8,9 @@
 // a strip 8 px either side of its center line. The selected receiver wins
 // any overlap; a press on another receiver selects it and the same drag
 // tunes it. A drag keeps the grab offset, a press with no move does not
-// tune, and nothing tunes while the pan shows transmit.
+// tune, and nothing tunes while the pan shows transmit. A drag moves the
+// receiver grabbed, through its flag, and tunes by its travel from the
+// press whatever the view does meanwhile.
 //
 // Driven through the widget's own event handlers with sent mouse events
 // (offscreen, so this proves the hit test and the tune, not a real click
@@ -99,10 +101,10 @@ private slots:
     void narrow_band_center_press_tunes()
     {
         Pan p;
-        p.receiver(0, kCenterHz, 0, 400, true);   // 4 px wide
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 400, true);   // 4 px wide
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         QSignalSpy panned(&p.sw, &SpectrumWidget::centerChanged);
-        QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
+        QSignalSpy edged(a, &VfoWidget::filterChanged);
         const int x = xForHz(kCenterHz + 200.0);
         press(&p.sw, x);
         moveTo(&p.sw, x + 20);
@@ -121,8 +123,8 @@ private slots:
         const int loX = xForHz(kCenterHz + 2000.0);
         {
             Pan p;
-            p.receiver(0, kCenterHz, 2000, 5000, true);
-            QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
+            VfoWidget* a = p.receiver(0, kCenterHz, 2000, 5000, true);
+            QSignalSpy edged(a, &VfoWidget::filterChanged);
             press(&p.sw, loX + 3);   // 3 px inside the low edge
             moveTo(&p.sw, loX + 13);
             release(&p.sw, loX + 13);
@@ -132,8 +134,8 @@ private slots:
         }
         {
             Pan p;
-            p.receiver(0, kCenterHz, 2000, 5000, true);
-            QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
+            VfoWidget* a = p.receiver(0, kCenterHz, 2000, 5000, true);
+            QSignalSpy edged(a, &VfoWidget::filterChanged);
             press(&p.sw, loX - 7);   // 7 px outside
             moveTo(&p.sw, loX - 17);
             release(&p.sw, loX - 17);
@@ -142,9 +144,9 @@ private slots:
         }
         {
             Pan p;
-            p.receiver(0, kCenterHz, 2000, 5000, true);
-            QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
-            QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+            VfoWidget* a = p.receiver(0, kCenterHz, 2000, 5000, true);
+            QSignalSpy edged(a, &VfoWidget::filterChanged);
+            QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
             QSignalSpy panned(&p.sw, &SpectrumWidget::centerChanged);
             press(&p.sw, loX - 9);   // 9 px outside: the pan
             moveTo(&p.sw, loX - 49);
@@ -168,9 +170,9 @@ private slots:
         };
         for (const QPoint& at : presses) {
             Pan p;
-            p.receiver(0, kCenterHz, 100, 3000, true);
-            QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
-            QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+            VfoWidget* a = p.receiver(0, kCenterHz, 100, 3000, true);
+            QSignalSpy edged(a, &VfoWidget::filterChanged);
+            QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
             QVERIFY(p.sw.spectrumRectForTest().contains(at));
             press(&p.sw, at.x(), at.y());
             moveTo(&p.sw, at.x() + 10, at.y());
@@ -185,8 +187,8 @@ private slots:
     {
         Pan p;
         // The band sits 10 to 30 px left of the center line.
-        p.receiver(0, kCenterHz, -3000, -1000, true);
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz, -3000, -1000, true);
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         const int x = xForHz(kCenterHz) + 6;
         press(&p.sw, x, 5);
         moveTo(&p.sw, x + 10, 5);
@@ -199,8 +201,8 @@ private slots:
     {
         Pan p;
         // Off the step grid, so a snap alone would move it.
-        p.receiver(0, kCenterHz + 50.0, 0, 3000, true);
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz + 50.0, 0, 3000, true);
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         const int x = xForHz(kCenterHz + 1500.0);
         press(&p.sw, x);
         moveTo(&p.sw, x, kSpecY + 3);   // vertical wobble only
@@ -213,8 +215,8 @@ private slots:
     void return_to_the_press_column_tunes_back()
     {
         Pan p;
-        p.receiver(0, kCenterHz, 0, 3000, true);
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         const int x = xForHz(kCenterHz + 1500.0);
         press(&p.sw, x);
         moveTo(&p.sw, x + 10);
@@ -231,8 +233,8 @@ private slots:
     void view_recenter_mid_drag_does_not_jump()
     {
         Pan p;
-        p.receiver(0, kCenterHz, 0, 3000, true);
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         const int x = xForHz(kCenterHz + 1500.0);
         press(&p.sw, x);
         p.sw.setFrequencyRange(kCenterHz + 25000.0, kBandwidthHz);
@@ -250,10 +252,11 @@ private slots:
         p.sw.setVfoFrequency(kCenterHz);
         p.sw.setCtunEnabled(false);   // re-centers the view on the VFO
         QCOMPARE(p.sw.centerFrequency(), kCenterHz);
-        p.receiver(0, kCenterHz, 0, 3000, true);
-        QObject::connect(&p.sw, &SpectrumWidget::frequencyClicked, &p.sw,
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
+        // The model's echo: the slice's new frequency reaches the pan.
+        QObject::connect(a, &VfoWidget::frequencyChanged, &p.sw,
                          [&p](double hz) { p.sw.setVfoFrequency(hz); });
-        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        QSignalSpy tuned(a, &VfoWidget::frequencyChanged);
         QSignalSpy panned(&p.sw, &SpectrumWidget::centerChanged);
         const int x = xForHz(kCenterHz + 1500.0);
         press(&p.sw, x);
@@ -318,8 +321,8 @@ private slots:
     {
         Pan p;
         VfoWidget* b = p.receiver(1, kCenterHz + 1000.0, 0, 3000, false);
-        p.receiver(0, kCenterHz, 0, 3000, true);
-        QSignalSpy tunedPan(&p.sw, &SpectrumWidget::frequencyClicked);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
+        QSignalSpy tunedA(a, &VfoWidget::frequencyChanged);
         QSignalSpy tunedB(b, &VfoWidget::frequencyChanged);
         QSignalSpy selectB(b, &VfoWidget::sliceActivationRequested);
         const int x = xForHz(kCenterHz + 2000.0);   // inside both bands
@@ -328,16 +331,16 @@ private slots:
         release(&p.sw, x + 10);
         QCOMPARE(selectB.count(), 0);
         QCOMPARE(tunedB.count(), 0);
-        QCOMPARE(tunedPan.count(), 1);
-        QCOMPARE(tunedPan.first().first().toDouble(), kCenterHz + 10 * kHzPerPx);
+        QCOMPARE(tunedA.count(), 1);
+        QCOMPARE(tunedA.first().first().toDouble(), kCenterHz + 10 * kHzPerPx);
     }
 
     void transmit_overlay_withholds_every_drag()
     {
         Pan p;
-        p.receiver(0, kCenterHz, 0, 3000, true);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
         VfoWidget* b = p.receiver(1, kCenterHz + 10000.0, 0, 3000, false);
-        QSignalSpy tunedPan(&p.sw, &SpectrumWidget::frequencyClicked);
+        QSignalSpy tunedA(a, &VfoWidget::frequencyChanged);
         QSignalSpy tunedB(b, &VfoWidget::frequencyChanged);
         const int xA = xForHz(kCenterHz + 1500.0);
         const int xB = xForHz(kCenterHz + 11500.0);
@@ -346,7 +349,7 @@ private slots:
         press(&p.sw, xA);
         moveTo(&p.sw, xA + 10);
         release(&p.sw, xA + 10);
-        QCOMPARE(tunedPan.count(), 1);
+        QCOMPARE(tunedA.count(), 1);
 
         p.sw.setMoxOverlay(true);
         press(&p.sw, xA);
@@ -355,7 +358,7 @@ private slots:
         press(&p.sw, xB);
         moveTo(&p.sw, xB + 20);
         release(&p.sw, xB + 20);
-        QCOMPARE(tunedPan.count(), 1);
+        QCOMPARE(tunedA.count(), 1);
         QCOMPARE(tunedB.count(), 0);
 
         p.sw.setMoxOverlay(false);
@@ -370,12 +373,86 @@ private slots:
         Pan p;
         VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, true);
         a->setLocked(true);
+        QSignalSpy tunedA(a, &VfoWidget::frequencyChanged);
         QSignalSpy tunedPan(&p.sw, &SpectrumWidget::frequencyClicked);
         const int x = xForHz(kCenterHz + 1500.0);
         press(&p.sw, x);
         moveTo(&p.sw, x + 20);
         release(&p.sw, x + 20);
+        QCOMPARE(tunedA.count(), 0);
         QCOMPARE(tunedPan.count(), 0);
+    }
+
+    // A drag moves the receiver grabbed. The pan's own slice (A: its VFO
+    // and filter, what frequencyClicked and filterEdgeDragged act on through
+    // MainWindow::sliceForPan) is not the selected one here; B is. Dragging
+    // B's body and B's edge changes B through its flag and leaves A, the
+    // pan's signals and the pan's own filter alone.
+    void drag_moves_the_grabbed_receiver_not_the_pans_own()
+    {
+        Pan p;
+        p.sw.setVfoFrequency(kCenterHz);
+        p.sw.setFilterOffset(0, 3000);
+        VfoWidget* a = p.receiver(0, kCenterHz, 0, 3000, false);
+        VfoWidget* b = p.receiver(1, kCenterHz + 10000.0, 0, 3000, true);
+        QSignalSpy tunedPan(&p.sw, &SpectrumWidget::frequencyClicked);
+        QSignalSpy edgedPan(&p.sw, &SpectrumWidget::filterEdgeDragged);
+        QSignalSpy tunedA(a, &VfoWidget::frequencyChanged);
+        QSignalSpy filterA(a, &VfoWidget::filterChanged);
+        QSignalSpy tunedB(b, &VfoWidget::frequencyChanged);
+        QSignalSpy filterB(b, &VfoWidget::filterChanged);
+
+        // B's body.
+        const int xB = xForHz(kCenterHz + 11500.0);
+        press(&p.sw, xB);
+        moveTo(&p.sw, xB + 10);
+        release(&p.sw, xB + 10);
+        QCOMPARE(tunedB.count(), 1);
+        QCOMPARE(tunedB.first().first().toDouble(), kCenterHz + 10000.0 + 10 * kHzPerPx);
+
+        // B's high edge, 3 px inside it: out 10 px.
+        const int bHighX = xForHz(b->frequency() + 3000.0);
+        press(&p.sw, bHighX - 3);
+        moveTo(&p.sw, bHighX + 7);
+        release(&p.sw, bHighX + 7);
+        QCOMPARE(filterB.count(), 1);
+        QCOMPARE(filterB.first().at(0).toInt(), 0);
+        QCOMPARE(filterB.first().at(1).toInt(), 4000);
+        QCOMPARE(b->filterHigh(), 4000);
+
+        QCOMPARE(tunedPan.count(), 0);
+        QCOMPARE(edgedPan.count(), 0);
+        QCOMPARE(tunedA.count(), 0);
+        QCOMPARE(filterA.count(), 0);
+        QCOMPARE(p.sw.filterLowForTest(), 0);
+        QCOMPARE(a->frequency(), kCenterHz);
+        QCOMPARE(a->filterHigh(), 3000);
+    }
+
+    // A pan with no flags (a bare marker for its own VFO) still tunes and
+    // resizes through its own signals.
+    void pan_without_flags_tunes_and_resizes_its_own()
+    {
+        Pan p;
+        p.sw.setVfoFrequency(kCenterHz);
+        p.sw.setFilterOffset(2000, 5000);
+        QSignalSpy tuned(&p.sw, &SpectrumWidget::frequencyClicked);
+        QSignalSpy edged(&p.sw, &SpectrumWidget::filterEdgeDragged);
+        const int x = xForHz(kCenterHz + 3500.0);
+        press(&p.sw, x);
+        moveTo(&p.sw, x + 10);
+        release(&p.sw, x + 10);
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(tuned.first().first().toDouble(), kCenterHz + 10 * kHzPerPx);
+
+        const int loX = xForHz(kCenterHz + 2000.0);
+        press(&p.sw, loX + 3);
+        moveTo(&p.sw, loX + 13);
+        release(&p.sw, loX + 13);
+        QCOMPARE(edged.count(), 1);
+        QCOMPARE(edged.first().at(0).toInt(), 3000);
+        QCOMPARE(edged.first().at(1).toInt(), 5000);
+        QCOMPARE(p.sw.filterLowForTest(), 3000);
     }
 };
 
