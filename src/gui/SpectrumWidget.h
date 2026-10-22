@@ -1,9 +1,10 @@
 // Modification history (NereusSDR):
 //   2026-10-22  fftTraceFloorNdc(), fftTraceShiftDb() and
 //                 buildFftPeakVertices(), with their test seams, so the GPU
-//                 trace sits on its grid. Ported from Longpath (PR 100,
-//                 c3ce95bf [@383f058]) by J.J. Boyd (KG4VCF), with
-//                 AI-assisted transformation via Claude Code.
+//                 trace sits on its grid. Ported from Longpath (Martin
+//                 Fischer, OE5SOS; PR 100, c3ce95bf [@383f058]) by J.J.
+//                 Boyd (KG4VCF), with AI-assisted transformation via
+//                 Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -1741,6 +1742,7 @@ public:
         FftTraceVerticesForTest v;
         buildFftTraceVertices(static_cast<int>(qMin<qsizetype>(m_renderedPixels.size(),
                                                                kMaxFftBins)),
+                              fftTraceFloorNdc(spectrumLayout().spectrum),
                               true, v.line, v.fill);
         return v;
     }
@@ -1758,7 +1760,7 @@ public:
         QVector<float> v;
         buildFftPeakVertices(static_cast<int>(qMin<qsizetype>(m_pxPeakHold.size(),
                                                               kMaxFftBins)),
-                             spectrumLayout().spectrum, v);
+                             fftTraceFloorNdc(spectrumLayout().spectrum), v);
         return v;
     }
 #endif
@@ -5020,12 +5022,15 @@ private:
     static constexpr int kMaxFftBins = 65536;
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
     // The trace line's vertices and, when asked, the fill's, for the first
-    // n display pixels. renderGpuFrame() uploads what this builds.
-    void buildFftTraceVertices(int n, bool buildFill, QVector<float>& lineVerts,
+    // n display pixels, with the dBm floor at yFloor (fftTraceFloorNdc() of
+    // the spectrum area). renderGpuFrame() uploads what this builds.
+    void buildFftTraceVertices(int n, float yFloor, bool buildFill,
+                               QVector<float>& lineVerts,
                                QVector<float>& fillVerts) const;
     // The peak hold line's vertices for the first n display pixels, on the
-    // trace's floor and shift. renderGpuFrame() uploads what this builds.
-    void buildFftPeakVertices(int n, const QRect& specRect,
+    // trace's floor (yFloor) and shift. renderGpuFrame() uploads what this
+    // builds.
+    void buildFftPeakVertices(int n, float yFloor,
                               QVector<float>& peakVerts) const;
     // The trace's dBm floor in the viewport's device coordinates (the top
     // of the band plan strip, as dbmToYf) and the dB added to every value

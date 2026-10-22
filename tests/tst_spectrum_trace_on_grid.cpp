@@ -63,11 +63,13 @@ double ndcToY(float ndc, const QRect& r)
     return r.y() + (1.0 - static_cast<double>(ndc)) * 0.5 * r.height();
 }
 
-// The grid line dbmToYf() gives is drawn one pixel wide on that row: its
-// centre is half a pixel below the row's top edge, where a trace vertex at
-// the same height lands.
-constexpr double kGridLineCentre = 0.5;
-constexpr double kTolerancePx = 1.0;
+// A trace vertex lands exactly one pixel below dbmToYf(): dbmToYf() counts
+// from r.bottom() (top + height - 1), the viewport's NDC -1 is its bottom
+// edge (top + height). With the same floor (the top of the band plan strip)
+// and the same shift, the offset is 1 px in every row, band plan and
+// normalization included; the tolerance only absorbs float rounding.
+constexpr double kVertexBelowGridPx = 1.0;
+constexpr double kTolerancePx = 0.05;
 
 } // namespace
 
@@ -132,27 +134,27 @@ private slots:
         w.setRenderedPixelsForTest(QVector<float>(kPixels, kTraceDbm));
         w.setPeakHoldPixelsForTest(QVector<float>(kPixels, kPeakDbm));
 
-        const double gridTrace = w.gridYForTest(kTraceDbm) + kGridLineCentre;
+        const double gridTrace = w.gridYForTest(kTraceDbm) + kVertexBelowGridPx;
         const auto v = w.fftTraceVerticesForTest();
         QCOMPARE(v.line.size(), kPixels * kStride);
         for (int j = 0; j < kPixels; ++j) {
             const double y = ndcToY(v.line[j * kStride + 1], r);
             QVERIFY2(std::abs(y - gridTrace) <= kTolerancePx,
-                     qPrintable(QStringLiteral("trace pixel %1 at y=%2, its grid line at %3")
-                                    .arg(j).arg(y, 0, 'f', 1).arg(gridTrace, 0, 'f', 1)));
+                     qPrintable(QStringLiteral("trace pixel %1 at y=%2, expected %3 (1 px below its grid line)")
+                                    .arg(j).arg(y, 0, 'f', 3).arg(gridTrace, 0, 'f', 3)));
             // The fill's lower edge still reaches the bottom of the area,
             // under the band plan strip, as the CPU path fills to its bottom.
             QCOMPARE(v.fill[(2 * j + 1) * kStride + 1], -1.0f);
         }
 
-        const double gridPeak = w.gridYForTest(kPeakDbm) + kGridLineCentre;
+        const double gridPeak = w.gridYForTest(kPeakDbm) + kVertexBelowGridPx;
         const QVector<float> peak = w.fftPeakVerticesForTest();
         QCOMPARE(peak.size(), kPixels * kStride);
         for (int j = 0; j < kPixels; ++j) {
             const double y = ndcToY(peak[j * kStride + 1], r);
             QVERIFY2(std::abs(y - gridPeak) <= kTolerancePx,
-                     qPrintable(QStringLiteral("peak hold pixel %1 at y=%2, its grid line at %3")
-                                    .arg(j).arg(y, 0, 'f', 1).arg(gridPeak, 0, 'f', 1)));
+                     qPrintable(QStringLiteral("peak hold pixel %1 at y=%2, expected %3 (1 px below its grid line)")
+                                    .arg(j).arg(y, 0, 'f', 3).arg(gridPeak, 0, 'f', 3)));
         }
 #endif
     }
