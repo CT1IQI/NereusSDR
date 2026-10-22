@@ -49,6 +49,9 @@
 //                 inside it waits for it to end, then sends. The probes are
 //                 delayed, never dropped. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - walkBoundMs(), the longest a running walk can still take,
+//                 for the startup auto-connect wait. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -323,6 +326,22 @@ void RadioDiscovery::stopDiscovery()
         return;
     }
     emit discoveryFinished();
+}
+
+qint64 RadioDiscovery::walkBoundMs() const
+{
+    if (!m_scanRunning) {
+        return 0;
+    }
+    // The same bound as the attempt deadline in beginAttempt(): NICs ×
+    // attempts × kAttemptDeadlineFactor × quietPollsBeforeResend ×
+    // pollTimeoutMs, counted over every NIC of the walk.
+    const qint64 perAttempt = qint64(kAttemptDeadlineFactor)
+        * qMax(1, m_scanTiming.quietPollsBeforeResend)
+        * qMax(10, m_scanTiming.pollTimeoutMs);
+    const qint64 attempts = qint64(qMax(1, int(m_scanNics.size())))
+        * qMax(1, m_scanTiming.attemptsPerNic);
+    return holdOffRemainingMs() + attempts * perAttempt;
 }
 
 QList<RadioInfo> RadioDiscovery::discoveredRadios() const

@@ -1056,6 +1056,7 @@ set(CORE_SOURCES
     src/core/ZipArchive.cpp
     src/core/SupportBundle.cpp
     src/core/RadioDiscovery.cpp
+    src/core/PinnedRadioWait.cpp
     src/core/RadioConnection.cpp
     src/core/RadioLinkStats.cpp
     src/core/TciProtocol.cpp

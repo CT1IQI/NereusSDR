@@ -28,6 +28,9 @@
 //   2026-10-22 - m_scanHoldOffTimer: a running walk's next attempt waits
 //                 out the post-disconnect quiet period. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - isScanRunning() and walkBoundMs() for the startup
+//                 auto-connect wait (PinnedRadioWait). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -249,6 +252,14 @@ public:
 
     void startDiscovery();
     void stopDiscovery();
+
+    // True from the start of a walk until its discoveryFinished. A
+    // startDiscovery() deferred by the quiet period is not running yet.
+    bool isScanRunning() const { return m_scanRunning; }
+    // The longest the running walk can still take, in ms: the quiet period
+    // left plus every NIC's attempts at their hard deadline. 0 when no walk
+    // runs. PinnedRadioWait sizes its backstop from it.
+    qint64 walkBoundMs() const;
 
     // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup).
     //
