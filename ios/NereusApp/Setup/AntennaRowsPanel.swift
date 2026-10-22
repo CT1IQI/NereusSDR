@@ -8,8 +8,11 @@ import SwiftUI
 /// a column for each antenna it describes (for receive, the RX1 group and
 /// the receive-only group, named for this radio), the chosen antenna
 /// filled. A tap on another port chooses it for that band on the
-/// connected radio. A port blocked for transmit is greyed; the transmit
-/// table locks while the radio is on the air; the receive table does not.
+/// connected radio. The receive-only group is checkboxes, as on the
+/// desktop: its first two rule each other out, XVTR stands alone, and a
+/// tap on a checked box turns it off. A port blocked for transmit is
+/// greyed; the transmit table locks while the radio is on the air; the
+/// receive table does not.
 struct AntennaRowsPanel: View {
     let control: SetupDescription.Control
     let category: String
@@ -95,7 +98,7 @@ struct AntennaRowsPanel: View {
         return Button {
             choose(band: row.band, column: column.id, key: key)
         } label: {
-            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+            Image(systemName: Self.symbol(checkbox: column.field == "rxOnly", selected: selected))
                 .font(.title3)
                 .foregroundStyle(blocked ? Color.secondary.opacity(0.4) : selected ? Color.accentColor : Color.secondary)
                 .frame(width: Self.cellWidth, height: 36)
@@ -103,8 +106,27 @@ struct AntennaRowsPanel: View {
         .buttonStyle(.plain)
         .disabled(!enabled || blocked || pending != nil)
         .accessibilityLabel(tooltip)
-        .accessibilityValue(selected ? "Chosen" : blocked ? SetupControlDispatcher.antennaBlockedReason : "")
+        .accessibilityValue(Self.accessibilityValue(checkbox: column.field == "rxOnly", selected: selected,
+                                                    blocked: blocked))
         .accessibilityIdentifier("antenna.\(control.id).\(key)")
+    }
+
+    /// A receive-only cell is a checkbox; every other cell is a radio button.
+    static func symbol(checkbox: Bool, selected: Bool) -> String {
+        if checkbox {
+            return selected ? "checkmark.square.fill" : "square"
+        }
+        return selected ? "largecircle.fill.circle" : "circle"
+    }
+
+    static func accessibilityValue(checkbox: Bool, selected: Bool, blocked: Bool) -> String {
+        if blocked {
+            return SetupControlDispatcher.antennaBlockedReason
+        }
+        if checkbox {
+            return selected ? "Checked" : "Not checked"
+        }
+        return selected ? "Chosen" : ""
     }
 
     private func choose(band: Int, column: String, key: String) {

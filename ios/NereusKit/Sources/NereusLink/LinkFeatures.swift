@@ -55,9 +55,11 @@
 /// their bounded answer; the Core then sends `settingsHygieneVersion`. At
 /// 1 the Core has no repair, and its greyed Reset is shown as it words it.
 ///
-/// `radioAntennaRows` 1: the app's per-band antenna tables send
+/// `radioAntennaRows` 2: the app's per-band antenna tables send
 /// `setAlexTxAntennaForRadio` and `setAlexRxAntennaForRadio` with the
 /// connected radio's address; the Core then sends `radioAntennaRowsVersion`.
+/// At 2 a band's receive-only value is the checkbox sum 0 to 5 (XVTR with
+/// the first or second receive-only input is 4 or 5); at 1 it is 0 to 3.
 ///
 /// `vax` 1: the app's VAX Audio page shows the VAX channels of the
 /// computer the Core runs on; the Core then sends `vaxVersion` and, at 1,
@@ -220,7 +222,7 @@
 public enum LinkFeatures {
     public static let app: [String: Int] = ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
                                             "setupDescription": 29, "settingsHygiene": 2,
-                                            "radioAntennaRows": 1,
+                                            "radioAntennaRows": 2,
                                             "vax": 1, "txEqCurve": 2,
                                             "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1,
                                             CoreAddressList.featureName: 1,

@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
+//                checkbox sum) are named by the XVTR label, and a slice's
+//                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-17 - teardownConnection stops the TX worker before the audio
 //                engine, which destroys the TX input and VAX TX buses the
 //                worker reads. J.J. Boyd (KG4VCF), AI-assisted via
@@ -23389,10 +23393,12 @@ QString RadioModel::receiveAntennaLabel(Band band) const
     // iPhone app Task 75: the receive antenna's name as a slice shows it
     // (SliceModel::refreshAntennasFromAlex): the SKU's RX-only label when
     // the bypass input is chosen, otherwise ANT1..ANT3.
-    const int rxOnly = m_alexController.rxOnlyAnt(band);
-    if (rxOnly >= 1 && rxOnly <= 3) {
+    // 4 and 5 (XVTR with an input) are named by the XVTR box, as Thetis
+    // names the winning box (AlexController::rxOnlyLabelSlot).
+    const int slot = AlexController::rxOnlyLabelSlot(m_alexController.rxOnlyAnt(band));
+    if (slot >= 0) {
         const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
-        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(slot)];
         if (!label.isEmpty()) {
             return label;
         }
@@ -24322,10 +24328,16 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // RX-only label: find 1-based position in SkuUiProfile::rxOnlyLabels.
             const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
             const auto& lbls = sku.rxOnlyLabels;
+            const Band rxOnlyBand = bandFromFrequency(slice->frequency());
             for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
                 if (lbls[static_cast<size_t>(i)] == ant) {
-                    m_alexController.setRxOnlyAnt(
-                        bandFromFrequency(slice->frequency()), i + 1);
+                    // XVTR with an input (4, 5) is shown as XVTR: the
+                    // slice's echo of that label keeps the pair.
+                    if (AlexController::rxOnlyLabelSlot(
+                            m_alexController.rxOnlyAnt(rxOnlyBand)) == i) {
+                        break;
+                    }
+                    m_alexController.setRxOnlyAnt(rxOnlyBand, i + 1);
                     break;
                 }
             }

@@ -427,7 +427,7 @@
         {
             "kind": "i64",
             "name": "radioAntennaRowsVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
