@@ -55,13 +55,14 @@ struct SetupTab: View {
 
     var body: some View {
         NavigationStack(path: $router.path) {
-            List {
-                Section {
+            SetupPageContainer {
+                SetupPanelSection {
                     ForEach(tree) { category in
                         NavigationLink(value: category.opensPage.map(SetupTree.Route.page)
                                        ?? SetupTree.Route.category(category.id)) {
                             SetupRow(title: category.title, detail: category.summary, tag: category.tag)
                         }
+                        .buttonStyle(SetupLinkStyle())
                         .accessibilityIdentifier(category.title)
                     }
                 } footer: {
@@ -69,12 +70,12 @@ struct SetupTab: View {
                         .accessibilityIdentifier("setupNote")
                 }
                 if let buildTag {
-                    Section {
-                        Text(BuildTag.label(for: buildTag))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("SetupBuildTag")
-                    }
+                    // A test build's name, small at the foot, outside the panels.
+                    Text(BuildTag.label(for: buildTag))
+                        .font(.footnote)
+                        .foregroundStyle(WorkspacePalette.textTertiary)
+                        .padding(.horizontal, 6)
+                        .accessibilityIdentifier("SetupBuildTag")
                 }
             }
             .navigationTitle("Setup")
@@ -99,8 +100,8 @@ struct SetupTab: View {
         switch route {
         case .category(let id):
             if let category = tree.first(where: { $0.id == id }) {
-                List {
-                    Section {
+                SetupPageContainer {
+                    SetupPanelSection {
                         ForEach(category.pages, id: \.destination) { entry in
                             if let reason = entry.unavailableReason {
                                 // Listed greyed with its reason, never left out.
@@ -110,6 +111,7 @@ struct SetupTab: View {
                                 NavigationLink(value: Self.route(entry.destination)) {
                                     SetupRow(title: entry.title, detail: nil, tag: entry.tag)
                                 }
+                                .buttonStyle(SetupLinkStyle())
                                 .accessibilityIdentifier(entry.title)
                             }
                         }

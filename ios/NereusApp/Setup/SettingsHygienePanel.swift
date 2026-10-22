@@ -88,7 +88,7 @@ struct SettingsHygienePanel: View {
                     }
                     Text(issue.detail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("\(control.id).issue.\(index)")
@@ -96,7 +96,7 @@ struct SettingsHygienePanel: View {
         } else if let reason = panel.reportReason {
             Text(reason)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
                 .accessibilityIdentifier("\(control.id).reportReason")
         }
     }
@@ -119,7 +119,7 @@ struct SettingsHygienePanel: View {
             if let reason {
                 Text(reason)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).\(id).reason")
             }
         }
