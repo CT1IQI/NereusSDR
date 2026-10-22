@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - refreshAntennasFromAlex names RX-only 4 and 5 by the XVTR
+//                label. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // 2026-10-14 - Capture per-band persistence values before deferred saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
@@ -862,7 +865,7 @@ void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
                                          Band band,
                                          const SkuUiProfile* sku)
 {
-    const int rxOnly = alex.rxOnlyAnt(band);  // 0=none, 1/2/3 indexed
+    const int rxOnly = alex.rxOnlyAnt(band);  // 0=none, 1..5 (checkbox sum)
     const int rx     = alex.rxAnt(band);      // 1..3
     const int tx     = alex.txAnt(band);      // 1..3
     auto name = [](int n) {
@@ -879,8 +882,11 @@ void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
     // is empty (defensive — should never happen because rxOnlyLabels is
     // always-3 in SkuUiProfile.h).
     QString rxLabel;
-    if (sku && rxOnly >= 1 && rxOnly <= 3) {
-        const QString& slot = sku->rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+    // 4 and 5 (XVTR with an input, Thetis's checkbox sum) are named by the
+    // XVTR box, as Thetis names the winning box (rxOnlyLabelSlot).
+    const int rxOnlySlot = AlexController::rxOnlyLabelSlot(rxOnly);
+    if (sku && rxOnlySlot >= 0) {
+        const QString& slot = sku->rxOnlyLabels[static_cast<size_t>(rxOnlySlot)];
         rxLabel = slot.isEmpty() ? name(rx) : slot;
     } else {
         rxLabel = name(rx);
