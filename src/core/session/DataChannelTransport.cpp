@@ -1563,14 +1563,6 @@ void DataChannelTransport::handleOpen()
 
 namespace {
 
-// A connection closing on its own after its transport let it go. The
-// channel's close (a stream reset) is queued behind what was sent on it,
-// and the peer's close flushes the SCTP send queue and shuts SCTP down
-// gracefully (libdatachannel v0.24.5 src/impl/sctptransport.cpp:423-439,
-// 572-592); dropping the last reference to the peer instead tears every
-// transport down at once and loses what was queued. So the peer is held
-// until it reports it has closed, or until the deadline. Only ever touched
-// on the thread that made it.
 // How many Lingers still hold their connection
 // (DataChannelTransport::lingeringPeerCountForTest()).
 std::atomic<int> g_lingeringPeers{0};
@@ -1590,6 +1582,14 @@ int closeDrainCeilingMs()
     return forTest > 0 ? forTest : DataChannelTransport::kCloseDrainCeilingMs;
 }
 
+// A connection closing on its own after its transport let it go. The
+// channel's close (a stream reset) is queued behind what was sent on it,
+// and the peer's close flushes the SCTP send queue and shuts SCTP down
+// gracefully (libdatachannel v0.24.5 src/impl/sctptransport.cpp:423-439,
+// 572-592); dropping the last reference to the peer instead tears every
+// transport down at once and loses what was queued. So the peer is held
+// until it reports it has closed, or until the deadline. Only ever touched
+// on the thread that made it.
 struct Linger {
     std::shared_ptr<rtc::PeerConnection> peer;
     std::shared_ptr<rtc::DataChannel> channel;

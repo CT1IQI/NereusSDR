@@ -1439,7 +1439,10 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(DataChannelTransport::lingeringPeerCountForTest(), 0, 15000);
         constexpr int kDeadlineMs = 300;
         constexpr int kCeilingMs = 2000;
-        constexpr qint64 kBytesPerSecond = 256 * 1024;
+        // Paced fast enough that a runner slow to service the hop still
+        // moves the backlog within every deadline, and slow enough that it
+        // cannot drain before the ceiling.
+        constexpr qint64 kBytesPerSecond = 512 * 1024;
         const CloseDrainTiming timing(kDeadlineMs, kCeilingMs);
         UdpHop hop;
         QVERIFY(hop.bound());
@@ -1449,7 +1452,7 @@ private slots:
         QVERIFY(waitFor([&] { return offerer->isOpen() && answerer->isOpen(); }, 15000));
         QSignalSpy atDevice(offerer.get(), &SessionTransport::textReceived);
         hop.setMode(UdpHop::Mode::Throttle, kBytesPerSecond);
-        // About 4 MiB: some 16 s at this rate, far past the ceiling.
+        // About 4 MiB: some 8 s at this rate, far past the ceiling.
         const QByteArray backlog = patterned(static_cast<qsizetype>(kStationCap) - 64);
         for (int i = 0; i < 4; ++i) {
             answerer->sendText(backlog);
