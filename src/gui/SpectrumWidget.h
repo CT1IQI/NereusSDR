@@ -1,4 +1,11 @@
 // Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): a drag keeps the receiver's press
+//                 frequency, not an offset against the press-time view;
+//                 the filter edge drag's own slice and filter.
+//   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): receiver grab hit test, drag offset
+//                 state and the wheel step accumulator.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Test-only friend for visible-plane IMD integration evidence.
@@ -424,6 +431,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/RemoteSpectrumCapture.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/WheelStepAccumulator.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -4585,9 +4593,59 @@ private:
     FilterEdge m_draggingFilter{FilterEdge::None};
     int  m_filterDragStartX{0};     // pixel X at grab time
     int  m_filterDragStartHz{0};    // filter edge Hz at grab time
+    // The grabbed receiver's flag (-1: the pan's own filter, no flag) and
+    // its filter as the drag has set it (2026-10-21). A flagged receiver's
+    // filter is set through its flag, never through this pan's
+    // m_filterLowHz/m_filterHighHz and filterEdgeDragged, which belong to
+    // the pan's own slice.
+    int  m_filterDragSliceIndex{-1};
+    int  m_filterDragLowHz{0};
+    int  m_filterDragHighHz{0};
 
     // Passband center drag (slide-to-tune) — AetherSDR:434
     bool m_draggingVfo{false};
+
+    // Receiver grab (2026-10-18). Which part of which receiver a point is
+    // over, for the press and the hover cursor alike: the selected
+    // receiver first, then the others topmost first. An edge of a receiver
+    // that is not selected tunes it like its body does.
+    enum class ReceiverGrabPart { None, LowEdge, HighEdge, Tune };
+    struct ReceiverGrab {
+        ReceiverGrabPart     part{ReceiverGrabPart::None};
+        SliceMarkerGeometry  marker;
+    };
+    ReceiverGrab receiverGrabAt(int mx, int my, const QRect& specRect) const;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:360 [@1e0718ad]
+    static constexpr int kReceiverEdgeGrabPx = 8;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:361 [@1e0718ad]
+    static constexpr int kReceiverMinBodyPx = 6;
+    // Half width of the slide-to-tune strip around a receiver's center line.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:9952 [@1e0718ad]
+    static constexpr int kReceiverCenterGrabPx = 8;
+
+    // One drag-to-tune, from the spectrum or from a flag. The receiver's
+    // frequency and the press column are kept, so the receiver moves by the
+    // cursor's pixel travel at the current Hz per pixel and never jumps to
+    // the cursor, nor by a view change mid-drag (2026-10-21).
+    // A receiver with a flag, the selected one included, is tuned through
+    // its own flag (VfoWidget::tuneFromDrag), the path the flag's wheel
+    // uses, so the drag moves the receiver grabbed and not whichever slice
+    // the pan's frequencyClicked resolves to (2026-10-21).
+    struct ReceiverDrag {
+        int    sliceIndex{-1};   // -1: the pan's own VFO, no flag
+        bool   viaFlag{false};
+        double pressHz{0.0};     // the receiver's frequency at the press
+        int    pressX{0};
+        int    stepHz{1};
+        bool   moved{false};     // a move has left the press column
+    };
+    ReceiverDrag m_receiverDrag;
+    bool m_flagDragActive{false};
+    void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz, int pressX);
+    void moveReceiverDrag(int mx, const QRect& specRect);
+
+    // Wheel and trackpad steps for every wheel branch (2026-10-18).
+    WheelStepAccumulator m_wheelSteps;
 
     // Divider drag (spectrum/waterfall split) — AetherSDR:419
     bool m_draggingDivider{false};
@@ -4603,8 +4661,8 @@ private:
     int    m_bwDragStartX{0};
     double m_bwDragStartBw{0.0};
 
-    // Filter edge grab zone — from AetherSDR line 1087: GRAB = 5
-    static constexpr int kFilterGrab = 5;
+    // (kFilterGrab, the 5 px edge zone from AetherSDR line 1087, gave way
+    // to kReceiverEdgeGrabPx and kReceiverMinBodyPx above on 2026-10-18.)
 
     // ---- HIGH SWR / PA safety overlay state ----
     // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]
