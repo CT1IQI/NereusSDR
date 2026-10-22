@@ -13,6 +13,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - setFilterFromDrag: a filter edge drag on the pan sets this
+//                flag's slice's filter. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code (Claude Opus 5.5).
+//   2026-10-18 - Drag the flag to tune (fold and unfold wait for the
+//                release; a press on an RIT/XIT or offset value selects
+//                but never drags), and the wheel steps through
+//                WheelStepAccumulator.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                (Claude Opus 5.5).
 //   2026-10-15 - The mode combo resets before a RADE v2 mode is added or
 //                removed (resetItemsBeforeRowChange), so accessibility
 //                cannot read a deleted cell. J.J. Boyd (KG4VCF),
@@ -464,6 +473,7 @@ warren@wpratt.com
 #include <QFontMetrics>
 #include <QAccessible>
 #include <QAccessibleWidget>
+#include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
@@ -483,6 +493,7 @@ warren@wpratt.com
 
 #include <cmath>
 #include <algorithm>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -3731,6 +3742,11 @@ void VfoWidget::updatePosition(int vfoX, int specTop, FlagDir dir)
 // explicitly. Showing the flag restores its eligible sibling controls.
 void VfoWidget::hideEvent(QHideEvent* event)
 {
+    // A flag hidden mid-drag (CTUN on, dragged past the span edge) loses its
+    // implicit grab and never sees the release, so its drag ends here.
+    endFlagDrag();
+    m_dragArmed = false;
+    m_releaseAction = ReleaseAction::None;
     for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn}) {
         if (button) {
             button->hide();
@@ -4018,26 +4034,44 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
     event->accept();
     emit sliceActivationRequested(m_sliceIndex);
 
+    // Drag to tune (2026-10-18): a fresh press ends any drag whose release
+    // never arrived and starts clean.
+    endFlagDrag();
+    m_dragArmed = false;
+    m_releaseAction = ReleaseAction::None;
+    const bool left = event->button() == Qt::LeftButton;
+    const auto armDrag = [this, event]() {
+        m_dragArmed = true;
+        m_pressGlobalX = qRound(event->globalPosition().x());
+    };
+
     // Flag fold. From AetherSDR src/gui/VfoWidget.cpp:690-711 [@3a1f59ea]
     // (bdd42658). Upstream's painted TX badge sets the slice's TX directly;
     // ours does what a click on our TX badge does (the handoff, the take, or
     // nothing while it is held).
     if (m_collapsed) {
         // Click on painted TX badge → toggle TX assignment
-        if (event->button() == Qt::LeftButton
-            && collapsedTxBadgeRect().contains(event->pos())) {
+        if (left && collapsedTxBadgeRect().contains(event->pos())) {
             m_txBadge->click();
             update();  // repaint TX badge color
             return;
         }
         // Click anywhere else on collapsed widget → expand (deferred)
+        // A left press expands on its release, unless it became a drag.
+        if (left) {
+            m_releaseAction = ReleaseAction::Expand;
+            armDrag();
+            return;
+        }
         QTimer::singleShot(0, this, [this] { setCollapsed(false); });
         return;
     }
     // Click on the slice badge → collapse the flag (deferred)
-    if (event->button() == Qt::LeftButton && m_sliceBadge && m_sliceBadge->isVisible()
+    // On the release, unless the press became a drag.
+    if (left && m_sliceBadge && m_sliceBadge->isVisible()
         && m_sliceBadge->geometry().contains(event->pos())) {
-        QTimer::singleShot(0, this, [this] { setCollapsed(true); });
+        m_releaseAction = ReleaseAction::Collapse;
+        armDrag();
         return;
     }
 
@@ -4052,8 +4086,105 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
             m_freqEdit->selectAll();
             m_freqStack->setCurrentIndex(1);
             m_freqEdit->setFocus();
+            return;
         }
     }
+
+    // A press on an RIT/XIT or offset value selects the slice, as any press
+    // on the flag does, but is the value's own: it never starts a drag.
+    if (left && !pressOnScrollableLabel(event->pos())) {
+        armDrag();
+    }
+}
+
+bool VfoWidget::pressOnScrollableLabel(const QPoint& pos) const
+{
+    for (QWidget* w = childAt(pos); w && w != this; w = w->parentWidget()) {
+        if (qobject_cast<ScrollableLabel*>(w)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void VfoWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!m_dragArmed || !(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    event->accept();
+    const int globalX = qRound(event->globalPosition().x());
+    if (!m_flagDragging) {
+        if (std::abs(globalX - m_pressGlobalX) <= QApplication::startDragDistance()) {
+            return;
+        }
+        m_flagDragging = true;
+        // The pointer is over this flag for the whole drag (the implicit
+        // grab), so the drag cursor is shown here, not on the spectrum.
+        setCursor(Qt::SizeHorCursor);
+        emit flagDragStarted(m_pressGlobalX);
+    }
+    emit flagDragMoved(globalX);
+}
+
+void VfoWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton) {
+        QWidget::mouseReleaseEvent(event);
+        return;
+    }
+    event->accept();
+    const bool dragged = m_flagDragging;
+    endFlagDrag();
+    m_dragArmed = false;
+    const ReleaseAction action = std::exchange(m_releaseAction, ReleaseAction::None);
+    if (dragged) {
+        return;
+    }
+    if (action == ReleaseAction::Collapse) {
+        QTimer::singleShot(0, this, [this] { setCollapsed(true); });
+    } else if (action == ReleaseAction::Expand) {
+        QTimer::singleShot(0, this, [this] { setCollapsed(false); });
+    }
+}
+
+void VfoWidget::endFlagDrag()
+{
+    if (m_flagDragging) {
+        m_flagDragging = false;
+        unsetCursor();
+        emit flagDragFinished();
+    }
+}
+
+bool VfoWidget::setFilterFromDrag(int low, int high)
+{
+    if (isListening()) {
+        return false;
+    }
+    if (low == m_filterLowHz && high == m_filterHighHz) {
+        return false;
+    }
+    setFilter(low, high);
+    emit filterChanged(low, high);
+    return true;
+}
+
+bool VfoWidget::tuneFromDrag(double hz)
+{
+    if (m_locked || isListening()) {
+        return false;
+    }
+    // The same band limits as the wheel below.
+    const double newFreq = std::clamp(hz, 100000.0, 61440000.0);
+    if (qFuzzyCompare(newFreq, m_frequency)) {
+        return false;
+    }
+    m_frequency = newFreq;
+    updateFreqLabel();
+    emit frequencyChanged(newFreq);
+    return true;
 }
 
 void VfoWidget::wheelEvent(QWheelEvent* event)
@@ -4062,11 +4193,12 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
     if (m_locked || isListening()) {
         return;
     }
-    int delta = event->angleDelta().y();
-    if (delta == 0) {
+    // One step per mouse notch or per 15 px of trackpad travel, at most one
+    // per event (WheelStepAccumulator).
+    const int steps = m_wheelSteps.stepsFor(*event);
+    if (steps == 0) {
         return;
     }
-    int steps = (delta > 0) ? 1 : -1;
     double newFreq = m_frequency + steps * m_stepHz;
     newFreq = std::clamp(newFreq, 100000.0, 61440000.0);
 

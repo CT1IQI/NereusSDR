@@ -196,6 +196,20 @@ private struct DisplayV29Control: View {
     @ObservedObject var band: BandModel
     var specialized: SetupSpecializedPanels
     let profileOwner: UUID?
+    /// The live numbers move with the Core's frames, published apart from the band.
+    @ObservedObject private var readouts: BandModel.EffectiveReadouts
+
+    init(control: SetupDescription.Control, category: String, dispatcher: SetupControlDispatcher,
+         main: MainScreenModel, band: BandModel, specialized: SetupSpecializedPanels, profileOwner: UUID?) {
+        self.control = control
+        self.category = category
+        self.dispatcher = dispatcher
+        self.main = main
+        self.band = band
+        self.specialized = specialized
+        self.profileOwner = profileOwner
+        readouts = band.effectiveReadouts
+    }
     private var own: Bool {
         guard main.displayEditScope == .pan, control.owner == .pan, control.perBand == nil,
               control.kind != .button, case .phone(let key)? = control.binding else { return false }

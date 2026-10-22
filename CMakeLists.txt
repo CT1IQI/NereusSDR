@@ -1866,6 +1866,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/WheelStepAccumulator.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
     src/gui/PanFloatingWindow.cpp
@@ -2189,6 +2190,14 @@ set(GUI_SOURCES
     src/gui/applets/AppletVisibilityController.cpp
     src/gui/applets/RxApplet.cpp
     src/gui/applets/TxApplet.cpp
+    src/gui/applets/TxFilterSection.cpp
+    src/gui/applets/TxProcessingSection.cpp
+    src/gui/applets/TxChainSection.cpp
+    src/gui/applets/TxKeyingSection.cpp
+    src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/TxSectionContent.cpp
+    src/gui/applets/TxPowerSection.cpp
+    src/gui/applets/TxVoxSection.cpp
     src/gui/applets/TxEqDialog.cpp
     src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp

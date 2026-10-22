@@ -3803,6 +3803,13 @@ nereus_add_test(tst_tx_applet_vox_toggle)
 # (Renamed from tst_tx_applet_lev_eq_proc.cpp during the post-bench cleanup.)
 nereus_add_test(tst_tx_applet_lev_eq_cfc)
 
+# ── The TX applet's rows as independent container content ───────────────────
+# A container can hold the TX Monitor controls (or any other row) on their own.
+# The applet stays the wiring authority: it makes each copy and wires it, so the
+# copy shows and sets the same model state as the applet's own row and follows
+# the same transmit-permission gates.  The applet's own panel is unchanged.
+nereus_add_test(tst_tx_section_content)
+
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
 # Phase 3M-VAX-toggle extends it to a 3-way switch so MicSource::Vax
@@ -8149,6 +8156,12 @@ nereus_add_test(tst_vfo_widget_tx_badge_click)
 # Source: AetherSDR src/gui/VfoWidget.cpp [@3a1f59ea] (fold); NereusSDR-original
 # (zoom row placement).
 nereus_add_test(tst_vfo_flag_fold)
+# Wide receiver grab, flag drag and trackpad wheel steps (2026-10-18).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp [@1e0718ad] (edge zones,
+# wheel accumulator); NereusSDR-original (flag drag, grab order).
+nereus_add_test(tst_wheel_step_accumulator)
+nereus_add_test(tst_spectrum_receiver_grab)
+nereus_add_test(tst_vfo_flag_drag)
 # The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
 # buttons and floating buttons carry the pass's sheets with the look on and
 # are untouched with it off.
