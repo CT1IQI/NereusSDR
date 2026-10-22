@@ -69,7 +69,7 @@ struct NavigationPage: View {
                 Text("Tuning")
             }
         }
-        .navigationTitle("Navigation")
+        .setupPageTitle("Navigation")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

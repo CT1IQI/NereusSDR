@@ -192,7 +192,7 @@ struct DisplayOnThisPhonePage: View {
         }
         .modifier(DisplayV29Presentation(main: main, model: display))
         .onAppear { main.displayEditScope = .pan }
-        .navigationTitle("Display")
+        .setupPageTitle("Display")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .both)

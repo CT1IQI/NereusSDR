@@ -71,7 +71,7 @@ struct CoreLogsPage: View {
                 }
             }
         }
-        .navigationTitle(Self.title)
+        .setupPageTitle(Self.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)

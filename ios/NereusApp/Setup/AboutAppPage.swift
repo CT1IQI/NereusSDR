@@ -120,7 +120,7 @@ struct AboutAppPage: View {
                 Text("HPSDR protocol © TAPR")
             }
         }
-        .navigationTitle("About this app")
+        .setupPageTitle("About this app")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsDone {

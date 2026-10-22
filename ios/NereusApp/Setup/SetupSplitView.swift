@@ -49,8 +49,12 @@ struct SetupSplitView<Detail: View, Footer: View>: View {
             }
             NavigationStack(path: pushed(over: selection)) {
                 destination(selection.shown)
+                    // The chosen page heads its column with its own title.
+                    .environment(\.setupInlineTitles, true)
                     .navigationDestination(for: SetupTree.Route.self) { route in
+                        // A page pushed over it keeps the bar's title and its way back.
                         destination(route)
+                            .environment(\.setupInlineTitles, false)
                     }
             }
             // A newly chosen page starts at its own top, with nothing pushed over it.

@@ -50,8 +50,16 @@ final class SetupSplitUITests: XCTestCase {
         XCTAssertTrue(row.isSelected, "The open page is not marked in the list")
         XCTAssertFalse(app.buttons["Devices"].isSelected)
         XCTAssertGreaterThan(driver.frame.minX, list.frame.maxX)
-        // The page is its column's root: the list is not covered, and nothing to go back to.
-        XCTAssertTrue(app.navigationBars["Rotor"].waitForExistence(timeout: 5))
+        // The page is its column's root: the list is not covered. Its title
+        // heads the page's column, starting where its section titles do.
+        let title = pageTitle(app, "Rotor")
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "The Rotor page has no title in its column")
+        let connection = app.staticTexts["Connection"]
+        XCTAssertTrue(connection.exists)
+        XCTAssertEqual(title.frame.minX, connection.frame.minX, accuracy: 2,
+                       "The title does not line up with the page's sections")
+        XCTAssertGreaterThan(title.frame.minX, list.frame.maxX + 16, "The title sits against the list")
+        XCTAssertLessThan(title.frame.maxY, connection.frame.minY)
         XCTAssertTrue(category.isHittable)
         XCTAssertTrue(tabBar.isHittable, "The tab bar went")
         shoot(app, "ipad-setup-split-rotor")
@@ -62,12 +70,12 @@ final class SetupSplitUITests: XCTestCase {
         XCTAssertTrue(navigation.waitForExistence(timeout: 10))
         navigation.tap()
         XCTAssertTrue(navigation.isSelected)
-        XCTAssertTrue(app.navigationBars["Navigation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(pageTitle(app, "Navigation").waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Rotor"].exists, "CAT & Network stayed open")
 
         // Upright the window is still regular-width: the split, with the page open.
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(app.navigationBars["Navigation"].waitForExistence(timeout: 10))
+        XCTAssertTrue(pageTitle(app, "Navigation").waitForExistence(timeout: 10))
         XCTAssertTrue(list.exists)
         XCTAssertTrue(navigation.isSelected)
         shoot(app, "ipad-setup-split-upright")
@@ -90,7 +98,7 @@ final class SetupSplitUITests: XCTestCase {
 
         let list = app.descendants(matching: .any)["setupSplitList"]
         XCTAssertTrue(list.waitForExistence(timeout: 10), "Setup opened without its list")
-        XCTAssertTrue(app.navigationBars["Display"].waitForExistence(timeout: 10))
+        XCTAssertTrue(pageTitle(app, "Display").waitForExistence(timeout: 10))
         let palette = app.descendants(matching: .any)["displayPalette"]
         XCTAssertTrue(palette.waitForExistence(timeout: 10), "Display's page did not open")
         XCTAssertGreaterThan(palette.frame.minX, list.frame.maxX)
@@ -130,6 +138,15 @@ final class SetupSplitUITests: XCTestCase {
         let bar = app.navigationBars["Rotor"]
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
         XCTAssertTrue(bar.buttons.firstMatch.exists, "The page has no way back")
+        // Here the title stays the bar's large title, not one in the page.
+        XCTAssertFalse(app.staticTexts["setupPageTitle"].exists)
+    }
+
+    /// The page's own title in the split's right-hand column.
+    @MainActor
+    private func pageTitle(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "identifier == 'setupPageTitle' AND label == %@", title))
+            .firstMatch
     }
 
     @MainActor

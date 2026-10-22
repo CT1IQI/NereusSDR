@@ -29,7 +29,11 @@ struct SetupPageContainer<Content: View>: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Self.sectionSpacing) {
+                // In the iPad's split, the page's title heads its own column.
+                SetupInlineTitle()
                 content
+                    // A page pushed from this one draws its own title.
+                    .environment(\.setupPageTitle, nil)
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
@@ -304,6 +308,63 @@ private struct SetupLayoutProbeKey: EnvironmentKey {
     static let defaultValue: SetupLayoutProbe? = nil
 }
 
+/// A Setup page's title. On an iPhone and a compact iPad it is the page's
+/// large navigation title, as before. At the root of the iPad split's
+/// right-hand side (``SetupSplitView``) the navigation bar shows no title
+/// and the page draws it inline (``SetupInlineTitle``), in line with its
+/// panels inside the readable width, as setup-board.html's chosen iPad
+/// frame draws it. The bar keeps the title for the system's own use.
+struct SetupPageTitle: ViewModifier {
+    let title: String
+    @Environment(\.setupInlineTitles) private var inline
+
+    func body(content: Content) -> some View {
+        if inline {
+            content
+                .environment(\.setupPageTitle, title)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    // Stands in the bar's middle so the bar draws no title.
+                    ToolbarItem(placement: .principal) {
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .accessibilityHidden(true)
+                    }
+                }
+        } else {
+            content
+                .navigationTitle(title)
+        }
+    }
+}
+
+extension View {
+    /// The page's title: the navigation title, or inline at the root of the iPad's split.
+    func setupPageTitle(_ title: String) -> some View {
+        modifier(SetupPageTitle(title: title))
+    }
+}
+
+/// A page's title drawn inline at the top of its content, in the large
+/// title's font, read by VoiceOver as a header; nothing outside the split.
+struct SetupInlineTitle: View {
+    @Environment(\.setupPageTitle) private var title
+
+    var body: some View {
+        if let title {
+            Text(title)
+                .font(.largeTitle.bold())
+                .foregroundStyle(WorkspacePalette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                // The section titles' inset, so the title starts where they do.
+                .padding(.horizontal, 4)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("setupPageTitle")
+        }
+    }
+}
+
 /// Holds a page that draws its own scroll view (Devices) to the split's
 /// readable width, centered; with no readable width set it changes nothing.
 struct SetupReadableWidth: ViewModifier {
@@ -324,12 +385,33 @@ private struct SetupReadableWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat? = nil
 }
 
+private struct SetupInlineTitlesKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct SetupPageTitleKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
 extension EnvironmentValues {
     /// The widest a Setup page's content is drawn: the iPad's split sets it
     /// (``SetupSplit/readableWidth``); nil, the default, fills the width.
     var setupReadableWidth: CGFloat? {
         get { self[SetupReadableWidthKey.self] }
         set { self[SetupReadableWidthKey.self] = newValue }
+    }
+
+    /// True at the root of the iPad split's right-hand side, where a page
+    /// draws its title inline (``SetupPageTitle``).
+    var setupInlineTitles: Bool {
+        get { self[SetupInlineTitlesKey.self] }
+        set { self[SetupInlineTitlesKey.self] = newValue }
+    }
+
+    /// The title a page draws inline, set by ``SetupPageTitle`` in the split.
+    var setupPageTitle: String? {
+        get { self[SetupPageTitleKey.self] }
+        set { self[SetupPageTitleKey.self] = newValue }
     }
 
     var setupLayoutProbe: SetupLayoutProbe? {

@@ -16,7 +16,7 @@ struct RotorSetupPage: View {
 
     var body: some View {
         RotorSetupCard(model: model)
-            .navigationTitle("Rotor")
+            .setupPageTitle("Rotor")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SetupTagBadge(tag: .core)

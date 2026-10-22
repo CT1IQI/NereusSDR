@@ -148,7 +148,7 @@ struct SetupTab: View {
                         }
                     }
                 }
-                .navigationTitle(category.title)
+                .setupPageTitle(category.title)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         SetupTagBadge(tag: category.tag)

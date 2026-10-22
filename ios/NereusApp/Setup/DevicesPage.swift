@@ -27,6 +27,8 @@ struct DevicesPage: View {
         ZStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    // In the iPad's split, the page's title heads its own column.
+                    SetupInlineTitle()
                     coreCard
                     if model.keyBackupNeeded {
                         backupCard
@@ -80,7 +82,7 @@ struct DevicesPage: View {
         }
         .background(WorkspacePalette.appBg.ignoresSafeArea())
         .animation(.easeOut(duration: 0.2), value: flow.renaming)
-        .navigationTitle("Devices")
+        .setupPageTitle("Devices")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)

@@ -55,7 +55,7 @@ struct BatteryAndSessionsPage: View {
                 Text("Saving power")
             }
         }
-        .navigationTitle("Battery and sessions")
+        .setupPageTitle("Battery and sessions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

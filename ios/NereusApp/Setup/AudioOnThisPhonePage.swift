@@ -156,7 +156,7 @@ struct AudioOnThisPhonePage: View {
                 }
             }
         }
-        .navigationTitle("On this phone")
+        .setupPageTitle("On this phone")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

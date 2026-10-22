@@ -138,7 +138,7 @@ struct PttButtonsPage: View {
             }
             #endif
         }
-        .navigationTitle("PTT buttons")
+        .setupPageTitle("PTT buttons")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

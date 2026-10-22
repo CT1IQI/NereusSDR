@@ -89,7 +89,7 @@ struct DescribedPage: View {
             }
             .levelCalAlerts(levelCal)
             .modifier(DisplayV29OptionalPresentation(main: main))
-            .navigationTitle(page.title)
+            .setupPageTitle(page.title)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SetupTagBadge(tag: SetupTag(page.whereOwned))

@@ -85,7 +85,7 @@ struct DataUsePage: View {
                 Text(Self.footnote)
             }
         }
-        .navigationTitle("Data use")
+        .setupPageTitle("Data use")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)
