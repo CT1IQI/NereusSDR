@@ -4475,9 +4475,18 @@ if(TEST tst_slice_model_rade_swap)
     set_property(TEST tst_slice_model_rade_swap APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
 endif()
 
-nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+# The second entry runs the same binary, so it carries the first entry's
+# labels: the tests_<label> aggregates build only the labels
+# nereus_add_test() recorded. The second entry used to add "models" by hand,
+# so `ctest -L models` ran it while `tests_models` never built (or rebuilt)
+# the binary: Not Run on a clean tree, and on a used one a stale binary
+# against the rebuilt libNereusCore, reading SliceModel's filter edge where
+# its mode now is (dspMode 3000 and 2350, 2026-10-22). It uses the models,
+# so the first entry now names "models" too.
+nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 if(TEST tst_rade_v2_link_gate)
     get_test_property(tst_rade_v2_link_gate ENVIRONMENT _rade_link_env)
+    get_test_property(tst_rade_v2_link_gate LABELS _rade_link_labels)
     set_property(TEST tst_rade_v2_link_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
     string(REPLACE "test-home/tst_rade_v2_link_gate" "test-home/tst_rade_v2_link_gate_1" _rade_link_on_env "${_rade_link_env}")
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_link_gate_1")
@@ -4485,7 +4494,7 @@ if(TEST tst_rade_v2_link_gate)
     set_tests_properties(tst_rade_v2_link_gate_1 PROPERTIES
         ENVIRONMENT "${_rade_link_on_env};NEREUS_ENABLE_RADE_V2=1"
         ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
-        TIMEOUT 120 LABELS "core;models;gui;session")
+        TIMEOUT 120 LABELS "${_rade_link_labels}")
 endif()
 
 # The immutable process switch is exercised in separate processes.
