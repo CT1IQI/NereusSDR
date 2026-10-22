@@ -1,7 +1,7 @@
 # Display codec v2: every row stands alone
 
-Status: design for JJ's approval (2026-10-22, revised after two spec reviews). No
-code yet.
+Status: approved by JJ on 2026-10-22 (after two spec reviews); his decisions
+are in section 13. No code yet.
 
 JJ's decision of 2026-10-22: "yes do C then build A". Step 1 (C) is a Core
 setting that sends every v1 display frame as a keyframe, with no wire change,
@@ -167,10 +167,10 @@ end of its last plane; a byte after it is `Malformed`, as in v1.
 
 A frame that does not advance the waterfall carries no waterfall plane in
 v2. Today the waterfall plane rides every frame and the window uses it only
-when the frame advances (RemoteMediaController.cpp:8797, SpectrumWidget.cpp:2891,
-FilterDisplayItem.cpp:211). With the default 30 ms waterfall period at 30 fps
-every frame advances (framesPerLine 1), so this saves bytes only for a slower
-waterfall.
+when the frame advances (RemoteMediaController.cpp:8797,
+SpectrumWidget.cpp:2891, FilterDisplayItem.cpp:211). With the default 30 ms
+waterfall period at 30 fps every frame advances (framesPerLine 1), so this
+saves bytes only for a slower waterfall.
 
 ### 4.2 Plane
 
@@ -368,7 +368,7 @@ descriptor.
   (as RemoteMediaController.cpp:5461-5463 adds `spectrumPictureVersion`),
   only when the Core advertised it. The desktop window does this in the same
   change as the Core encoder. The iPhone app declares and asks only when its
-  decoder lands (section 8).
+  own v2 decoder lands, in its own change worked in parallel (section 8).
 - **Core accepts** the `start` field in `DaemonMediaController::handleStart`
   exactly as it accepts `spectrumPictureVersion`
   (DaemonMediaController.cpp:2367-2380): refused unless the same gate holds
@@ -412,7 +412,8 @@ descriptor.
   Set to `"False"` (and the Core restarted), the Core advertises the
   capability to no peer, so every new media connection is v1. It exists for
   side-by-side bench runs and as a field fallback.
-- The Step 1 keyframe-every-frame setting applies to v1 connections only.
+- The Step 1 keyframe-every-frame setting applies to v1 connections only. It
+  stays until the iPhone app has v2, and is then removed (section 13).
 
 No client breaks: an old window or phone never declares `displayCodec`, so
 it is sent no new capability entry and no new bytes, and its `start` is
@@ -425,21 +426,24 @@ switch is off.
 The phone decodes NSDC v1 in `DisplayFrameDecoder.swift` and asks for
 keyframes through `MediaControlClient` (5 a second per endpoint). Plan:
 
-- **Meanwhile:** it never declares `displayCodec` or adds the `start` field,
-  so the new Core sends it no new capability entry and v1 frames,
-  and Step 1's keyframe-every-frame setting removes its smear when JJ turns it
-  on.
-- **Then, in a follow-up change right after the desktop one:** a v2 path in
-  `DisplayFrameDecoder` (header and flag rules, the Rice plane, the part
-  pairing of section 9.2), `displayCodec: 2` in the phone's hello and
-  `displayCodecVersion` 2 in its media `start` when the Core advertises it, and its keyframe requests kept for v1
-  connections only. The desktop change writes golden vectors (encoder input
-  rows, v2 messages, split and whole, plus malformed cases) under
-  `tests/data/display_codec_v2/`, and both the C++ and the NereusKit tests
-  read the same files, so the two decoders are held to one encoder.
-- Why not in the same change: the phone ships on its own `ios-v` tags
-  through App Store Connect, and keeping it on v1 until its build is out
-  costs nothing because the Core serves both.
+- **In its own change, worked in parallel with the desktop and Core
+  change:** a v2 path in `DisplayFrameDecoder` (header and flag rules, the
+  Rice plane, the part pairing of section 9.2), `displayCodec: 2` in the
+  phone's hello and `displayCodecVersion` 2 in its media `start` when the
+  Core advertises it, and its keyframe requests kept for v1 connections
+  only. The golden vectors (encoder input rows, v2 messages, split and
+  whole, plus malformed cases) live under `tests/data/display_codec_v2/`,
+  and both the C++ and the NereusKit tests read the same files, so the two
+  decoders are held to one encoder. The phone's decoder must pass the same
+  golden vectors before its change lands.
+- **Until its change lands:** it never declares `displayCodec` or adds the
+  `start` field, so the new Core sends it no new capability entry and v1
+  frames, and Step 1's keyframe-every-frame setting removes its smear when
+  JJ turns it on.
+- Why a change of its own: the phone ships on its own `ios-v` tags through
+  App Store Connect, so its change can land separately from the desktop and
+  Core change, before or after it. Either order is safe because the Core
+  serves both versions and a phone without v2 stays on v1.
 
 ## 9. The decoder and the window
 
@@ -476,7 +480,7 @@ three:
 
 - `Accepted`: one or two frames released, oldest first. The result's `frame`
   holds the first; it gains a frame count (0 to 2) and a second frame, which
-  the v1 path never fills.
+  the v1 path never fills. The frame count is 0 on `Held` and `Rejected`.
 - `Held` (new): the message was valid and is held as `H`; nothing is
   released, the reason is `None`, and the window does nothing more with it
   (no loss, no keyframe request, no presentation).
@@ -484,7 +488,9 @@ three:
 
 A message that releases a frame and is itself held (a part newer than `h`,
 or a part of a newer generation while a part is held) is `Accepted` with one
-frame.
+frame. A held part followed by a whole frame newer than `h` releases both,
+the held part as a partial frame and then the whole frame: `Accepted` with
+two frames.
 
 ### 9.2 Pairing the parts of a split frame
 
@@ -496,7 +502,7 @@ not newer than `L`; with no `L` (a fresh context) nothing is stale.
 **Releasing a frame** of sequence `q` (whole, merged or partial) always does
 the same two things: when there is an `L`, `framesLost += (q - L - 1) mod
 2^32`, in 32-bit unsigned arithmetic; then `L = q`. A released frame is
-always newer than `L`, so the difference is 0 to 2^31 - 1 and never wraps
+always newer than `L`, so the difference is 0 to 2^31 - 2 and never wraps
 negative. With no `L` (the first release of a context) `framesLost` does not
 change. A partial frame also adds 1 to `partsLost`. The "Counter" column
 below lists what moves besides that rule.
@@ -552,7 +558,11 @@ FilterDisplayItem.cpp:195-198):
   the waterfall and wide planes filled the same way.
 
 The decoder's counters (`framesLost`, `partsLost`, `staleMessages`,
-`duplicateParts`, `malformed`) feed the window's diagnostics line.
+`duplicateParts`, `malformed`) feed the window's diagnostics line. A
+structural reject (`BadMagic`, `UnsupportedVersion`, `UnknownFlags`,
+`Truncated`, `Oversized` or `Malformed`, found before any state is read)
+counts `malformed`; a context reject (`ContextMismatch` or `OldContext`)
+counts nothing.
 
 ### 9.3 Keyframes, the interval and the gap fill
 
@@ -700,8 +710,9 @@ section 11; the Core session installs those builds.
   is unchanged).
 - Other decoders, which stay on v1 by never sending the `start` field, and
   are listed so nobody is surprised: `tools/nereus-media-probe.cpp:606` and
-  `tests/tools/nereus_rendezvous_peer.cpp:966`. Either can later add the field
-  and read v2 with the same decoder.
+  `tests/tools/nereus_rendezvous_peer.cpp:966`. Either can later move to v2
+  by declaring `displayCodec` 2 in its hello, adding the `start` field when
+  the Core advertises it, and reading v2 with the same decoder.
 - Fixtures: `tests/data/link/v1/surface.json` and the link conformance
   fixtures gain the hello declaration, the capability (only for a peer that
   declared it) and the `start` field; every existing fixture for a peer that
@@ -711,30 +722,28 @@ section 11; the Core session installs those builds.
   context continues", and station link v1's hello features and capability
   list.
 - Unchanged: `DisplayBudget`, the allocators, the presenter's drawing, the
-  mini displays, the NSDX extras, the PS3D codec, relays and the tunnel, the
-  phone (until its own change).
+  mini displays, the NSDX extras, the PS3D codec, relays and the tunnel. The
+  phone changes in its own change, worked in parallel (section 8).
 
-## 13. For JJ's veto
+## 13. Decisions (JJ, 2026-10-22)
 
-Each of these is settled in the design above; say no to any and it changes.
+JJ answered all six questions on 2026-10-22. Five follow the recommendation;
+the fourth changes it.
 
-1. **Split a frame into a row message and a trace message, sending the row
-   first,** when the whole frame would need two datagrams. On your 783-pixel
-   pan a lost datagram then costs one row or one trace, not both, for about 5
-   percent more bytes on those frames. Recommendation: split.
-2. **Keep a hidden Core setting that sends the old format on every new media
-   connection.** No
-   UI; it lets the bench compare old and new on the same Core and is a quick
-   way back if something goes wrong in the field. Recommendation: keep it.
-3. **The new format is on by default once merged.** Recommendation: on by
-   default, and merged only after the STRIX bench shows at most one made-up
-   row per loss.
-4. **The iPhone gets the new format in a follow-up change,** and until then
-   keeps the old format plus the keyframe-every-frame setting from Step 1.
-   Recommendation: yes, so the phone's App Store build does not hold up the
-   desktop.
-5. **Pans wider than about 1,700 pixels still lose a whole row when one of
-   that row's datagrams is lost,** because a row is never cut into pieces.
-   Recommendation: accept this for now and look again after the bench.
-6. **Keep the keyframe-every-frame setting from Step 1 until the phone has
-   moved over.** Recommendation: keep it.
+1. **Split two-datagram frames into a row message and a trace message, row
+   first.** On the 783-pixel pan a lost datagram then costs one row or one
+   trace, not both, for about 5 percent more bytes on those frames
+   (section 5).
+2. **Keep the hidden Core fallback setting** `RemoteDisplayCodecV2`, read
+   once at Core start, with no UI (section 7). It serves bench comparisons
+   and is a quick way back in the field.
+3. **On by default, merged only after the STRIX bench shows at most one
+   made-up row per lost datagram** (section 11, item 4).
+4. **Changed from the recommendation: the iPhone gets v2 in its own change,
+   worked in parallel with the desktop and Core implementation, not after
+   it.** The phone change can land separately, and its decoder must pass the
+   same golden vectors (section 8).
+5. **Accept whole-row loss on pans wider than about 1,700 pixels for now,**
+   and look again after the STRIX bench (section 5).
+6. **Keep the keyframe-every-frame setting until the iPhone has v2, then
+   remove it** (section 7).
