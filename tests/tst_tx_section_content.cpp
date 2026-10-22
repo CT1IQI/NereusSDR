@@ -24,6 +24,7 @@
 //  10. A copy made after the gates carries them, with their reasons.
 //  11. A copy made while receive only is locked like the applet's row.
 //  12. A remote window's 2-TONE copies follow the Core.
+//  13. A copy's Take transmit asks as the applet's own does.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -699,6 +700,28 @@ private slots:
         }
         rm.reportRemoteTransmitRefused(QStringLiteral("test refusal"));
         QVERIFY(!processing->twoToneButton()->isChecked());
+    }
+
+    // ── 13. A copy's Take transmit asks as the applet's own does ─────────
+    void aCopysTakeTransmitAsks()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        QWidget host;
+        auto* keying = qobject_cast<TxKeyingSection*>(
+            registry.createWidget(registry.makeEntry("tx.keying"), &host));
+        QVERIFY(keying && keying->takeTransmitButton());
+        applet.setTakeTransmitOffered(true, false);
+        QVERIFY(!keying->takeTransmitButton()->isHidden());
+
+        QSignalSpy asked(&applet, &TxApplet::takeTransmitRequested);
+        keying->takeTransmitButton()->click();
+        QCOMPARE(asked.count(), 1);
+        applet.takeTransmitButton()->click();
+        QCOMPARE(asked.count(), 2);
     }
 
 private:

@@ -2871,6 +2871,12 @@ TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent)
 {
     auto* s = new TxKeyingSection(parent, txRowSpacing(), txCopyMargins());
     wireKeyingSection(s);
+    // The Take-transmit press is this applet's own signal, as the applet's
+    // own row's is (buildUI).
+    if (s->takeTransmitButton()) {
+        connect(s->takeTransmitButton(), &QPushButton::clicked, this,
+                &TxApplet::takeTransmitRequested);
+    }
     m_extraKeyingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
     // when the operator closes the container or removes the item.  The
