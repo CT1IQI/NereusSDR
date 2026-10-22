@@ -74,6 +74,8 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -1265,7 +1267,9 @@ void VaxChannelCard::onCataloguePick(int index)
         }
     }
     if (other) {
-        QMessageBox confirm(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<QMessageBox> confirmOwner(this);
+        QMessageBox& confirm = *confirmOwner.get();
         if (asio) {
             confirm.setWindowTitle(tr("Use this pair here?"));
             confirm.setText(tr("VAX %1 uses %2. Move it to VAX %3? VAX %1 will have no device.")
@@ -1279,7 +1283,10 @@ void VaxChannelCard::onCataloguePick(int index)
         }
         confirm.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
         confirm.setDefaultButton(QMessageBox::Cancel);
-        if (confirm.exec() != QMessageBox::Ok) {
+        const int answer = confirm.exec();
+        // The parent may have died in exec() and taken the dialog with it.
+        if (!confirmOwner) { return; }
+        if (answer != QMessageBox::Ok) {
             fillPicker();
             return;
         }
@@ -1335,13 +1342,18 @@ void VaxChannelCard::onCablePicked(int index)
         }
     }
     if (other) {
-        QMessageBox confirm(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<QMessageBox> confirmOwner(this);
+        QMessageBox& confirm = *confirmOwner.get();
         confirm.setWindowTitle(tr("Use this cable here?"));
         confirm.setText(tr("VAX %1 uses %2. Move it to VAX %3? VAX %1 will have no "
                            "cable.").arg(other->channelIndex()).arg(name).arg(m_channel));
         confirm.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
         confirm.setDefaultButton(QMessageBox::Cancel);
-        if (confirm.exec() != QMessageBox::Ok) {
+        const int answer = confirm.exec();
+        // The parent may have died in exec() and taken the dialog with it.
+        if (!confirmOwner) { return; }
+        if (answer != QMessageBox::Ok) {
             fillPicker();
             return;
         }
@@ -1489,7 +1501,9 @@ void VaxChannelCard::onAutoDetectClicked()
                 const QString devName   = cable.deviceName;
                 connect(act, &QAction::triggered, this,
                         [this, devName, srcChannel]() {
-                    QMessageBox confirm(this);
+                    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+                    ScopedChildWidget<QMessageBox> confirmOwner(this);
+                    QMessageBox& confirm = *confirmOwner.get();
                     confirm.setWindowTitle(QStringLiteral("Reassign cable?"));
                     confirm.setText(
                         QStringLiteral("Reassign %1 from VAX %2 to VAX %3?"
@@ -1934,7 +1948,9 @@ void AudioVaxPage::afterRescan(const QVector<DetectedCable>& current)
     // devices seen for the first time (recording devices on a Mac and on
     // Linux) opened it with "0 new" cables.
     if (!VirtualCableDetector::bindableEnds(newCables).isEmpty()) {
-        VaxFirstRunDialog dlg(FirstRunScenario::RescanNewCables, newCables, this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<VaxFirstRunDialog> dlgOwner(FirstRunScenario::RescanNewCables, newCables, this);
+        VaxFirstRunDialog& dlg = *dlgOwner.get();
         dlg.setAudioEngine(m_engine);
         dlg.exec();
     }

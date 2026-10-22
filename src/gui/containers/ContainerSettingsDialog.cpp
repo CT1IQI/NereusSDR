@@ -68,6 +68,8 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1946,7 +1948,9 @@ void ContainerSettingsDialog::onOpenMmioDialog()
     // block 3 commit 18 stub is gone — this now opens the endpoint
     // manager with live add/edit/remove backed by
     // ExternalVariableEngine.
-    MmioEndpointsDialog dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<MmioEndpointsDialog> dlgOwner(this);
+    MmioEndpointsDialog& dlg = *dlgOwner.get();
     dlg.exec();
 }
 

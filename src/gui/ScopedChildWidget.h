@@ -19,6 +19,10 @@
 //               AI-assisted transformation via Claude Code. Namespace
 //               NereusSDR; every right-click and drop-down menu that was
 //               built on the stack with a parent now uses this owner.
+//   2026-10-22  Constructor arguments forwarded, so stack dialogs
+//               (QMessageBox, QColorDialog, NereusSDR's own) and a QDrag
+//               use it too. J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 //
 // --- From ScopedChildWidget.h ---
@@ -67,6 +71,8 @@
 #include <QPointer>
 #include <QWidget>
 
+#include <utility>
+
 namespace NereusSDR {
 
 // From Longpath src/gui/ScopedChildWidget.h:47-69 [@383f058]
@@ -76,8 +82,13 @@ namespace NereusSDR {
 template <typename Widget>
 class ScopedChildWidget final {
 public:
-    explicit ScopedChildWidget(QWidget* parent)
-        : m_widget(new Widget(parent))
+    // NereusSDR: the constructor forwards every argument, so a dialog whose
+    // constructor takes more than a parent (QMessageBox's icon, title and
+    // text; a custom dialog's model) is built the same way. AetherSDR made
+    // the same change in 9befcd24. With one QWidget* it is Longpath's.
+    template <typename... Args>
+    explicit ScopedChildWidget(Args&&... args)
+        : m_widget(new Widget(std::forward<Args>(args)...))
     {
     }
 

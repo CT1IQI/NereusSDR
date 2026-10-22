@@ -36,6 +36,8 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -1229,7 +1231,9 @@ void ConnectionPanel::onDisconnectClicked()
 // On OK: saves to AppSettings, adds a row to the table immediately.
 void ConnectionPanel::onAddManuallyClicked()
 {
-    AddCustomRadioDialog dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCustomRadioDialog> dlgOwner(this);
+    AddCustomRadioDialog& dlg = *dlgOwner.get();
     if (dlg.exec() != QDialog::Accepted) {
         return;
     }
@@ -1294,7 +1298,9 @@ void ConnectionPanel::onEditClicked()
     const bool wasPinned = saved.has_value() ? saved->pinToMac    : false;
     const bool wasAuto   = saved.has_value() ? saved->autoConnect : false;
 
-    AddCustomRadioDialog dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCustomRadioDialog> dlgOwner(this);
+    AddCustomRadioDialog& dlg = *dlgOwner.get();
     dlg.setEditTarget(current, wasPinned, wasAuto);
     if (dlg.exec() != QDialog::Accepted) {
         return;

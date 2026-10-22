@@ -20,6 +20,10 @@
 //               is open (RotorDialWidget, VfoWidget). Before the helper,
 //               both ended the test process: the menu lived on the stack
 //               and was freed twice.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs too. A case closes the
+//               gradient picker's window while its colour dialog is open,
+//               and one checks the owner forwards constructor arguments.
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 //
 // --- From tst_scoped_child_widget.cpp ---
@@ -46,15 +50,20 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QColorDialog>
+#include <QMouseEvent>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPointer>
 #include <QTimer>
 #include <QWidget>
 
+#include <functional>
 #include <memory>
 
 #include "gui/ScopedChildWidget.h"
+#include "gui/widgets/GradientPickerWidget.h"
 #include "gui/widgets/RotorDialWidget.h"
 #include "gui/widgets/VfoWidget.h"
 
@@ -67,21 +76,22 @@ namespace {
 constexpr int kPollIntervalMs = 10;
 constexpr int kMaxPolls = 300;
 
-// NereusSDR: opens `target`'s right-click menu the way Qt delivers it and,
-// once the menu's own event loop is running, deletes `window` (the
-// target's top level), the way a closed pan or a torn-down floating window
-// takes its children with it. Returns true when the menu was seen open.
-bool closeWindowWhileMenuIsOpen(QWidget* window, QWidget* target)
+// NereusSDR: runs `open` (which enters a nested exec() loop) and, once
+// `isOpen` reports the popup or dialog up, deletes `window` (the target's
+// top level), the way a closed pan or a torn-down floating window takes its
+// children with it. Returns true when the popup or dialog was seen open.
+bool closeWindowWhileOpen(QWidget* window, const std::function<bool()>& isOpen,
+                          const std::function<void()>& open)
 {
     QPointer<QWidget> watchWindow(window);
-    bool sawMenu = false;
+    bool sawIt = false;
     int polls = 0;
     QTimer poll;
     poll.setInterval(kPollIntervalMs);
     QObject::connect(&poll, &QTimer::timeout, &poll, [&]() {
         ++polls;
-        if (qobject_cast<QMenu*>(QApplication::activePopupWidget()) != nullptr) {
-            sawMenu = true;
+        if (isOpen()) {
+            sawIt = true;
             poll.stop();
             delete watchWindow.data();
             return;
@@ -91,15 +101,29 @@ bool closeWindowWhileMenuIsOpen(QWidget* window, QWidget* target)
             if (QWidget* popup = QApplication::activePopupWidget()) {
                 popup->close();
             }
+            if (QWidget* modal = QApplication::activeModalWidget()) {
+                modal->close();
+            }
         }
     });
     poll.start();
-
-    const QPoint local(10, 10);
-    QContextMenuEvent ev(QContextMenuEvent::Mouse, local, target->mapToGlobal(local));
-    QApplication::sendEvent(target, &ev);
+    open();
     poll.stop();
-    return sawMenu;
+    return sawIt;
+}
+
+// NereusSDR: the same for `target`'s right-click menu, delivered the way Qt
+// delivers it.
+bool closeWindowWhileMenuIsOpen(QWidget* window, QWidget* target)
+{
+    return closeWindowWhileOpen(
+        window,
+        [] { return qobject_cast<QMenu*>(QApplication::activePopupWidget()) != nullptr; },
+        [target] {
+            const QPoint local(10, 10);
+            QContextMenuEvent ev(QContextMenuEvent::Mouse, local, target->mapToGlobal(local));
+            QApplication::sendEvent(target, &ev);
+        });
 }
 
 }  // namespace
@@ -210,6 +234,52 @@ private slots:
         }
         QVERIFY2(sawMenu, "The VFO flag's right-click menu never opened");
         QVERIFY(watchWindow.isNull());
+    }
+    // NereusSDR: the same for a dialog built on the stack and exec()ed: the
+    // gradient picker's colour dialog (double-click a stop), whose window is
+    // closed while the dialog is open.
+    void gradientPickerSurvivesItsWindowClosingDuringTheColorDialog()
+    {
+        auto window = std::make_unique<QWidget>();
+        QPointer<QWidget> watchWindow(window.get());
+        auto* picker = new GradientPickerWidget(window.get());
+        picker->setStopsForTest({{0.0f, QColor(Qt::red), true},
+                                 {1.0f, QColor(Qt::blue), true}});
+        picker->resize(300, 60);
+        window->resize(320, 80);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window.get()));
+
+        QWidget* raw = window.release();  // the poll deletes it mid-dialog
+        const bool sawDialog = closeWindowWhileOpen(
+            raw,
+            [] { return qobject_cast<QColorDialog*>(QApplication::activeModalWidget()) != nullptr; },
+            [picker] {
+                const QPointF local(GradientPickerWidget::kPaddingPx, 12);
+                QMouseEvent ev(QEvent::MouseButtonDblClick, local, picker->mapToGlobal(local),
+                               Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(picker, &ev);
+            });
+        if (!watchWindow.isNull()) {
+            delete watchWindow.data();
+        }
+        QVERIFY2(sawDialog, "The picker's colour dialog never opened");
+        QVERIFY(watchWindow.isNull());
+    }
+
+    // NereusSDR: the owner forwards constructor arguments (a QMessageBox
+    // built with icon, title, text, buttons and parent).
+    void theOwnerForwardsConstructorArguments()
+    {
+        QWidget parent;
+        ScopedChildWidget<QMessageBox> owner(QMessageBox::Warning, QStringLiteral("Title"),
+                                             QStringLiteral("Text"), QMessageBox::Cancel,
+                                             &parent);
+        QVERIFY(bool(owner));
+        QCOMPARE(owner.get()->parentWidget(), &parent);
+        QCOMPARE(owner.get()->text(), QStringLiteral("Text"));
+        QCOMPARE(owner.get()->icon(), QMessageBox::Warning);
+        QCOMPARE(owner.get()->standardButtons(), QMessageBox::StandardButtons(QMessageBox::Cancel));
     }
 };
 

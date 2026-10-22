@@ -859,6 +859,8 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -5473,7 +5475,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(newFlag, &VfoWidget::filterPolicyRequested, this,
             [this](int chainIdx) {
         if (!m_radioModel) { return; }
-        FilterPolicyDialog dlg(chainIdx, m_radioModel, this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<FilterPolicyDialog> dlgOwner(chainIdx, m_radioModel, this);
+        FilterPolicyDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
     connect(newFlag, &VfoWidget::removeSliceRequested, this,
@@ -7851,7 +7855,9 @@ void MainWindow::onPanChainTagClicked(const QString& panId, int chainIdx)
     if (chain < 0) { chain = chainIdx; }
     if (chain < 0) { return; }
 
-    FilterPolicyDialog dlg(chain, m_radioModel, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<FilterPolicyDialog> dlgOwner(chain, m_radioModel, this);
+    FilterPolicyDialog& dlg = *dlgOwner.get();
     dlg.exec();
 }
 
@@ -10338,9 +10344,13 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::txBoundReRouteRequested, this,
             [this](const QString& proposed, const QString& existing) {
         if (!m_radioModel) { return; }
-        TxBoundConfirmDialog dlg(proposed, existing,
-                                  m_radioModel->slices(), this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<TxBoundConfirmDialog> dlgOwner(proposed, existing,
+                                                   m_radioModel->slices(), this);
+        TxBoundConfirmDialog& dlg = *dlgOwner.get();
         dlg.exec();
+        // The parent may have died in exec() and taken the dialog with it.
+        if (!dlgOwner) { return; }
         qCInfo(lcContainer) << "TxBoundConfirmDialog: outcome="
                              << int(dlg.outcome())
                              << "(0=Cancelled, 1=UseExistingAntenna, 2=ConfirmReroute)";
@@ -10616,7 +10626,9 @@ void MainWindow::rebuildEditContainerSubmenu()
             if (!m_containerManager) { return; }
             ContainerWidget* target = m_containerManager->container(id);
             if (!target) { return; }
-            ContainerSettingsDialog dialog(target, this, m_containerManager);
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(target, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
             dialog.exec();
         });
     }
@@ -12708,8 +12720,13 @@ void MainWindow::buildMenuBar()
             }
 
             // Open settings dialog so user can configure it
-            ContainerSettingsDialog dialog(c, this, m_containerManager);
-            if (dialog.exec() == QDialog::Rejected) {
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(c, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
+            const int result = dialog.exec();
+            // The parent may have died in exec() and taken the dialog with it.
+            if (!dialogOwner) { return; }
+            if (result == QDialog::Rejected) {
                 // User cancelled — destroy the container
                 m_containerManager->destroyContainer(c->id());
             }
@@ -13064,7 +13081,9 @@ void MainWindow::buildMenuBar()
 #endif
 
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
-        AboutDialog dlg(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<AboutDialog> dlgOwner(this);
+        AboutDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
 
@@ -18874,10 +18893,12 @@ void MainWindow::showPanLayoutDialog()
     // protocol (four on Protocol 1) and, on a remote window, the Core's.
     const int maxPanCount = panLayoutLimitFor(m_radioModel);
     const QString boardName = m_radioModel->name();
-    PanLayoutDialog dlg(maxPanCount,
-                        m_panStack ? m_panStack->currentLayoutId()
-                                   : QStringLiteral("1"),
-                        boardName, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<PanLayoutDialog> dlgOwner(maxPanCount,
+                                         m_panStack ? m_panStack->currentLayoutId()
+                                                    : QStringLiteral("1"),
+                                         boardName, this);
+    PanLayoutDialog& dlg = *dlgOwner.get();
     if (dlg.exec() == QDialog::Accepted && !dlg.selectedLayout().isEmpty()) {
         applyPanLayout(dlg.selectedLayout());
     }
