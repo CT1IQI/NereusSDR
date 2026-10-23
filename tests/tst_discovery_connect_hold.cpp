@@ -17,6 +17,10 @@
 //   2026-10-22 - Review of PR 621: the quiet-period checks hold on a
 //                 loaded runner (no step is assumed to take under 3 s).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - The connection handlers use a context destroyed before
+//                 the record and the model, and a check that ran too late
+//                 to prove anything warns. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QElapsedTimer>
@@ -138,6 +142,7 @@ struct ConnectRecord {
     bool afterEndSeen {false};
     bool holdAfterEnd {true};
     qint64 quietPlusElapsedMs {-1};
+    qint64 elapsedAtCheckMs {-1};
 };
 
 void watchConnect(RadioModel& model, const RadioDiscovery& disc, ConnectionState end,
@@ -162,7 +167,8 @@ void watchConnect(RadioModel& model, const RadioDiscovery& disc, ConnectionState
         if (rec.ended && !rec.afterEndSeen) {
             rec.afterEndSeen = true;
             rec.holdAfterEnd = RadioDiscovery::connectHoldActive();
-            rec.quietPlusElapsedMs = disc.holdOffRemainingMs() + rec.sinceEnd.elapsed();
+            rec.elapsedAtCheckMs = rec.sinceEnd.elapsed();
+            rec.quietPlusElapsedMs = disc.holdOffRemainingMs() + rec.elapsedAtCheckMs;
         }
     }, Qt::QueuedConnection);
 }
@@ -206,7 +212,11 @@ private slots:
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;
-        watchConnect(model, disc, ConnectionState::Connected, rec, finished, this);
+        // Declared after `rec` and `model`, so it goes first: both handlers
+        // and any queued call still pending are gone before `rec` is
+        // destroyed and before ~RadioModel emits its teardown Disconnected.
+        QObject watchContext;
+        watchConnect(model, disc, ConnectionState::Connected, rec, finished, &watchContext);
 
         disc.startDiscovery();
         const RadioInfo info = infoFor(fake);
@@ -221,6 +231,12 @@ private slots:
         QCOMPARE(rec.finishedAtEnd, 0);
         QTRY_VERIFY_WITH_TIMEOUT(rec.afterEndSeen, 15000);
         QVERIFY2(!rec.holdAfterEnd, "Connected left discovery held");
+        // A check that ran a full quiet period late proves nothing; say so
+        // instead of passing quietly.
+        if (rec.elapsedAtCheckMs >= kQuietMs - 10) {
+            qWarning("the quiet-period check ran a full period late on a loaded "
+                  "runner; it proved nothing this time");
+        }
         QVERIFY2(rec.quietPlusElapsedMs >= kQuietMs - 10, "no quiet period after Connected");
 
         // The quiet period only falls: an attempt counted here was sent
@@ -258,7 +274,11 @@ private slots:
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;
-        watchConnect(model, disc, ConnectionState::Disconnected, rec, finished, this);
+        // Declared after `rec` and `model`, so it goes first: both handlers
+        // and any queued call still pending are gone before `rec` is
+        // destroyed and before ~RadioModel emits its teardown Disconnected.
+        QObject watchContext;
+        watchConnect(model, disc, ConnectionState::Disconnected, rec, finished, &watchContext);
 
         disc.startDiscovery();
         const RadioInfo info = infoFor(fake);
@@ -271,6 +291,12 @@ private slots:
         QCOMPARE(rec.finishedAtEnd, 0);
         QTRY_VERIFY_WITH_TIMEOUT(rec.afterEndSeen, 15000);
         QVERIFY2(!rec.holdAfterEnd, "the failed connect left discovery held");
+        // A check that ran a full quiet period late proves nothing; say so
+        // instead of passing quietly.
+        if (rec.elapsedAtCheckMs >= kQuietMs - 10) {
+            qWarning("the quiet-period check ran a full period late on a loaded "
+                  "runner; it proved nothing this time");
+        }
         QVERIFY2(rec.quietPlusElapsedMs >= kQuietMs - 10, "no quiet period after the failed connect");
 
         while (disc.holdOffRemainingMs() > 0) {
