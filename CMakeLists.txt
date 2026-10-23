@@ -2200,6 +2200,8 @@ set(GUI_SOURCES
     src/gui/applets/AppletPanelWidget.cpp
     src/gui/applets/AppletVisibilityController.cpp
     src/gui/applets/RxApplet.cpp
+    src/gui/applets/RxControlSections.cpp
+    src/gui/applets/RxSectionContent.cpp
     src/gui/applets/TxApplet.cpp
     src/gui/applets/TxFilterSection.cpp
     src/gui/applets/TxProcessingSection.cpp
