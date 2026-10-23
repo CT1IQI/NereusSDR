@@ -1514,6 +1514,11 @@ nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
 # from the settings file after a relaunch, on a SliceModel and on a radio
 # connected from this computer. A connection that sends nothing; no radio.
 nereus_add_test(tst_slice_step_agc_auto_persistence EXTRA_LABELS models core)
+# JJ 2026-10-23: a paired device gets its slice letter and settings back
+# after a Core restart, headless or inside the desktop window, either way.
+nereus_add_test(tst_station_hosting_slice_letters
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)

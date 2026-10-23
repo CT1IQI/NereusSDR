@@ -690,6 +690,14 @@
 //                noise-reduction calls over 50 ms with the stages that ran,
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - Slice letters across Core restarts (JJ: "the core
+//                headless and core inside window should be the same
+//                experience"): a Core inside a desktop window keeps its
+//                paired devices' slices in the receive layout and gives
+//                them back, held, on their letters at connect, before the
+//                window takes the lowest free letter (setHostsStationDevice,
+//                addStartingSlices). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2888,6 +2896,28 @@ public:
     /// Local only.
     int restoreSliceFor(const QByteArray& owner, int sliceId, const ReceiveSliceState& state,
                         QString* reason = nullptr);
+
+    /// Slice letters across Core restarts (JJ 2026-10-23, "the core
+    /// headless and core inside window should be the same experience"):
+    /// true while this model is the Core inside a desktop window, the
+    /// station device being that window (StationHost with a hosting
+    /// device). Such a Core keeps the receive layout's device slices as the
+    /// headless Core does (captureReceiveLayout) and, at connect, gives a
+    /// paired device's slices back their letters before the window takes
+    /// its own (addStartingSlices). Set while the radio is connected, the
+    /// device slices the layout names come back at once; a letter the
+    /// window already uses goes to that device's saved slices instead.
+    /// Local only.
+    void setHostsStationDevice(bool hosts);
+    bool hostsStationDevice() const { return m_hostsStationDevice; }
+
+    /// The slices a connect starts with when there are none: on a Core
+    /// inside a desktop window, the receive layout's paired-device slices
+    /// first, each on its letter and held for its device, then the
+    /// window's own slice on the lowest free letter, on "pan-0". Elsewhere
+    /// one slice, A. Returns the window's slice id, or -1 when none was
+    /// made. Local only.
+    int addStartingSlices(const QString& radioMac);
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
     /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
@@ -7647,6 +7677,14 @@ private:
     bool activateRestoredRadeReceiveOwner(QString* error);
     void setReceiveLayoutRestoreStatus(const QString& state, const QString& message);
     bool captureReceiveLayout(QString* error);
+    // setHostsStationDevice / addStartingSlices: the receive layout's
+    // paired-device slices, held for their devices on their letters while
+    // one letter stays free for the window; the rest go to each device's
+    // saved slices. Returns how many came back.
+    int restoreHeldDeviceSlices(const QString& radioMac);
+    // captureReceiveLayout for the Core inside a desktop window: only the
+    // paired devices' slices, never the window's own.
+    bool captureHostedReceiveLayout();
 
     // RADE threads (2026-09-30): one receive route per RADE slice. The
     // channel decodes on its own thread; the DSP worker feeds it and plays
@@ -8293,6 +8331,8 @@ private:
     bool m_stationHandoverSuppressedReceiverEdits{false};
     bool m_receiveLayoutPendingAdmission{false};
     bool m_receiveLayoutManaged{false};
+    // setHostsStationDevice: the Core inside a desktop window.
+    bool m_hostsStationDevice{false};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.

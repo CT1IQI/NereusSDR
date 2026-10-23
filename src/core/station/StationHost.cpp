@@ -161,6 +161,11 @@ bool StationHost::start()
         server->setStationDeviceWords(cfg.hostingDevice->name,
                                       cfg.hostingDevice->shortName);
         if (!server || !model) { return false; }
+        // The Core inside a desktop window: paired devices get their slice
+        // letters back across restarts, as on a headless Core (JJ
+        // 2026-10-23).
+        model->setHostsStationDevice(true);
+        if (!server || !model) { return false; }
         const QPointer<StationHost> self(this);
         StationSliceOwnershipPolicy::activate(model, server, [self, server, generation] {
             return self && server && !self->m_quiescing && self->m_generation == generation;
