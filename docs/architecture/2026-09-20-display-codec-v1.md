@@ -168,7 +168,10 @@ was lost inside Core before it was sent: `sourceFramesReplaced` (a newer frame
 replaced it before Core's main thread took it from the FFT engine),
 `panFramesReplaced` (a newer frame replaced it before a sender turn took it
 for that pan), and `senderGapMaxMs` with `senderGapMaxSinceLastMs`, the
-longest time between two turns of the 5 ms display sender. The Rock check at
+longest time between two turns of the 5 ms display sender. On a connection
+that agreed display codec v2, `splitFrames` counts the frames sent as two
+messages (the row part, then the trace part) and `secondPartRefusals` counts
+the trace parts the transport did not take. The Rock check at
 4096 points, 60 fps with 3D, is that this line never exceeds 9,361 bytes / 11
 fragments and that a capture shows no media datagram above 1000 bytes (969 on
 IPv4).

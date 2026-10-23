@@ -6,6 +6,9 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: the over-cost test's comment names the wide plane, not the
+//               extras. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-22: NSDC v2 sender: a split frame's two parts in one turn and
 //               each refusal case, every message of a v2 connection decoding
 //               to the frames the Core reduced with the bench setting on and
@@ -2677,7 +2680,7 @@ void TstDaemonMediaController::displayCodecV2MessagesDecodeToTheFramesTheCoreRed
         return !messageFor(controls, QStringLiteral("context"), kEndpoint).isEmpty();
     })());
     const QJsonObject context = messageFor(controls, QStringLiteral("context"), kEndpoint);
-    // A known admitted frame cost: the endpoint's without the extras.
+    // A known admitted frame cost: the endpoint's without the wide plane.
     const std::optional<SpectrumDisplayCost> cost = spectrumDisplayCost(kPixels, 60, false);
     QVERIFY(cost.has_value());
     const quint32 admitted = cost->maximumFrameBytes;

@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
+//               setEncodedFrameObserverForTest and the observer) build only
+//               with NEREUS_BUILD_TESTS. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 sender: on a connection whose start agreed
 //               version 2, every receive and transmit display frame is
 //               encoded with encodeDisplayCodecV2 at the endpoint's admitted
@@ -1572,6 +1576,7 @@ bool DaemonMediaController::readDisplayExtrasForTest(
     return true;
 }
 
+#ifdef NEREUS_BUILD_TESTS
 bool DaemonMediaController::setEndpointMaximumFrameBytesForTest(quint32 endpointId,
                                                                 quint32 bytes)
 {
@@ -1590,6 +1595,7 @@ void DaemonMediaController::setEncodedFrameObserverForTest(
     const auto displayHold = displayGuard();
     m_encodedFrameObserver = std::move(observer);
 }
+#endif
 
 std::optional<int> DaemonMediaController::spectrumSourceFps(quint32 endpointId) const
 {
@@ -6691,9 +6697,11 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
         const quint64 samples = static_cast<quint64>(reduced->traceDbm.size())
             + static_cast<quint64>(reduced->waterfallDbm.size())
             + static_cast<quint64>(reduced->wideDbm.size());
+#ifdef NEREUS_BUILD_TESTS
         if (m_encodedFrameObserver) {
             m_encodedFrameObserver(*reduced);
         }
+#endif
         // The newest frame's extras replace any not yet sent; they go on a
         // later turn, after every message of this frame.
         const auto keepExtras = [&] {
@@ -7476,9 +7484,11 @@ bool DaemonMediaController::trySendTransmitFrame(quint32 endpointId, MediaPeer* 
     entry.txNewWaterfall = false;
     const quint64 samples = static_cast<quint64>(frame.traceDbm.size())
         + static_cast<quint64>(frame.waterfallDbm.size());
+#ifdef NEREUS_BUILD_TESTS
     if (m_encodedFrameObserver) {
         m_encodedFrameObserver(frame);
     }
+#endif
     if (m_displayCodecVersion.load() == 2U) {
         // NSDC v2: as a receive frame (trySendSpectrum), at this endpoint's
         // own admitted frame bytes; no keyframe state.

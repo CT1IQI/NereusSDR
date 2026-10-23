@@ -16,7 +16,22 @@
 // test feeds synthetic I/Q (Task 4: a v2 start's frames are version 2, a
 // v1 start's version 1).
 //
+// Task 6, the interop matrix: every pairing of a Core and a peer gets the
+// version it agreed, in every frame (a v2 start; a start without the field;
+// a peer that did not declare; RemoteDisplayCodecV2 off), and a v2 frame
+// carries the wide plane. A real window (RemoteMediaController, its pan on
+// a PanadapterStack) on a real Core, over a fake media link that can drop a
+// display message: on v2 it asks no keyframe for a context, a transmit
+// context, the receive context the fall brings back or a lost frame; on a
+// Core that sends v1 (one with the setting off stands in for an older Core,
+// and sends no capability entry) it asks for each, and a lost frame's
+// NeedKeyframe asks once and recovers, as before.
+//
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  Task 6: the interop matrix (older
+//                                    peer, fallback off, wide plane, a real
+//                                    window on a v2 Core and on a v1 Core).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  Task 4: the agreed version is the
 //                                    version byte of every display frame.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -32,24 +47,33 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 #include <cmath>
 #include <numbers>
 
 #include "core/AppSettings.h"
+#include "core/AudioEngine.h"
 #include "core/FFTEngine.h"
 #include "core/HpsdrModel.h"
+#include "core/MoxController.h"
+#include "core/TxAnalyzer.h"
 #include "core/session/MirrorSchema.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/media/DaemonMediaController.h"
+#include "core/session/media/DisplayCodec.h"
 #include "core/session/media/IMediaTransport.h"
 #include "core/spectrum/SpectrumDetectorMode.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
+#include "gui/RemoteMediaController.h"
+#include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -194,7 +218,9 @@ struct Harness {
                                           Q_ARG(QVector<float>, syntheticIq(1026, 0.125))));
     }
 
-    bool subscribe(quint32 endpointId, int sliceId)
+    // `wideSpanFactor` above 1 asks for the wide plane around `spanHz`.
+    bool subscribe(quint32 endpointId, int sliceId, double spanHz = 192000.0,
+                   double wideSpanFactor = 0.0)
     {
         const QJsonObject control{
             {QStringLiteral("op"), QStringLiteral("subscribe")},
@@ -206,7 +232,7 @@ struct Harness {
             {QStringLiteral("fftSize"), 4096},
             {QStringLiteral("windowType"), static_cast<int>(WindowFunction::Hann)},
             {QStringLiteral("centreHz"), radio.streamCentreHz(streamIndex)},
-            {QStringLiteral("spanHz"), 192000.0},
+            {QStringLiteral("spanHz"), spanHz},
             {QStringLiteral("pixels"), 1024},
             {QStringLiteral("fps"), 60},
             {QStringLiteral("framesPerLine"), 1},
@@ -214,7 +240,7 @@ struct Harness {
             {QStringLiteral("waterfall"), spectrumPlane()},
             {QStringLiteral("minDbm"), -180.0},
             {QStringLiteral("maxDbm"), 0.0},
-            {QStringLiteral("wideSpanFactor"), 0.0}};
+            {QStringLiteral("wideSpanFactor"), wideSpanFactor}};
         return client.sendMediaControl(control, client.sessionEpoch());
     }
 
@@ -278,6 +304,80 @@ void refusedThenPlainStarts(Harness& h, const QList<QJsonValue>& refused)
     QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
     QCOMPARE(h.transportsMade, 1);
     QCOMPARE(h.controller.displayCodecVersion(), quint32{1});
+}
+
+// Task 6: the media link between a real Core and a real window. Each
+// display message the Core sends is kept and handed to the window's end,
+// except the display codec messages a test asks to lose.
+class BridgeTransport final : public IMediaTransport {
+public:
+    explicit BridgeTransport(QObject* parent) : IMediaTransport(parent) {}
+    bool start(const StartOptions&) override { return true; }
+    void stop() override { active = false; }
+    bool acceptDescription(const QString&, const QString&) override { return true; }
+    bool acceptCandidate(const QString&, const QString&) override { return true; }
+    bool sendDisplay(const QByteArray& message) override
+    {
+        if (!active) { return false; }
+        displays.append(message);
+        if (message.startsWith("NSDC") && codecMessagesToLose > 0) {
+            --codecMessagesToLose;
+            return true;
+        }
+        if (other) { other->deliver(message); }
+        return true;
+    }
+    bool sendRtp(const QByteArray&) override { return active; }
+    bool isReady() const override { return active; }
+    void activate()
+    {
+        active = true;
+        emit ready();
+    }
+    void deliver(const QByteArray& message) { emit displayReceived(message); }
+
+    bool active = false;
+    int codecMessagesToLose = 0;
+    QPointer<BridgeTransport> other;
+    QList<QByteArray> displays;
+};
+
+int countOp(const QSignalSpy& spy, const QString& op)
+{
+    int count = 0;
+    for (const QList<QVariant>& call : spy) {
+        if (call.at(0).toJsonObject().value(QStringLiteral("op")).toString() == op) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+QJsonObject lastOp(const QSignalSpy& spy, const QString& op)
+{
+    for (auto it = spy.crbegin(); it != spy.crend(); ++it) {
+        const QJsonObject control = it->at(0).toJsonObject();
+        if (control.value(QStringLiteral("op")).toString() == op) {
+            return control;
+        }
+    }
+    return {};
+}
+
+// The names of the first capabilities message a link received.
+QStringList capabilityNamesOn(const Test::LoopbackTransport* link)
+{
+    QStringList names;
+    for (const QByteArray& wire : link->received()) {
+        const QJsonObject message = QJsonDocument::fromJson(wire).object();
+        if (message.value(QStringLiteral("type")).toString() == QStringLiteral("capabilities")) {
+            for (const QJsonValue& property : message.value(QStringLiteral("properties")).toArray()) {
+                names.append(property.toObject().value(QStringLiteral("name")).toString());
+            }
+            break;
+        }
+    }
+    return names;
 }
 
 } // namespace
@@ -404,6 +504,7 @@ private slots:
         QVERIFY(h.connectSession());
         QCOMPARE(h.client.capabilities().displayCodecVersion, 0);
         QVERIFY(!h.capabilityNames().contains(kField));
+        QCOMPARE(h.capabilityNames().last(), QStringLiteral("coreBuildInfo"));
         QVERIFY(!h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         // Byte for byte the declaring peer's list without its one entry.
         QJsonArray stripped;
@@ -435,12 +536,19 @@ private slots:
 
     // Task 4: a v2 start's display frames all carry version byte 2; a
     // start without the field, on the same Core build in another harness,
-    // gets version 1 frames.
+    // gets version 1 frames. Task 6: so does a peer that did not declare
+    // the feature, and a declaring peer of a Core whose RemoteDisplayCodecV2
+    // is off (it is told nothing, so its start has no field).
     void theAgreedVersionIsEveryFramesVersionByte_data()
     {
-        QTest::addColumn<bool>("v2");
-        QTest::newRow("start agreed v2") << true;
-        QTest::newRow("start without the field") << false;
+        QTest::addColumn<bool>("declares");
+        QTest::addColumn<bool>("settingOn");
+        QTest::addColumn<bool>("asksV2");
+        QTest::addColumn<int>("expected");
+        QTest::newRow("start agreed v2") << true << true << true << 2;
+        QTest::newRow("start without the field") << true << true << false << 1;
+        QTest::newRow("peer that did not declare") << false << true << false << 1;
+        QTest::newRow("RemoteDisplayCodecV2 off") << true << false << false << 1;
     }
 
     void theAgreedVersionIsEveryFramesVersionByte()
@@ -448,16 +556,275 @@ private slots:
 #ifndef HAVE_FFTW3
         QSKIP("FFTEngine has no FFTW3 backend in this build");
 #endif
-        QFETCH(bool, v2);
+        QFETCH(bool, declares);
+        QFETCH(bool, settingOn);
+        QFETCH(bool, asksV2);
+        QFETCH(int, expected);
         Harness h;
+        if (!declares) {
+            h.client.withholdFeatureForTest(QByteArrayLiteral("displayCodec"));
+        }
+        h.server.setDisplayCodecV2Enabled(settingOn);
         const QList<int> versions = versionBytesOfFrames(
-            h, v2 ? QJsonValue(2) : QJsonValue(QJsonValue::Undefined), 4);
+            h, asksV2 ? QJsonValue(2) : QJsonValue(QJsonValue::Undefined), 4);
         QVERIFY2(versions.size() >= 4, qPrintable(QString::number(versions.size())));
-        QCOMPARE(h.controller.displayCodecVersion(), v2 ? quint32{2} : quint32{1});
+        QCOMPARE(h.client.capabilities().displayCodecVersion, declares && settingOn ? 2 : 0);
+        QCOMPARE(h.capabilityNames().contains(kField), declares && settingOn);
+        QCOMPARE(h.controller.displayCodecVersion(), quint32(expected));
         for (int version : versions) {
-            QCOMPARE(version, v2 ? 2 : 1);
+            QCOMPARE(version, expected);
         }
         h.finish();
+    }
+
+    // Task 6: a v2 frame with the wide plane (flag 0x04) through the Core.
+    // A subscribe whose wideSpanFactor widens it past its span asks for the
+    // plane; every frame the Core sends is version 2 and decodes, Held or
+    // Accepted, to a wide plane of the context's length.
+    void aV2FrameCarriesTheWidePlane()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        constexpr quint8 kWideFlag = 0x04;
+        Harness h;
+        const int sliceId = h.addFedSlice();
+        QVERIFY(sliceId >= 0);
+        QVERIFY(h.connectSession());
+        QVERIFY(h.startWith(2));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
+        h.mediaTransport->becomeReady();
+        QCOMPARE(h.controller.displayCodecVersion(), quint32{2});
+        QVERIFY(h.subscribe(92, sliceId, /*spanHz=*/48000.0, /*wideSpanFactor=*/2.0));
+        const auto codecMessages = [&h] {
+            int count = 0;
+            for (const QByteArray& message : h.mediaTransport->displays) {
+                if (message.startsWith("NSDC")) {
+                    ++count;
+                }
+            }
+            return count;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((h.feedRadio(), codecMessages() >= 8), 10'000);
+
+        DisplayCodecDecoder decoder;
+        int flagged = 0;
+        int wideFrames = 0;
+        for (const QByteArray& message : h.mediaTransport->displays) {
+            if (!message.startsWith("NSDC")) {
+                continue;
+            }
+            QVERIFY(message.size() > 5);
+            QCOMPARE(static_cast<quint8>(message.at(4)), quint8{2});
+            if ((static_cast<quint8>(message.at(5)) & kWideFlag) != 0) {
+                ++flagged;
+            }
+            const DisplayCodecDecodeResult result = decoder.decode(message);
+            QVERIFY2(result.disposition == DisplayCodecDisposition::Accepted
+                         || result.disposition == DisplayCodecDisposition::Held,
+                     qPrintable(QString::number(static_cast<int>(result.disposition))));
+            for (int i = 0; i < result.frameCount; ++i) {
+                const DisplayCodecFrame& frame = i == 0 ? result.frame : result.secondFrame;
+                QVERIFY(frame.context.wideSamples > 0);
+                QCOMPARE(frame.wideDbm.size(), int(frame.context.wideSamples));
+                ++wideFrames;
+            }
+        }
+        QVERIFY(flagged > 0);
+        QVERIFY(wideFrames > 0);
+        h.finish();
+    }
+
+    // Task 6: a real window on a real Core. On a Core that offers v2 the
+    // window asks for it and gets version 2 frames, and asks no keyframe for
+    // its pan's receive context, a lost frame, the transmit context or the
+    // receive context the fall brings back (a newer context for the same
+    // request). On a Core that sends v1 (RemoteDisplayCodecV2 off, standing
+    // in for an older Core: no capability entry, so no start field) the
+    // window gets version 1 frames and asks one keyframe for each, as
+    // before: a lost frame's NeedKeyframe asks once and the pan recovers.
+    void aWindowAsksForKeyframesOnlyOnVersionOne_data()
+    {
+        QTest::addColumn<bool>("v2");
+        QTest::newRow("Core offers v2") << true;
+        QTest::newRow("Core sends v1") << false;
+    }
+
+    void aWindowAsksForKeyframesOnlyOnVersionOne()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        QFETCH(bool, v2);
+        // Past the window's 200 ms spacing between keyframe requests.
+        constexpr int kPastKeyframeSpacingMs = 250;
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                    /*defaultRateHz=*/192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* slice = station.sliceById(sliceId);
+        QVERIFY(slice);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+        const double centre = station.streamCentreHz(stream);
+        // A TX analyzer: this Core sends the transmit display.
+        TxAnalyzer txAnalyzer(TxAnalyzer::kTxDispId);
+        station.setTxAnalyzer(&txAnalyzer);
+        const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
+        StationServer server(&station, settings,
+                             NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        server.setDisplayCodecV2Enabled(v2);
+        QPointer<BridgeTransport> coreMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&coreMedia](QObject* owner) -> IMediaTransport* {
+                coreMedia = new BridgeTransport(owner);
+                return coreMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("only"));
+        applet->setActiveSliceIndex(sliceId);
+        applet->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<BridgeTransport> windowMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&windowMedia](QObject* owner) -> IMediaTransport* {
+                windowMedia = new BridgeTransport(owner);
+                return windowMedia;
+            });
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        QSignalSpy frames(&gui, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy transmitFrames(&gui, &RemoteMediaController::transmitFrameReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(coreMedia && windowMedia);
+
+        // What the Core offered and what the window's start asked.
+        QCOMPARE(client.capabilities().displayCodecVersion, v2 ? 2 : 0);
+        const QStringList names = capabilityNamesOn(clientLink);
+        QVERIFY(names.size() >= 2);
+        QCOMPARE(names.last(), QStringLiteral("coreBuildInfo"));
+        QCOMPARE(names.contains(kField), v2);
+        if (v2) {
+            QCOMPARE(names.at(names.size() - 2), kField);
+        }
+        const QJsonObject start = lastOp(outbound, QStringLiteral("start"));
+        QVERIFY(!start.isEmpty());
+        QCOMPARE(start.contains(kField), v2);
+        if (v2) {
+            QCOMPARE(start.value(kField).toInt(), 2);
+        }
+        QVERIFY(gui.txDisplayNegotiated());
+
+        coreMedia->other = windowMedia;
+        coreMedia->activate();
+        windowMedia->activate();
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QCOMPARE(daemon.displayCodecVersion(), v2 ? quint32{2} : quint32{1});
+        QVector<float> iq(2048);
+        for (int i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.01f * static_cast<float>(std::cos(double(i) * 0.17));
+            iq[i + 1] = 0.01f * static_cast<float>(std::sin(double(i) * 0.17));
+        }
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        };
+        const auto keyframes = [&outbound] { return countOp(outbound, QStringLiteral("keyframe")); };
+        const auto lastContext = [&inbound] { return lastOp(inbound, QStringLiteral("context")); };
+
+        // 1. The receive context is accepted and its frames drawn.
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() > 2), 5000);
+        if (v2) {
+            QCOMPARE(keyframes(), 0);
+        } else {
+            QTRY_VERIFY(keyframes() >= 1);
+        }
+        const qint64 receiveGeneration =
+            lastContext().value(QStringLiteral("contextGeneration")).toInteger();
+
+        // 2. A frame is lost on the way. v1: the next one needs a keyframe,
+        //    the window asks once, and the pan draws again. v2: the next
+        //    frame decodes alone.
+        QTest::qWait(kPastKeyframeSpacingMs);
+        int before = keyframes();
+        const int framesAtLoss = frames.count();
+        coreMedia->codecMessagesToLose = 1;
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), coreMedia->codecMessagesToLose == 0
+                                              && frames.count() > framesAtLoss + 2), 5000);
+        QCOMPARE(keyframes(), v2 ? before : before + 1);
+
+        // 3. Keyed at the Core: the transmit context and its frames.
+        QTest::qWait(kPastKeyframeSpacingMs);
+        before = keyframes();
+        MoxController* mox = station.moxController();
+        QVERIFY(mox);
+        // Today's Core is receive-only; lifting the pre-check stands in for
+        // one that can transmit.
+        mox->setMoxCheck({});
+        mox->setMox(true);
+        const auto unkey = qScopeGuard([mox] { mox->setMox(false); });
+        QTRY_VERIFY(lastContext().value(QStringLiteral("transmit")).toBool());
+        const int traceSamples = lastContext().value(QStringLiteral("traceSamples")).toInt();
+        QVERIFY(traceSamples > 0);
+        const QVector<float> trace(traceSamples, -30.0f);
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            emit txAnalyzer.txFftReady(-1, trace);
+            emit txAnalyzer.txWaterfallReady(-1, trace);
+            return transmitFrames.count() > 0;
+        }()), 5000);
+        if (v2) {
+            QCOMPARE(keyframes(), before);
+        } else {
+            QTRY_VERIFY(keyframes() > before);
+        }
+
+        // 4. The fall: a newer receive context for the same request.
+        QTest::qWait(kPastKeyframeSpacingMs);
+        before = keyframes();
+        mox->setMox(false);
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            feed();
+            const QJsonObject context = lastContext();
+            return context.value(QStringLiteral("transmit")) == QJsonValue(false)
+                && context.value(QStringLiteral("contextGeneration")).toInteger()
+                    > receiveGeneration;
+        }()), 5000);
+        const int framesAtFall = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() > framesAtFall + 2), 5000);
+        if (v2) {
+            QCOMPARE(keyframes(), before);
+            QCOMPARE(keyframes(), 0);
+        } else {
+            QTRY_VERIFY(keyframes() > before);
+        }
+
+        // Every display frame the Core sent carried the agreed version.
+        int codecMessages = 0;
+        for (const QByteArray& message : coreMedia->displays) {
+            if (!message.startsWith("NSDC")) {
+                continue;
+            }
+            ++codecMessages;
+            QCOMPARE(static_cast<int>(static_cast<quint8>(message.at(4))), v2 ? 2 : 1);
+        }
+        QVERIFY(codecMessages > 0);
+        client.disconnectFromStation(QStringLiteral("test complete"));
     }
 };
 

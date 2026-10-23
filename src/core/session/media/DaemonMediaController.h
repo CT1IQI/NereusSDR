@@ -8,6 +8,10 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
+//               setEncodedFrameObserverForTest and the observer) build only
+//               with NEREUS_BUILD_TESTS. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 sender: a connection whose start agreed version 2
 //               sends every display frame as NSDC v2, a split frame's two
 //               parts in one sender turn, row part first; the diagnostics
@@ -576,6 +580,7 @@ public:
     /// read is not run, for an unknown endpoint or one that asked for none.
     bool readDisplayExtrasForTest(quint32 endpointId,
                                   const std::function<void(const DisplayExtrasProcessor&)>& read);
+#ifdef NEREUS_BUILD_TESTS
     /// NSDC v2 tests: sets a live endpoint's admitted frame bytes (its
     /// displayCost.maximumFrameBytes) under the display lock. False for an
     /// unknown endpoint.
@@ -584,6 +589,7 @@ public:
     /// encoded (either version), under the display lock, on the thread that
     /// sends the displays. Empty clears it.
     void setEncodedFrameObserverForTest(std::function<void(const DisplayCodecFrame&)> observer);
+#endif
     /// Whether that engine's transforms follow its frame rate: true only
     /// while the display budget is lowered because the Core is busy
     /// (R-R3-08, R-R3-40). Empty for an unknown endpoint.
@@ -1232,8 +1238,10 @@ private:
     // Bench setting DisplayKeyframeEveryFrame; written on the main thread,
     // read by whichever thread sends the displays.
     std::atomic<bool> m_displayKeyframeEveryFrame{false};
+#ifdef NEREUS_BUILD_TESTS
     // NSDC v2 tests (setEncodedFrameObserverForTest); under the display lock.
     std::function<void(const DisplayCodecFrame&)> m_encodedFrameObserver;
+#endif
     bool m_audioProfileNegotiated{false};
     RemoteAudioProfile m_audioRequestedProfile{RemoteAudioProfile::Opus};
     RemoteAudioProfile m_audioActiveProfile{RemoteAudioProfile::Opus};
