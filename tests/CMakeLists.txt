@@ -5975,7 +5975,10 @@ nereus_add_test(tst_telemetry_history)
 # R-R3-35: clock offset from probe exchanges and the measured audio delay.
 nereus_add_test(tst_audio_clock_estimator)
 # R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
+# NSDC v2: its loss case reads the codec's scenes (DisplayCodecV2Vectors.h).
 nereus_add_test(tst_remote_display_presenter)
+target_compile_definitions(tst_remote_display_presenter PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 nereus_add_test(tst_remote_waterfall_cadence)
 # NEREUS_TRACE_MAIN_STALLS: slow GUI-thread deliveries log MAIN_STALL; off, nothing.
 nereus_add_test(tst_gui_application_stall_trace)
