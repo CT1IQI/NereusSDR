@@ -24,6 +24,11 @@
 //                point. After Longpath f1d0c181 (Martin Fischer, OE5SOS).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-22 - Connect hold: discovery sends nothing from the moment a
+//                local connection is created until it reports Connected or
+//                ends, then waits the post-disconnect quiet period
+//                (RadioDiscovery::beginConnectHold). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - A lone slice that tunes well inside another receiver of its
 //                pan goes back onto that receiver instead of moving its own
 //                (bindSliceToStream, rejoinCandidateStreams; JJ's ruling
@@ -1274,6 +1279,39 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - SWR protection reaches the drive, as Thetis applies
+//                NetworkIO.SWRProtect: the controller's factor is the
+//                TransmitModel factor the wire pump reads, a wind-back
+//                change re-pumps once per poll and only while keyed
+//                (console.cs:26151-26158 [v2.10.3.15]), the poll runs only
+//                while transmitting (console.cs:25989-25991), and MOX off
+//                resets the factor and the wind-back latch
+//                (UIMOXChangedFalse, console.cs:29241-29246). Cross-checked
+//                against Longpath 99b20c81, which releases the latch at the
+//                hardware flip instead. Modified by J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Claude Code.
+//   2026-10-22 - PR 604 fix wave: the ANAN-8000D alex_fwd_limit follows PWR
+//                before every SWR sample, MOX and TUNE alike
+//                (console.cs:26112-26114 [v2.10.3.15]); an open antenna
+//                drops MOX and shows Thetis's warning (console.cs:26036-26057,
+//                26177-26185); the SWR release runs on every unkey
+//                (moxChanging) and the poll is gated on MOX as `if (_mox)`.
+//                Modified by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
+//   2026-10-22 - PR 604 second pass: an open-antenna drop sets Stop All TX's
+//                latch so a held PTT or VOX does not key again until
+//                released (a deliberate departure from Thetis, JJ's ruling),
+//                and raises its stop reason so a remote window shows the
+//                antenna warning. Modified by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
+//   2026-10-22 - The I/Q level log hears ADC overloads
+//                (RadioConnection::adcOverflow to
+//                ReceiverManager::noteAdcOverflow), and reportDspDiagnostics
+//                logs each slice's noise-reduction calls over 50 ms with the
+//                stages that ran, and non-finite WDSP output (the load
+//                sampler's tick). Diagnostics only; NR and DSP
+//                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1739,6 +1777,24 @@ namespace NereusSDR {
 // preserved exactly per CLAUDE.md "Constants and Magic Numbers" rule.
 namespace {
 
+// SWR protection's trip floor, alex_fwd_limit, from the model and the PWR
+// slider (ptbPWR.Value).
+// From Thetis console.cs:26112-26114 [v2.10.3.15]:
+// Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+//   float alex_fwd_limit = 5.0f;
+//   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+//       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+constexpr float kSwrAlexFwdLimitW = 5.0f;
+constexpr float kSwrAlexFwdLimit8000DPerPwr = 2.0f;
+
+float swrAlexFwdLimit(HPSDRModel model, int pwrSlider) noexcept
+{
+    if (model == HPSDRModel::ANAN8000D) {        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+        return kSwrAlexFwdLimit8000DPerPwr * static_cast<float>(pwrSlider);        //    by comparing alex_fwd with power setting
+    }
+    return kSwrAlexFwdLimitW;
+}
+
 // scaleFwdPowerWatts: lifted from this anonymous namespace into the
 // public PaTelemetryScaling API in Phase 1 Agent 1B of issue #167.
 // See src/core/PaTelemetryScaling.{h,cpp} — same Thetis-canonical math
@@ -2202,6 +2258,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
         m_nnrGovernorClock.start();
         connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
             governNnrLoad(m_nnrGovernorClock.elapsed());
+        });
+        // 2026-10-22: noise-reduction calls over 50 ms and non-finite WDSP
+        // output, on the same tick. The slow-call labels were recorded at
+        // call time, so the governor's step above cannot relabel them.
+        connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
+            reportDspDiagnostics(m_nnrGovernorClock.elapsed());
         });
         m_dspLoadTimer->start();
     }
@@ -4790,22 +4852,72 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(&m_transmitModel, &TransmitModel::audioVolumeChanged,
             this, &RadioModel::pumpAudioVolume);
 
-    // Connect TransmitModel::swrProtectFactorChanged → re-pump current
-    // audio_volume through the new SWR factor.  Mirrors Thetis
-    // console.cs:26102-26109 [v2.10.3.13]:
-    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
-    //   {
-    //       // setting SWRProtect does nothing unless power is changed,
-    //       // RadioVolume is the only code that uses SWRProtect using
-    //       // NetworkIO.SetOutputPower.
-    //       Audio.RadioVolume = Audio.RadioVolume;  // self-assign re-emits
-    //   }
-    // The NereusSDR cache (m_lastAudioVolume, updated inside pumpAudioVolume)
-    // stands in for Thetis's `radio_volume` backing field.
-    connect(&m_transmitModel, &TransmitModel::swrProtectFactorChanged,
-            this, [this](float /*factor*/) {
-        pumpAudioVolume(m_lastAudioVolume);
-    });
+    // SWR protection → drive.  TransmitModel's swrProtectFactor is
+    // NetworkIO.SWRProtect (NetworkIO.cs:192-197 [v2.10.3.15]); every
+    // write PollPAPWR makes to it is the controller's protectFactor, so the
+    // controller's factor is stored there as it changes:
+    // From Thetis console.cs:26042, 26122, 26129, 26137 [v2.10.3.15]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   NetworkIO.SWRProtect = (float)(_swrProtectionLimit / (swr + 1.0f));
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    // (open antenna, trip, clear, wind-back latch, in that order).
+    // Storing it sends nothing: SetOutputPower (NetworkIO.cs:199-212)
+    // multiplies it in when Audio.RadioVolume is next assigned
+    // (pumpAudioVolume here). The one reassignment PollPAPWR itself makes,
+    // with wind-back on, is in handlePaTelemetry after ingest().
+    //
+    // This replaces a connect that re-pumped on every factor change,
+    // which dropped the `_swr_wind_back_power && swrprotection` guard of
+    // console.cs:26151 [v2.10.3.15] and ran outside the keyed poll.
+    connect(&m_swrProt, &safety::SwrProtectionController::protectFactorChanged,
+            &m_transmitModel, &TransmitModel::setSwrProtectFactor);
+
+    // MOX off releases the SWR protection.
+    // From Thetis console.cs:29721-29722 [v2.10.3.15] (chkMOX_CheckedChanged2):
+    //   if (tx) UIMOXChangedTrue();
+    //   else UIMOXChangedFalse();
+    // and UIMOXChangedFalse, console.cs:29241-29246 [v2.10.3.15]:
+    //   //[2.10.3.7]MW0LGE reset
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   _wind_back_engaged = false;
+    //   Display.PowerFoldedBack = false;
+    //   Audio.HighSWRScale = 1.0;
+    //   HighSWR = false;
+    // Thetis runs UIMOXChangedFalse on every unkey, synchronously. Here the
+    // release is hooked to moxChanging(true -> false), which MoxController
+    // emits on every real unkey before it commits MOX off. That is earlier
+    // than Thetis, which resets after the hardware unkey (console.cs:29721
+    // [v2.10.3.15]). It is safe: the factor it puts back to 1.0
+    // (TransmitModel::swrProtectFactor) is read only by pumpAudioVolume,
+    // which runs on a drive change (the PWR slider, TUNE, two-tone, the
+    // next key's drive restore), not on this reset, so the folded-back
+    // byte already sent stays until something sets the drive again. The
+    // caveat: the TX channel's drain and a RADE end-of-over tail still
+    // transmit after this point with the protection released; the poll no
+    // longer runs then (isMox() is false), so a high SWR during that tail
+    // is not acted on, and the drive byte already sent (folded back or
+    // not) stays until the walk ends. moxChanged
+    // fires only at the end of the TX-to-RX walk, which a quick re-key
+    // cancels, so a latch released there could survive into the next key.
+    // The SWR poll in handlePaTelemetry is gated on isMox() as Thetis's
+    // `if (_mox)`, so no sample after this point can trip it again. The
+    // controller's onMoxOff makes those resets and its factor signal
+    // stores 1.0 in TransmitModel; nothing is pumped, as upstream. The
+    // next key's drive restore (restoreNormalTxDrive, ptbPWR_Scroll) sends
+    // full drive. Not gated on the role: a window whose controller never
+    // keys never sees this edge.
+    // Cross-checked against Longpath 99b20c81 (2026-08-14), which calls
+    // onMoxOff from onMoxHardwareFlipped(false).
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxChanging, this,
+                [this](int, bool oldMox, bool newMox) {
+            if (oldMox && !newMox) {
+                m_swrProt.onMoxOff();
+            }
+        });
+    }
 
     // (Codex-flagged duplicate audioVolumeChanged listener removed in 67298ff
     // follow-up.  The single canonical pump is RadioModel::pumpAudioVolume,
@@ -15381,6 +15493,123 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
     }
 }
 
+namespace {
+
+// "A (index 0)": the slice letter and its index, which is also its WDSP
+// channel.
+QString sliceLogName(int sliceIndex)
+{
+    if (sliceIndex >= 0 && sliceIndex < 26) {
+        return QStringLiteral("%1 (index %2)")
+            .arg(QChar(QLatin1Char('A').unicode() + sliceIndex))
+            .arg(sliceIndex);
+    }
+    return QStringLiteral("index %1").arg(sliceIndex);
+}
+
+QString nnrModelNames(int stages, int standardBit, int premiumBit)
+{
+    QStringList names;
+    if ((stages & standardBit) != 0) {
+        names << QStringLiteral("Standard");
+    }
+    if ((stages & premiumBit) != 0) {
+        names << QStringLiteral("Premium");
+    }
+    return names.isEmpty() ? QStringLiteral("off") : names.join('/');
+}
+
+} // namespace
+
+QString RadioModel::nrStagesLogName(int stages)
+{
+    struct Stage {
+        int bit;
+        const char* name;
+    };
+    static constexpr Stage kStages[] = {
+        {WDSP_NR_STAGE_ANR, "NR1"},
+        {WDSP_NR_STAGE_EMNR, "NR2"},
+        {WDSP_NR_STAGE_RNNR, "NR3"},
+        {WDSP_NR_STAGE_SBNR, "NR4"},
+        {WDSP_NR_STAGE_NNR_STANDARD, "NNR Standard"},
+        {WDSP_NR_STAGE_NNR_PREMIUM, "NNR Premium"},
+        {WDSP_NR_STAGE_DFNR, "DFNR"},
+        {WDSP_NR_STAGE_MNR, "MNR"},
+    };
+    QStringList names;
+    for (const Stage& stage : kStages) {
+        if ((stages & stage.bit) != 0) {
+            names << QString::fromLatin1(stage.name);
+        }
+    }
+    if ((stages & WDSP_NR_NNR_LIMIT_APPLIED) != 0) {
+        names << QStringLiteral("the NNR limit switched NNR from %1 to %2 inside the call")
+                     .arg(nnrModelNames(stages, WDSP_NR_NNR_FROM_STANDARD,
+                                        WDSP_NR_NNR_FROM_PREMIUM),
+                          nnrModelNames(stages, WDSP_NR_NNR_TO_STANDARD,
+                                        WDSP_NR_NNR_TO_PREMIUM));
+    }
+    return names.isEmpty() ? QStringLiteral("no stage recorded") : names.join(QStringLiteral(", "));
+}
+
+QString RadioModel::slowNrCallLogLine(int sliceIndex, qint64 count, qint64 longestUs,
+                                      int longestStages, int stages)
+{
+    const QString longest =
+        longestUs > 0
+            ? QStringLiteral("%1 ms, ran %2")
+                  .arg(static_cast<double>(longestUs) / 1000.0, 0, 'f', 1)
+                  .arg(nrStagesLogName(longestStages))
+            : QStringLiteral("over 50 ms");
+    return QStringLiteral("Slice %1: %2 noise reduction call(s) over 50 ms since the last "
+                          "report, running %3; the longest took %4")
+        .arg(sliceLogName(sliceIndex))
+        .arg(count)
+        .arg(nrStagesLogName(stages))
+        .arg(longest);
+}
+
+QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
+{
+    return QStringLiteral("Slice %1: %2 non-finite samples in WDSP's output since the last "
+                          "report")
+        .arg(sliceLogName(sliceIndex))
+        .arg(samples);
+}
+
+void RadioModel::reportDspDiagnostics(qint64 nowMs)
+{
+    if (!m_wdspEngine) {
+        return;
+    }
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice == nullptr) {
+            continue;
+        }
+        const int sliceId = slice->sliceIndex();
+        RxChannel* channel = m_wdspEngine->rxChannel(sliceId);
+        if (channel == nullptr) {
+            continue;
+        }
+        RxChannel::SlowNrCalls calls;
+        if (channel->takeSlowNrCalls(calls) && calls.count > 0) {
+            qCInfo(lcDsp).noquote()
+                << slowNrCallLogLine(sliceId, calls.count, calls.longestUs,
+                                     calls.longestStages, calls.stages);
+        }
+        OutputNonFiniteLog& nonFinite = m_outputNonFiniteLog[sliceId];
+        nonFinite.pending += channel->takeOutputNonFiniteSamples();
+        if (nonFinite.pending > 0
+            && (nonFinite.lastLogMs < 0
+                || nowMs - nonFinite.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
+            qCWarning(lcDsp).noquote() << outputNonFiniteLogLine(sliceId, nonFinite.pending);
+            nonFinite.pending = 0;
+            nonFinite.lastLogMs = nowMs;
+        }
+    }
+}
+
 void RadioModel::applyNnrLimit(SliceModel* slice, NnrLimit limit)
 {
     RxChannel* channel = m_wdspEngine ? m_wdspEngine->rxChannel(slice->sliceIndex()) : nullptr;
@@ -19468,6 +19697,17 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         qCWarning(lcConnection) << "Failed to create connection for" << info.displayName();
         return;
     }
+    // Connect hold (2026-10-22): from here until this connection reports
+    // Connected (its first I/Q frame) or ends, discovery sends nothing:
+    // a running walk's next attempt, a new scan and a unicast probe all
+    // wait, in this process and on every NIC. The walk no longer blocks
+    // the thread, so the startup auto-connect (MainWindow::tryAutoReconnect,
+    // the turn after the walk starts) and a Connect pressed during a scan
+    // would otherwise broadcast at a radio that is starting, the same
+    // window as the 2026-07-27 ANAN-G2E lockups after a stop. The
+    // post-disconnect quiet period follows the hold
+    // (onConnectionStateChanged, teardownConnection).
+    RadioDiscovery::beginConnectHold(this);
     m_connection = conn.release();
     syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
@@ -20983,6 +21223,13 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
     }, Qt::DirectConnection);
+    // 2026-10-22: the I/Q level log names an ADC overload reported in its
+    // interval. Lock-free on the ReceiverManager side, so it runs where the
+    // connection emits it.
+    connect(m_connection, &RadioConnection::adcOverflow,
+            this, [this](int adc) {
+        m_receiverManager->noteAdcOverflow(adc);
+    }, Qt::DirectConnection);
     // One socket drain's I/Q goes to the DSP worker as one post per stream
     // (ReceiverManager::beginIqBatch). Both run on the connection thread.
     connect(m_connection, &RadioConnection::iqBatchStarted,
@@ -21645,11 +21892,10 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // meters show the physical truth (no TX → no forward power).
     //
     // Predicate: MoxController::state() == MoxState::Tx — the authoritative
-    // wire-level TX-active state.  TransmitModel's m_mox / m_tune flags are
-    // orphan state in the current codebase (never set true by any code
-    // path), so consulting them returned false during TUNE and force-zeroed
-    // the meters mid-transmit.  MoxController is the single source of truth
-    // for whether the radio is actually transmitting RF.
+    // wire-level TX-active state.  TransmitModel's mox flag only follows a
+    // key when no MoxController is present, and its tune flag is set by
+    // setTune, so neither tells whether the radio is transmitting RF right
+    // now; MoxController's walk state does.
     //
     // PA current / temperature / supply voltage are slow physical
     // quantities valid off-air; leave those samples alone.
@@ -21706,9 +21952,106 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // skew the foldback math; raw bridge watts are the canonical input
     // Thetis uses for protection (console.cs alex_fwd path is independent
     // of CalibratedPAPower).
+    //
+    // From Thetis console.cs:25989-25993 [v2.10.3.15] (PollPAPWR): the SWR
+    // poll acts only while keyed,
+    //   while (chkPower.Checked)
+    //   {
+    //       if (_mox)
+    //       {
+    //           float old_swr_protect = NetworkIO.SWRProtect;
+    // so a sample arriving after the key is released (or before the walk
+    // reaches Tx) cannot trip the protection again after UIMOXChangedFalse
+    // reset it. inTx above is the same gate the TX readings use; isMox() is
+    // `_mox` itself, false from the moment an unkey starts (the RADE
+    // end-of-over tail and the rest of the TX-to-RX walk included), which is
+    // where the release (moxChanging) runs.
+    const bool swrPollKeyed = m_forceTxForTest
+        || (inTx && m_moxController && m_moxController->isMox());
+    if (!swrPollKeyed) {
+        return;
+    }
+    const float oldSwrProtect = m_transmitModel.swrProtectFactor();
+    // The model for the open-antenna check's 8000D test, which belongs to
+    // the open-antenna block (console.cs:26030-26057 [v2.10.3.15]):
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26039 [v2.10.3.15]:
+    //       && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+    m_swrProt.setHpsdrModel(model);
+    // From Thetis console.cs:26112-26114 [v2.10.3.15], worked out on every
+    // poll from the model and the PWR slider (ptbPWR.Value), MOX and TUNE
+    // alike:
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    //   float alex_fwd_limit = 5.0f;
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+    m_swrProt.setAlexFwdLimit(swrAlexFwdLimit(model, m_transmitModel.power()));
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
+
+    // Open antenna: Thetis drops MOX and warns.
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26041-26055 [v2.10.3.15]:
+    //   swr = 50.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   chkMOX.Checked = false;
+    //
+    //   if (this.InvokeRequired)
+    //   { this.Invoke(new MethodInvoker(() => { checkAntennaWarning(); })); }
+    //   else
+    //   { checkAntennaWarning(); }
+    // and checkAntennaWarning, console.cs:26177-26185 [v2.10.3.15]:
+    //   MessageBox.Show("Please check your antenna connection.",
+    //   "High SWR condition detected", ...);
+    // chkMOX.Checked = false is MoxController's own unkey (the controller's
+    // key, as stopAllTx releases it), so the normal TX-to-RX walk and the
+    // release above run. The warning goes out on transmitStopped, which
+    // MainWindow already shows; no new UI. A remote window gets the same
+    // words through transmitStopReasonRaised (TransmitState records them
+    // instead of "The Core stopped transmitting."), as the amplifier's own
+    // stops do. Thetis has no TUNE arm here: the check does not run while
+    // tuning (!chkTUN.Checked).
+    //
+    // Deliberate departure from Thetis (JJ, 2026-10-22: "A, hold the key off
+    // until release"): before the drop, Stop All TX's latch is set
+    // (latchStopAllTx), so a held mic PTT or VOX is held off until it is
+    // released. CAT and TCI keys are dropped by the unkey itself
+    // (dropPttOnUnkey), so they are not waited on, and the app's next key
+    // command keys normally; so does a fresh key from any source the latch
+    // is not waiting on. Thetis does not latch: chkMOX.Checked = false
+    // here (PollPAPWR, console.cs:26036-26057 [v2.10.3.15]) leaves PollPTT
+    // (console.cs:25470-25555 [v2.10.3.15]) free to key again from a held
+    // source on its next pass, which then keys into the open antenna, trips,
+    // drops and keys again. The latch stops that key/unkey chatter into an
+    // open antenna; the release, then a new press, keys normally.
+    if (m_swrProt.openAntennaDetected() && m_moxController && m_moxController->isMox()) {
+        m_lastTransmitStopReason =
+            TransmitStopReason{QByteArray(kOpenAntennaStopCode), QByteArray(), -1};
+        m_moxController->latchStopAllTx();
+        m_moxController->setMox(false);
+        emit transmitStopped(openAntennaStopText());
+        emit transmitStopReasonRaised(m_lastTransmitStopReason.code, -1);
+    }
+
+    // From Thetis console.cs:26151-26158 [v2.10.3.15]:
+    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
+    //   {
+    //       // there has been a change
+    //       // We need to change the output power, as setting SWRProtect does nothing unless
+    //       // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+    //       // So just assign it with its own data
+    //       Audio.RadioVolume = Audio.RadioVolume;
+    //   }
+    // m_lastAudioVolume (kept by pumpAudioVolume) is radio_volume.
+    if (m_swrProt.windBackEnabled() && m_swrProt.isEnabled()
+        && oldSwrProtect != m_transmitModel.swrProtectFactor()) {
+        // there has been a change
+        // We need to change the output power, as setting SWRProtect does nothing unless
+        // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+        // So just assign it with its own data
+        pumpAudioVolume(m_lastAudioVolume);
+    }
 }
 
 // Issue #182 — TransmitModel::micPttDisabled → RadioConnection wire bit.
@@ -28042,6 +28385,10 @@ void RadioModel::teardownConnection()
     if (m_discovery) {
         m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
     }
+    // A connection torn down before it reported Connected (a failed
+    // connect, a cancel, quit) ends its connect hold here; the quiet period
+    // above then runs from the end of the teardown.
+    RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
@@ -28249,6 +28596,14 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
     // Phase 3Q-1: route through setConnectionState() so m_connectionState
     // stays in sync and the signal carries the new state value.
     setConnectionState(state);
+
+    // Connect hold (see connectToRadioImpl): the connection is up, or it
+    // ended without coming up. Discovery waits the post-disconnect quiet
+    // period from now, then resumes. Probing and Connecting keep the hold.
+    if (state == ConnectionState::Connected || state == ConnectionState::Disconnected
+        || state == ConnectionState::LinkLost) {
+        RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
+    }
 
     switch (state) {
     case ConnectionState::Connected:
@@ -28485,10 +28840,10 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
 //   }
 // With HighSWRScale baseline-1.0, the IQ scalar is just audio_volume.
 //
-// Caches the value into m_lastAudioVolume so a subsequent
-// swrProtectFactorChanged emit can re-pump the same audio_volume through
-// updated SWR protect (mirrors console.cs:26102-26109 [v2.10.3.13]
-// `Audio.RadioVolume = Audio.RadioVolume` re-emit on _swr_protect change).
+// Caches the value into m_lastAudioVolume so handlePaTelemetry's wind-back
+// re-pump can send the same audio_volume through the updated SWR protect
+// (mirrors console.cs:26151-26158 [v2.10.3.15] `Audio.RadioVolume =
+// Audio.RadioVolume` re-emit on a SWRProtect change).
 // Ports the drive restore mi0bot performs on every MOX-to-TX transition, at
 // console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
 // `if (tx)` branch:
@@ -29710,13 +30065,13 @@ void RadioModel::setTune(bool on)
         //     float alex_fwd_limit = 5.0f;
         //     if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea: try to determine if Hi-Z or Lo-Z load
         //         alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+        // ptbPWR.Value is the PWR slider, not the tune power; handlePaTelemetry
+        // sets it again before every sample (console.cs:26112-26114
+        // [v2.10.3.15]), so this only primes it.
         m_swrProt.setTunePowerSliderValue(tunePower);
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
-        const float alexFwdLimit =
-            (m_hardwareProfile.model == HPSDRModel::ANAN8000D)
-                ? 2.0f * static_cast<float>(tunePower)
-                : 5.0f;
-        m_swrProt.setAlexFwdLimit(alexFwdLimit);
+        m_swrProt.setAlexFwdLimit(
+            swrAlexFwdLimit(m_hardwareProfile.model, m_transmitModel.power()));
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // ── ENGAGE MOX via MoxController ─────────────────────────────────────
@@ -33963,6 +34318,15 @@ QString RadioModel::ampNotSwitchedText()
     // words (trying again never helps an amplifier that does not answer).
     return QStringLiteral("The amplifier did not answer. Put it in standby or disconnect it"
                           " in Setup to transmit without it.");
+}
+
+// The open-antenna warning, checkAntennaWarning's caption and text.
+// From Thetis console.cs:26177-26185 [v2.10.3.15]:
+//   MessageBox.Show("Please check your antenna connection.",
+//   "High SWR condition detected",
+QString RadioModel::openAntennaStopText()
+{
+    return QStringLiteral("High SWR condition detected. Please check your antenna connection.");
 }
 
 QString RadioModel::ampOperatedUnderKeyText()

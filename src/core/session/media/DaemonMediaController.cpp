@@ -4,6 +4,12 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: Bench setting DisplayKeyframeEveryFrame (JJ approved
+//               2026-10-22): with it on, every receive and transmit display
+//               frame is encoded as a keyframe. The display diagnostics line
+//               adds framesSent, keyframesSent, meanFrameBytes and
+//               keyframeEveryFrame. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-21: The sender passes each frame's source spacing to the
 //               endpoint's deadline (SpectrumEndpoint::earlyToleranceNs)
 //               and orders endpoints by it. J.J. Boyd (KG4VCF), AI-assisted
@@ -1331,7 +1337,11 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
                           " queuedLate=%8 keyframeRequests=%9"
                           " keyframeRequestsRefused=%10"
                           " sourceFramesReplaced=%11 panFramesReplaced=%12"
-                          " senderGapMaxMs=%13")
+                          " framesSent=%13 keyframesSent=%14 meanFrameBytes=%15"
+                          " keyframeEveryFrame=%16"
+                          // senderGapMaxMs stays last: the logged line follows it
+                          // with senderGapMaxSinceLastMs, and readers pair the two.
+                          " senderGapMaxMs=%17")
         .arg(diagnostics.displayMaxKeyframeBytes)
         .arg(IMediaTransport::sctpFragmentCount(diagnostics.displayMaxKeyframeBytes))
         .arg(diagnostics.displayMaxDeltaBytes)
@@ -1344,7 +1354,24 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
         .arg(diagnostics.displayKeyframeRequestsRefused)
         .arg(diagnostics.displaySourceFramesReplaced)
         .arg(diagnostics.displayPanFramesReplaced)
+        .arg(diagnostics.displayFramesSent)
+        .arg(diagnostics.displayKeyframesSent)
+        // Bytes per spectrum frame sent, to one decimal; -1 before the first.
+        .arg(diagnostics.displayFramesSent == 0
+                 ? QStringLiteral("-1")
+                 : QString::number(static_cast<double>(diagnostics.displayBytesSent)
+                                       / static_cast<double>(diagnostics.displayFramesSent),
+                                   'f', 1))
+        .arg(diagnostics.displayKeyframeEveryFrame ? QStringLiteral("on")
+                                                   : QStringLiteral("off"))
         .arg(senderGapMs(diagnostics.displaySenderGapMaxUs));
+}
+
+void DaemonMediaController::setDisplayKeyframeEveryFrame(bool on)
+{
+    m_displayKeyframeEveryFrame.store(on);
+    const auto displayHold = displayGuard();
+    m_displayDiagnostics.displayKeyframeEveryFrame = on;
 }
 
 void DaemonMediaController::recordDisplaySent(const QByteArray& spectrumFrame, bool keyframe)
@@ -1356,6 +1383,11 @@ void DaemonMediaController::recordDisplaySent(const QByteArray& spectrumFrame, b
     quint32& largest = keyframe ? m_displayDiagnostics.displayMaxKeyframeBytes
                                 : m_displayDiagnostics.displayMaxDeltaBytes;
     largest = std::max(largest, bytes);
+    ++m_displayDiagnostics.displayFramesSent;
+    if (keyframe) {
+        ++m_displayDiagnostics.displayKeyframesSent;
+    }
+    m_displayDiagnostics.displayBytesSent += bytes;
     m_displayDiagnostics.displayMaxFragments = std::max(
         m_displayDiagnostics.displayMaxFragments,
         static_cast<quint32>(IMediaTransport::sctpFragmentCount(bytes)));
@@ -2407,6 +2439,10 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     MediaPeer* const peer = m_peer.get();
     m_displayDiagnostics = {};
     m_displayDiagnosticsLogged = {};
+    // The setting is part of the line, not news by itself: a peer with
+    // nothing sent still writes no line.
+    m_displayDiagnostics.displayKeyframeEveryFrame = m_displayKeyframeEveryFrame.load();
+    m_displayDiagnosticsLogged.displayKeyframeEveryFrame = m_displayKeyframeEveryFrame.load();
     m_lastSenderTurnNs.reset();
     m_senderGapMaxSinceLoggedUs = -1;
     m_loggedTransportErrorKinds.clear();
@@ -3124,6 +3160,10 @@ void DaemonMediaController::finishReplacement()
     }
     m_displayDiagnostics = {};
     m_displayDiagnosticsLogged = {};
+    // The setting is part of the line, not news by itself: a peer with
+    // nothing sent still writes no line.
+    m_displayDiagnostics.displayKeyframeEveryFrame = m_displayKeyframeEveryFrame.load();
+    m_displayDiagnosticsLogged.displayKeyframeEveryFrame = m_displayKeyframeEveryFrame.load();
     m_lastSenderTurnNs.reset();
     m_senderGapMaxSinceLoggedUs = -1;
     m_loggedTransportErrorKinds.clear();
@@ -6540,7 +6580,9 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
                 }
             }
         }
-        const QByteArray bytes = current.encoder.encode(*reduced, current.forceKeyframe);
+        // Bench setting DisplayKeyframeEveryFrame: every frame a keyframe.
+        const QByteArray bytes = current.encoder.encode(
+            *reduced, current.forceKeyframe || m_displayKeyframeEveryFrame.load());
         const bool keyframe = current.encoder.lastEncodedKeyframe();
         const quint32 generation = current.endpoint.context().codec.contextGeneration;
         const quint64 samples = static_cast<quint64>(reduced->traceDbm.size())
@@ -7291,7 +7333,9 @@ bool DaemonMediaController::trySendTransmitFrame(quint32 endpointId, MediaPeer* 
     frame.waterfallDbm = entry.txWaterfall.isEmpty() ? entry.txTrace : entry.txWaterfall;
     entry.txPending = false;
     entry.txNewWaterfall = false;
-    const QByteArray bytes = entry.encoder.encode(frame, entry.forceKeyframe);
+    // Bench setting DisplayKeyframeEveryFrame: every frame a keyframe.
+    const QByteArray bytes = entry.encoder.encode(
+        frame, entry.forceKeyframe || m_displayKeyframeEveryFrame.load());
     const bool keyframe = entry.encoder.lastEncodedKeyframe();
     const quint64 samples = static_cast<quint64>(frame.traceDbm.size())
         + static_cast<quint64>(frame.waterfallDbm.size());
@@ -8458,6 +8502,7 @@ void DaemonMediaHub::onSessionStarted(quint64 epoch)
     if (m_audioLosslessAllowed) {
         controller->setAudioLosslessAllowed(*m_audioLosslessAllowed);
     }
+    controller->setDisplayKeyframeEveryFrame(m_displayKeyframeEveryFrame);
     m_controllers.emplace(epoch, std::move(controller));
 }
 
@@ -8489,6 +8534,15 @@ void DaemonMediaHub::setAudioLosslessAllowed(bool allowed)
     for (auto& [unused, controller] : m_controllers) {
         Q_UNUSED(unused);
         controller->setAudioLosslessAllowed(allowed);
+    }
+}
+
+void DaemonMediaHub::setDisplayKeyframeEveryFrame(bool on)
+{
+    m_displayKeyframeEveryFrame = on;
+    for (auto& [unused, controller] : m_controllers) {
+        Q_UNUSED(unused);
+        controller->setDisplayKeyframeEveryFrame(on);
     }
 }
 
