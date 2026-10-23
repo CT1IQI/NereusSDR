@@ -41,8 +41,9 @@
 //                                    Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  The noise floor measures the frame's
 //                                    measurement row when it has one (the
-//                                    trace unaveraged while its average
-//                                    warms up, wings with no data marked).
+//                                    average with its starting value taken
+//                                    out while it warms up, wings with no
+//                                    data marked).
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 

@@ -42,7 +42,8 @@
 //                 settled. J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
 //   2026-10-23 - The noise floor skips frames with no data and seeds from
-//                 the median of the first frame that has data. J.J. Boyd
+//                 the first frame that has data, at the level the
+//                 estimate settles at on it. J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 // =================================================================
@@ -177,10 +178,16 @@ public:
     /// Pixels at or below kInitialDbm, or not finite, are no measurement; a
     /// frame with nothing else changes nothing, and the quiet pixels the
     /// estimate needs are counted against the measured ones. The first
-    /// frame with data seeds both estimates from its median. A caller whose
-    /// trace is averaged passes the unaveraged row while its average warms
-    /// up (SpectrumReducer::reduce's measurementOut).
+    /// frame with data seeds both estimates at the level the estimate
+    /// settles at on it (the pixel with the quiet pixels needed below it).
+    /// A caller whose trace is averaged passes, while its average warms up,
+    /// the average with its starting value taken out
+    /// (SpectrumReducer::reduce's measurementOut).
     bool process(const QVector<float>& pixels, int fps, qint64 nowMs);
+
+    /// Whether a frame with data (or setLerpAverage) has given the
+    /// estimates a value.
+    bool seeded() const { return m_seeded; }
 
     /// Thetis m_fFFTBinAverageRX1: this frame's estimate.
     float fftBinAverage() const { return m_fftBinAverage; }

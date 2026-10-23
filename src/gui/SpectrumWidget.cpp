@@ -9,9 +9,13 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
-//                 pan's noise floor measures the trace unaveraged while
-//                 its average warms up, and not the extended view's wing
-//                 pixels that hold no data.
+//                 pan's noise floor measures the trace's average with its
+//                 starting value taken out while it warms up, and not the
+//                 extended view's wing pixels that hold no data or whose
+//                 average still holds a placeholder. A remote pan takes the
+//                 Core's starting value out of a new picture's trace at Log
+//                 Recursive, or holds its estimate until the Core's average
+//                 is warm (noteRemoteTraceWarmUp).
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -2716,6 +2720,14 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && shown.codec.endpointId == context.codec.endpointId;
     m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
         : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
+    // PR 628 re-review: a new picture may have started the Core's trace
+    // average again from its starting value; the same or a moved picture
+    // carries on with the average, whose encoder sequence starts again.
+    if (m_remoteContextPicture == RemoteContextPicture::New) {
+        m_remoteTraceStartShare = 1.0;
+        m_remoteTraceTakeStartOut = !m_noiseFloor.seeded();
+    }
+    m_remoteTraceStartShareAtContext = m_remoteTraceStartShare;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
@@ -2876,6 +2888,7 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
     } else {
         m_undentedPixels.clear();
     }
+    noteRemoteTraceWarmUp(frame);
     updateReducedSpectrumOverlays();
     // Only accepted encoder frames advance the measurement; duplicate/old
     // frames, waterfall replay and retained captures never advance its EMA.
@@ -5016,6 +5029,68 @@ void SpectrumWidget::setDisplayKeyed(bool keyed, qint64 holdLengthMs, int bandKe
 // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912 [v2.10.3.13],
 // now in core/spectrum/DisplayFollowers (NoiseFloorFollower::process) so the
 // Core runs the same estimate for an app's display.
+void SpectrumWidget::noteRemoteTraceWarmUp(const DisplayCodecFrame& frame)
+{
+    // The Core averages each frame it sends and no other
+    // (SpectrumEndpoint::consume paces before it reduces), and a configure
+    // starts the encoder sequence again at 0, so the frame with sequence n
+    // is the (n + 1)th the average has taken since the context started. In
+    // the recursive modes each takes alpha of the starting value's share
+    // away; the alpha is the one this pan asks for (setAveragingFor in
+    // RemoteMediaController: averageAlphaForTimeMs at the Core's rate),
+    // and the mode the integer this pan asks for (requestFor's plane()).
+    const int mode = static_cast<int>(m_spectrumAveraging);
+    if (m_remoteTraceStartShareAtContext <= 0.0 || (mode != 1 && mode != 3)) {
+        m_remoteTraceStartShare = 0.0;
+        return;
+    }
+    const int fps = std::max(1, m_remoteFps > 0 ? m_remoteFps : overlayFrameRate());
+    const double alpha = static_cast<double>(averageAlphaForTimeMs(m_spectrumAverageTimeMs, fps));
+    const double share = m_remoteTraceStartShareAtContext
+        * std::pow(std::clamp(alpha, 0.0, 1.0), static_cast<double>(frame.encoderSequence) + 1.0);
+    m_remoteTraceStartShare = share > SpectrumAvenger::kWarmSeedShare ? share : 0.0;
+    if (m_remoteTraceStartShare <= 0.0) {
+        return;
+    }
+    // Holding: no pixel is a measurement, so the follower keeps what it has.
+    const QVector<float>& trace = frame.traceDbm;
+    m_noiseFloorMeasurement.fill(std::numeric_limits<float>::quiet_NaN(), trace.size());
+    m_noiseFloorMeasurementFresh = true;
+    if (mode != 3 || !m_remoteTraceTakeStartOut) {
+        // Mode 1 averages linear power before the Core's scale, which the
+        // pan does not know, so the start cannot be taken out exactly.
+        return;
+    }
+    // At Log Recursive the trace is s * start + (1 - s) * (the frames'
+    // weighted mean), in the dBm the Core sends (SpectrumAvenger::unseededDb
+    // on the Core's side). A pixel the codec clamped to the bottom of its
+    // range is no measurement, nor is one the undoing puts above the top
+    // (a picture whose trace average had not started again after all).
+    const double minDbm = static_cast<double>(frame.context.minDbm);
+    const double maxDbm = static_cast<double>(frame.context.maxDbm);
+    const double halfStep = 0.5 * (maxDbm - minDbm) / 255.0;
+    // NereusSDR, not in Thetis: the codec rounds each pixel to the nearest
+    // of 256 levels, up to half a step out, and taking the start out
+    // divides that by (1 - s): at 650 ms and 30 fps the first frame's
+    // s is 0.95, which makes a third of a dB six. The pan holds until the
+    // rounding can move an undone pixel by at most this much.
+    constexpr double kMostUndoneRoundingDb = 1.0;
+    if (halfStep > kMostUndoneRoundingDb * (1.0 - share)) {
+        return;
+    }
+    for (int i = 0; i < trace.size(); ++i) {
+        const double dBm = static_cast<double>(trace[i]);
+        if (dBm <= minDbm + halfStep) {
+            continue;
+        }
+        const double undone = (dBm - share * SpectrumAvenger::kLogRecursiveStartDb)
+            / (1.0 - share);
+        if (undone <= maxDbm) {
+            m_noiseFloorMeasurement[i] = static_cast<float>(undone);
+        }
+    }
+}
+
 void SpectrumWidget::processNoiseFloor()
 {
     // The noise floor is a MEASUREMENT, so it reads the undented pixels
@@ -7019,21 +7094,40 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
             static_cast<double>(m_spectrumAverageAlpha), dbmScale,
             noCorrection, false, 0.0, m_renderedPixels);
         // The row the noise floor measures, as the Core's
-        // ExtendedSpectrumReducer writes it: unaveraged while the average
-        // warms up, and no data (NaN) where a wing had none.
-        const bool anyPlaceholder = std::find(m_extendedSpectrumPlaceholder.cbegin(),
-                                              m_extendedSpectrumPlaceholder.cend(), true)
-            != m_extendedSpectrumPlaceholder.cend();
+        // ExtendedSpectrumReducer writes it: the average with its starting
+        // value taken out while it warms up, and no data (NaN) at a wing
+        // pixel that had none or whose average still holds a placeholder.
+        const int pixels = static_cast<int>(m_extendedSpectrumPlaceholder.size());
+        if (m_extendedSpectrumFramesWithData.size() != pixels) {
+            m_extendedSpectrumFramesWithData.fill(std::numeric_limits<int>::max(), pixels);
+        }
+        const int averageMode = avengerMode(m_spectrumAveraging);
+        const double averageAlpha = static_cast<double>(m_spectrumAverageAlpha);
+        const int averageFrames = m_extendedSpectrumAvenger.numAverage();
+        const auto pixelWarm = [&](int x) {
+            return SpectrumAvenger::warmAfterFrames(m_extendedSpectrumFramesWithData[x],
+                                                    averageMode, averageAlpha, averageFrames);
+        };
+        bool anyNoData = false;
+        for (int x = 0; x < pixels; ++x) {
+            int& frames = m_extendedSpectrumFramesWithData[x];
+            if (m_extendedSpectrumPlaceholder[x]) {
+                frames = 0;
+            } else if (frames < std::numeric_limits<int>::max()) {
+                ++frames;
+            }
+            anyNoData = anyNoData || !pixelWarm(x);
+        }
         m_noiseFloorMeasurement.clear();
         if (m_extendedSpectrumAvenger.warmingUp()) {
-            SpectrumAvenger::toDb(m_extendedSpectrumLinearPixels, dbmScale,
-                                  m_noiseFloorMeasurement);
-        } else if (anyPlaceholder) {
-            m_noiseFloorMeasurement = m_renderedPixels;
+            m_extendedSpectrumAvenger.unseededDb(dbmScale, m_noiseFloorMeasurement);
         }
-        if (anyPlaceholder && m_noiseFloorMeasurement.size() == m_extendedSpectrumPlaceholder.size()) {
-            for (int x = 0; x < m_noiseFloorMeasurement.size(); ++x) {
-                if (m_extendedSpectrumPlaceholder[x]) {
+        if (anyNoData && pixels == m_renderedPixels.size()) {
+            if (m_noiseFloorMeasurement.size() != pixels) {
+                m_noiseFloorMeasurement = m_renderedPixels;
+            }
+            for (int x = 0; x < pixels; ++x) {
+                if (!pixelWarm(x)) {
                     m_noiseFloorMeasurement[x] = std::numeric_limits<float>::quiet_NaN();
                 }
             }

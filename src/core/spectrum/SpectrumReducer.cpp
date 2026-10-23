@@ -152,7 +152,7 @@ void SpectrumReducer::reduce(const QVector<float>& binsLinear,
                     0.0,
                     pixelsOut);
     if (measurementOut && m_avenger.warmingUp()) {
-        SpectrumAvenger::toDb(m_linearPixels, dbmScale, *measurementOut);
+        m_avenger.unseededDb(dbmScale, *measurementOut);
     }
 }
 

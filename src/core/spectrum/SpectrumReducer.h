@@ -39,8 +39,9 @@
 //                                    Anthropic Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
 //                                    noise floor measures while the average
-//                                    warms up. AI-assisted via Anthropic
-//                                    Claude Code.
+//                                    warms up: the average with its
+//                                    starting value taken out.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/spectrum/SpectrumAvenger.h"
@@ -129,8 +130,10 @@ public:
     ///
     /// measurementOut, when given, is the row a noise floor should measure
     /// besides pixelsOut: while the average is still warming up from its
-    /// starting value (SpectrumAvenger::warmingUp), this frame with no
-    /// averaging; once it is warm, empty, meaning pixelsOut itself.
+    /// starting value (SpectrumAvenger::warmingUp), the average with that
+    /// value taken out (SpectrumAvenger::unseededDb: this frame alone on
+    /// the first, then the weighted mean of the frames so far); once it is
+    /// warm, empty, meaning pixelsOut itself.
     void reduce(const QVector<float>& binsLinear,
                 double windowEnb,
                 double dbmOffset,

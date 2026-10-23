@@ -34,7 +34,9 @@
 //                                    AI-assisted via OpenAI Codex.
 //   2026-10-23  J.J. Boyd / KG4VCF  Track the share of the recursive
 //                                    average its starting value still
-//                                    holds (warmingUp), and toDb().
+//                                    holds (warmingUp), the average with
+//                                    it taken out (unseededDb), and
+//                                    warmAfterFrames().
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -168,13 +170,41 @@ void SpectrumAvenger::clear()
     m_seedShare = 1.0;
 }
 
-void SpectrumAvenger::toDb(const QVector<float>& tPixels, double scale, QVector<float>& pixelsOut)
+void SpectrumAvenger::unseededDb(double scale, QVector<float>& pixelsOut) const
 {
-    // As apply()'s case 0 with no correction.
-    pixelsOut.resize(tPixels.size());
-    for (int i = 0; i < tPixels.size(); ++i) {
-        pixelsOut[i] = static_cast<float>(tenLog10(scale * tPixels[i]));
+    pixelsOut.clear();
+    if (!warmingUp() || m_seedShare >= 1.0 || m_needsInitialization
+        || (m_lastMode != 1 && m_lastMode != 3)) {
+        return;
     }
+    const double share = m_seedShare;
+    const double weight = 1.0 - share;
+    pixelsOut.resize(m_avSum.size());
+    for (int i = 0; i < m_avSum.size(); ++i) {
+        if (m_lastMode == 3) {
+            pixelsOut[i] = static_cast<float>((m_avSum[i] - share * kLogRecursiveStartDb) / weight);
+        } else {
+            // Each term of the linear average is a power, so what is left
+            // is never below zero but for round-off.
+            const double power = std::max(
+                (m_avSum[i] - share * kLinearRecursiveStart) / weight, 0.0);
+            pixelsOut[i] = static_cast<float>(tenLog10(scale * power));
+        }
+    }
+}
+
+bool SpectrumAvenger::warmAfterFrames(int frames, int avMode, double avBackmult, int numAverage)
+{
+    if (frames <= 0) {
+        return false;
+    }
+    if (avMode == 1 || avMode == 3) {
+        return std::pow(std::clamp(avBackmult, 0.0, 1.0), frames) <= kWarmSeedShare;
+    }
+    if (avMode == kTimeWindowMode) {
+        return frames >= std::max(1, std::min(numAverage, kMaxAverage));
+    }
+    return true;
 }
 
 // From Thetis WDSP analyzer.c:464-554 [v2.10.3.13] — avenger() verbatim port.
@@ -217,6 +247,7 @@ void SpectrumAvenger::apply(const QVector<float>& tPixels,
         m_needsInitialization = false;
     }
 
+    m_lastMode = avMode;
     int i;
     double factor;
     switch (avMode)

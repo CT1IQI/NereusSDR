@@ -44,8 +44,8 @@
 //   2026-10-23 - The noise floor takes no estimate from a frame with no
 //                 data (empty, or every pixel at the FFT's -200 dBm floor
 //                 or not finite), and it seeds both estimates from the
-//                 median of the first frame that has data instead of
-//                 climbing from -200 dBm. A display started or resumed
+//                 first frame that has data, at the level the estimate
+//                 settles at on it, instead of climbing from -200 dBm. A display started or resumed
 //                 drew ordinary noise hot for about eight seconds. J.J.
 //                 Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
@@ -191,16 +191,21 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     // estimates start at -200): Thetis climbs from there, 1 dB a frame out
     // of fast attack, and the line lags it by the attack time, so a display
     // started or resumed reads far below the band for seconds and NF-AGC
-    // maps ordinary noise hot. Here both estimates start at the median of
-    // the first frame that has data, which is that frame's estimate; the
-    // estimate below runs from the next frame.
+    // maps ordinary noise hot. Here both estimates start from the first
+    // frame that has data, at the level the estimate below settles at on
+    // such a frame: it falls while at least requireSamples measured pixels
+    // are below it and climbs while fewer are, so it holds where that many
+    // are, the pixel with that many below it. On a noisy band the median
+    // sits above that. The estimate runs from the next frame.
     if (!m_seeded) {
         QVector<float> measured;
         measured.reserve(measuredCount);
         std::copy_if(src.cbegin(), src.cend(), std::back_inserter(measured), isMeasured);
-        const auto middle = measured.begin() + measured.size() / 2;
-        std::nth_element(measured.begin(), middle, measured.end());
-        m_fftBinAverage = qBound(kInitialDbm, *middle, 200.0f);
+        const int quietNeeded = qBound(0, (measuredCount * m_sensitivity) / 20,
+                                       measuredCount - 1);
+        const auto settlesAt = measured.begin() + quietNeeded;
+        std::nth_element(measured.begin(), settlesAt, measured.end());
+        m_fftBinAverage = qBound(kInitialDbm, *settlesAt, 200.0f);
         m_lerpAverage = m_fftBinAverage;
         m_seeded = true;
         // As at the end of this function (Thetis display.cs:5400-5404

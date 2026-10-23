@@ -19,11 +19,12 @@
 //                                    AI-assisted transformation via
 //                                    OpenAI Codex.
 //   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
-//                                    noise floor measures: unaveraged while
-//                                    the average warms up, and with the
-//                                    placeholder wing pixels marked as no
-//                                    data. AI-assisted via Anthropic Claude
-//                                    Code.
+//                                    noise floor measures: the average with
+//                                    its starting value taken out while it
+//                                    warms up, and no data at a wing pixel
+//                                    that is a placeholder or whose average
+//                                    still holds one. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -385,19 +386,40 @@ bool ExtendedSpectrumReducer::reduce(const QVector<float>& ddcBinsLinear,
             return false;
         }
     }
-    if (measurementOut) {
-        // The row the noise floor measures: this frame unaveraged while the
-        // average warms up, and no data (NaN) where this frame had none.
-        const bool anyPlaceholder =
-            std::find(m_placeholder.cbegin(), m_placeholder.cend(), true) != m_placeholder.cend();
-        if (m_avenger.warmingUp()) {
-            SpectrumAvenger::toDb(m_linearPixels, dbmScale, *measurementOut);
-        } else if (anyPlaceholder) {
-            *measurementOut = candidate;
+    // A pixel's average holds a placeholder's floorDbm until enough frames
+    // with data have gone in after it (PR 628 re-review: a wing whose
+    // wideband data arrives late reads low for as long as the average
+    // takes).
+    if (m_framesWithData.size() != m_cfg.pixels) {
+        m_framesWithData.fill(std::numeric_limits<int>::max(), m_cfg.pixels);
+    }
+    bool anyNoData = false;
+    for (int x = 0; x < m_cfg.pixels; ++x) {
+        if (m_placeholder[x]) {
+            m_framesWithData[x] = 0;
+        } else if (m_framesWithData[x] < std::numeric_limits<int>::max()) {
+            ++m_framesWithData[x];
         }
-        if (anyPlaceholder) {
+        anyNoData = anyNoData || !SpectrumAvenger::warmAfterFrames(
+            m_framesWithData[x], m_cfg.averageMode, m_cfg.averageAlpha,
+            m_avenger.numAverage());
+    }
+    if (measurementOut) {
+        // The row the noise floor measures: the average with its starting
+        // value taken out while it warms up, and no data (NaN) at a pixel
+        // that had none or whose average still holds a placeholder.
+        measurementOut->clear();
+        if (m_avenger.warmingUp()) {
+            m_avenger.unseededDb(dbmScale, *measurementOut);
+        }
+        if (anyNoData) {
+            if (measurementOut->size() != candidate.size()) {
+                *measurementOut = candidate;
+            }
             for (int x = 0; x < m_cfg.pixels; ++x) {
-                if (m_placeholder[x]) {
+                if (!SpectrumAvenger::warmAfterFrames(m_framesWithData[x], m_cfg.averageMode,
+                                                      m_cfg.averageAlpha,
+                                                      m_avenger.numAverage())) {
                     (*measurementOut)[x] = std::numeric_limits<float>::quiet_NaN();
                 }
             }

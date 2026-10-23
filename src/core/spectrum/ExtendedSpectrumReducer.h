@@ -18,11 +18,12 @@
 //                                    AI-assisted transformation via
 //                                    OpenAI Codex.
 //   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
-//                                    noise floor measures: unaveraged while
-//                                    the average warms up, and with the
-//                                    placeholder wing pixels marked as no
-//                                    data. AI-assisted via Anthropic Claude
-//                                    Code.
+//                                    noise floor measures: the average with
+//                                    its starting value taken out while it
+//                                    warms up, and no data at a wing pixel
+//                                    that is a placeholder or whose average
+//                                    still holds one. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -85,6 +86,13 @@ public:
                 double floorDbm,
                 QVector<float>& out,
                 QVector<float>* measurementOut = nullptr);
+    // measurementOut, when given, is the row a noise floor should measure
+    // when it is not `out`, as SpectrumReducer::reduce's: while the average
+    // warms up, the average with its starting value taken out
+    // (SpectrumAvenger::unseededDb); and NaN (no data) at a pixel this frame
+    // filled with floorDbm, or whose average still holds such a value
+    // (SpectrumAvenger::warmAfterFrames on the frames with data since).
+    // Empty when it would be `out` itself.
 
     /// Pixel span [first, last] occupied by the clipped listenable DDC island
     /// in an extended window, or {0, -1} when it does not overlap the window.
@@ -95,6 +103,8 @@ private:
     QVector<float> m_linearPixels;
     // Pixels this frame filled with floorDbm because it had no data for them.
     QVector<bool> m_placeholder;
+    // Per pixel, the frames with data since it last was a placeholder.
+    QVector<int> m_framesWithData;
     SpectrumAvenger m_avenger;
 };
 

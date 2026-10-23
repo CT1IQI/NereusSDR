@@ -1,7 +1,9 @@
 // Modification history (NereusSDR):
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
-//                 noise floor's measurement row (m_noiseFloorMeasurement)
-//                 and the wing placeholders fillWidebandWings marks.
+//                 noise floor's measurement row (m_noiseFloorMeasurement),
+//                 the wing placeholders fillWidebandWings marks and the
+//                 frames with data since, and a remote pan's view of the
+//                 Core's trace average warming up (noteRemoteTraceWarmUp).
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -3289,6 +3291,15 @@ private:
     // Also runs the fast-attack convergence-gated auto-clear from
     // display.cs:5904-5908.
     void processNoiseFloor();
+    // A remote pan's noise floor while the Core's trace average warms up
+    // (PR 628 re-review): the Core sends the averaged trace only, so for a
+    // new picture the pan works out the share of that average the Core's
+    // starting value still holds from the frame's encoder sequence. At Log
+    // Recursive, for a follower that has no estimate yet, it takes the
+    // start out of the trace; otherwise it holds the estimate it has (or
+    // none) until the average is warm. Leaves the row to measure in
+    // m_noiseFloorMeasurement for this frame.
+    void noteRemoteTraceWarmUp(const DisplayCodecFrame& frame);
     void updateReducedSpectrumOverlays();
     void drawWaterfall(QPainter& p, const QRect& wfRect);
     // HIGH SWR / PA safety overlay — ported from display.cs:4183-4201 [v2.10.3.13]
@@ -3589,13 +3600,26 @@ private:
     QVector<float> m_extendedWaterfallLinearPixels;
     NereusSDR::SpectrumAvenger m_extendedSpectrumAvenger;
     NereusSDR::SpectrumAvenger m_extendedWaterfallAvenger;
-    // The extended trace's wing pixels that held no data this frame.
+    // The extended trace's wing pixels that held no data this frame, and
+    // per pixel the frames with data since it last held none.
     QVector<bool> m_extendedSpectrumPlaceholder;
-    // The row the noise floor measures when it is not the trace: the trace
-    // unaveraged while its average warms up, with NaN for wing pixels that
-    // hold no data. Fresh only for the frame the local reduce wrote it.
+    QVector<int> m_extendedSpectrumFramesWithData;
+    // The row the noise floor measures when it is not the trace: the
+    // average with its starting value taken out while it warms up, with NaN
+    // for wing pixels that hold no data (or, on a remote pan, the Core's
+    // trace so treated: noteRemoteTraceWarmUp). Fresh only for the frame it
+    // was written for.
     QVector<float> m_noiseFloorMeasurement;
     bool m_noiseFloorMeasurementFresh {false};
+    // A remote pan's view of the Core's trace average: the share of it the
+    // Core's starting value held when the current context started (1 for a
+    // new picture, 0 once warm or when the mode has no starting value), the
+    // share at the last frame, and whether the pan takes the start out of
+    // the trace (a follower with no estimate yet at Log Recursive) rather
+    // than hold its estimate (noteRemoteTraceWarmUp).
+    double m_remoteTraceStartShareAtContext {0.0};
+    double m_remoteTraceStartShare {0.0};
+    bool m_remoteTraceTakeStartOut {false};
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default

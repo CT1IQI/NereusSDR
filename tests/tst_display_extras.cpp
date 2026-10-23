@@ -38,8 +38,10 @@
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  A started display reads the band from
 //                                    its first frame with data, at Log
-//                                    Recursive and with placeholder wings.
-//                                    AI-assisted via Anthropic Claude Code.
+//                                    Recursive and with placeholder wings;
+//                                    on a noisy band, and with wings whose
+//                                    data arrives late. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -60,6 +62,8 @@
 #include "core/session/media/RemoteSpectrumContext.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "core/settings/SettingsProxy.h"
+#include "core/WidebandFftEngine.h"
+#include "core/spectrum/WidebandDisplayReference.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "OlderPeerDisplayRun.h"
@@ -79,6 +83,7 @@
 #include <cmath>
 #include <cstring>
 #include <numbers>
+#include <random>
 
 using namespace NereusSDR;
 
@@ -524,6 +529,10 @@ private slots:
         // The desktop, as a remote window runs it on received rows.
         SpectrumWidget desktop;
         desktop.setDisplayFps(kFps);
+        // The recorded rows go to both sides as the Core's trace; nothing
+        // averages them here, so the window asks for no averaging (at Log
+        // Recursive it would take the Core's starting value out of them).
+        desktop.setSpectrumAveraging(SpectrumAveraging::None);
         desktop.setPeakBlobsEnabled(true);
         desktop.setPeakBlobsCount(5);
         desktop.setPeakBlobsInsideFilterOnly(insideOnly);
@@ -942,6 +951,201 @@ private slots:
             QVERIFY2(std::abs(*out.noiseFloorDbm + 120.0f) < 3.0f,
                      qPrintable(QStringLiteral("frame %1 floor %2")
                                     .arg(i).arg(*out.noiseFloorDbm)));
+        }
+    }
+
+    // PR 628 re-review: the warm-up on a noisy band. The FFT's bins are
+    // exponentially distributed power, so the trace's own spread narrows as
+    // its average fills; the floor and the NF-AGC low level stay within
+    // 3 dB of where they settle on every frame, from the first frame and
+    // across a restart of the source, at 30 ms and 650 ms.
+    void aNoisyBandStaysWithinThreeDbOfItsSettledFloor_data()
+    {
+        QTest::addColumn<int>("averageTimeMs");
+        QTest::newRow("30 ms") << 30;
+        QTest::newRow("650 ms") << 650;
+    }
+
+    void aNoisyBandStaysWithinThreeDbOfItsSettledFloor()
+    {
+        QFETCH(int, averageTimeMs);
+        constexpr int kFps = 30;
+        // The floor and low level of each frame, from a new endpoint whose
+        // source restarts at frame `restartAt` (none if negative).
+        const auto runBand = [averageTimeMs](int frames, int restartAt,
+                                             QVector<float>& floors, QVector<float>& lows) {
+            SpectrumEndpointSourceContext source;
+            source.source = {2, FftTier::Wide};
+            source.sourceGeneration = 11;
+            source.fftBins = 1024;
+            source.centreHz = 14'200'000.0;
+            source.sampleRateHz = 192'000.0;
+            source.contextGeneration = 4;
+            SpectrumEndpointRequest request;
+            request.endpointId = 91;
+            request.source = source.source;
+            request.centreHz = source.centreHz;
+            request.spanHz = 96'000.0;
+            request.pixels = 128;
+            request.targetFps = kFps;
+            request.framesPerLine = 1;
+            request.trace.detector = SpectrumDetectorMode::Peak;
+            request.trace.averageMode = 3;
+            request.trace.averageAlpha = averageAlphaForTimeMs(averageTimeMs, kFps);
+            request.waterfall.detector = SpectrumDetectorMode::Peak;
+            request.waterfall.averageMode = 0;
+            SpectrumEndpoint endpoint;
+            QVERIFY(endpoint.configure(request, source));
+            Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
+            std::mt19937 rng(628);
+            std::exponential_distribution<float> noise(1.0f);
+            for (int i = 0; i < frames; ++i) {
+                if (i == restartAt) {
+                    source.sourceGeneration = 12;
+                    source.contextGeneration = 5;
+                    QVERIFY(endpoint.configure(request, source));
+                    QVERIFY(endpoint.tracePicture() == SpectrumPictureKind::New);
+                }
+                DaemonSpectrumFrame input;
+                input.source = source.source;
+                input.generation = source.sourceGeneration;
+                input.centreHz = source.centreHz;
+                input.sampleRateHz = source.sampleRateHz;
+                input.producedAtNs = (static_cast<qint64>(i) + 1) * 34'000'000;
+                input.windowEnb = 1.0;
+                input.dbmOffset = 0.0;
+                input.binsLinear.resize(source.fftBins);
+                for (float& bin : input.binsLinear) { bin = 1.0e-12f * noise(rng); }
+                input.binsLinear[300] = 1.0e-5f;
+                const std::optional<DisplayCodecFrame> reduced = endpoint.consume(input, 0.0);
+                QVERIFY(reduced.has_value());
+                run.nowMs = static_cast<qint64>(i) * 34;
+                run.inputs.nowMs = run.nowMs;
+                const DisplayExtrasFrame out = run.station.process(*reduced, run.inputs);
+                QVERIFY(out.noiseFloorDbm.has_value() && out.waterfallLevelsDbm.has_value());
+                floors.append(*out.noiseFloorDbm);
+                lows.append(out.waterfallLevelsDbm->first);
+            }
+        };
+        QVector<float> referenceFloors;
+        QVector<float> referenceLows;
+        runBand(20 * kFps, -1, referenceFloors, referenceLows);
+        QVERIFY(!QTest::currentTestFailed());
+        double settledFloor = 0.0;
+        double settledLow = 0.0;
+        for (int i = 17 * kFps; i < 20 * kFps; ++i) {
+            settledFloor += referenceFloors.at(i);
+            settledLow += referenceLows.at(i);
+        }
+        settledFloor /= 3 * kFps;
+        settledLow /= 3 * kFps;
+
+        QVector<float> floors;
+        QVector<float> lows;
+        runBand(10 * kFps, 5 * kFps, floors, lows);
+        QVERIFY(!QTest::currentTestFailed());
+        double worstFloor = 0.0;
+        double worstLow = 0.0;
+        int worstFrame = 0;
+        for (int i = 0; i < floors.size(); ++i) {
+            if (std::abs(floors.at(i) - settledFloor) > worstFloor) {
+                worstFloor = std::abs(floors.at(i) - settledFloor);
+                worstFrame = i;
+            }
+            worstLow = std::max(worstLow, std::abs(lows.at(i) - settledLow));
+        }
+        qInfo("%d ms: settled floor %.2f dBm, low %.2f dBm; worst %.2f dB (frame %d, %.2f dBm)"
+              " and %.2f dB off", averageTimeMs, settledFloor, settledLow, worstFloor,
+              worstFrame, double(floors.at(worstFrame)), worstLow);
+        for (int i = 0; i < floors.size(); ++i) {
+            QVERIFY2(std::abs(floors.at(i) - settledFloor) < 3.0,
+                     qPrintable(QStringLiteral("frame %1 floor %2, settled %3")
+                                    .arg(i).arg(floors.at(i)).arg(settledFloor)));
+            QVERIFY2(std::abs(lows.at(i) - settledLow) < 3.0,
+                     qPrintable(QStringLiteral("frame %1 low %2, settled %3")
+                                    .arg(i).arg(lows.at(i)).arg(settledLow)));
+        }
+    }
+
+    // PR 628 re-review: an extended view whose wideband data first arrives
+    // after the trace's average has warmed up. Each wing pixel's average
+    // still holds its placeholder for as long as the average takes, so it
+    // is no data until then; the floor stays within 3 dB of the band.
+    void anExtendedViewsLateWingsAreNotTheFloorWhileTheyWarm()
+    {
+        constexpr int kFps = 30;
+        constexpr float kBandDbm = -120.0f;
+        SpectrumEndpointSourceContext source;
+        source.source = {2, FftTier::Wide};
+        source.sourceGeneration = 11;
+        source.fftBins = 1024;
+        source.centreHz = 500'000.0;
+        source.sampleRateHz = 1'000'000.0;
+        source.contextGeneration = 4;
+        source.wideband.available = true;
+        source.wideband.active = true;
+        source.wideband.physicalAdcIndex = 0;
+        source.wideband.filterChainIndex = 0;
+        source.wideband.sourceGeneration = 31;
+        source.wideband.adcRateHz = 4'000'000.0;
+        SpectrumEndpointRequest request;
+        request.endpointId = 91;
+        request.source = source.source;
+        request.centreHz = 500'000.0;
+        request.spanHz = 2'000'000.0;
+        request.pixels = 100;
+        request.targetFps = kFps;
+        request.framesPerLine = 1;
+        request.extendedView = true;
+        request.trace.detector = SpectrumDetectorMode::Peak;
+        request.trace.averageMode = 3;
+        request.trace.averageAlpha = averageAlphaForTimeMs(650, kFps);
+        request.waterfall.detector = SpectrumDetectorMode::Peak;
+        request.waterfall.averageMode = 0;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(request, source));
+        // The wideband cache holds unnormalized FFT dB; this puts the wings
+        // at the band's display level through the Core's own reference.
+        WidebandSpectrumFrame wideband;
+        wideband.source.physicalAdcIndex = source.wideband.physicalAdcIndex;
+        wideband.source.sourceGeneration = source.wideband.sourceGeneration;
+        wideband.source.adcRateHz = source.wideband.adcRateHz;
+        wideband.producedAtNs = 1;
+        wideband.rawDbBins.fill(kBandDbm - widebandRelativeReferenceDb(
+                                    source.wideband.adcRateHz,
+                                    source.sampleRateHz / source.fftBins, 1.0,
+                                    SpectrumDetectorMode::Peak),
+                                WidebandFftEngine::kOutputBins);
+
+        Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
+        for (int i = 0; i < 10 * kFps; ++i) {
+            DaemonSpectrumFrame input;
+            input.source = source.source;
+            input.generation = source.sourceGeneration;
+            input.centreHz = source.centreHz;
+            input.sampleRateHz = source.sampleRateHz;
+            input.producedAtNs = (static_cast<qint64>(i) + 1) * 34'000'000;
+            input.windowEnb = 1.0;
+            input.dbmOffset = 0.0;
+            input.binsLinear.fill(1.0e-12f, source.fftBins);
+            // The wideband data arrives 4 s in, after the average is warm.
+            const std::optional<DisplayCodecFrame> reduced = i < 4 * kFps
+                ? endpoint.consume(input, 0.0)
+                : endpoint.consume(input, 0.0, wideband);
+            QVERIFY(reduced.has_value());
+            if (i == 10 * kFps - 1) {
+                QVERIFY2(std::abs(reduced->traceDbm.last() - kBandDbm) < 1.0f,
+                         qPrintable(QString::number(reduced->traceDbm.last())));
+            }
+            run.nowMs = static_cast<qint64>(i) * 34;
+            run.inputs.nowMs = run.nowMs;
+            const DisplayExtrasFrame out = run.station.process(*reduced, run.inputs);
+            QVERIFY2(std::abs(*out.noiseFloorDbm - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 floor %2")
+                                    .arg(i).arg(*out.noiseFloorDbm)));
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 low %2")
+                                    .arg(i).arg(out.waterfallLevelsDbm->first)));
         }
     }
 

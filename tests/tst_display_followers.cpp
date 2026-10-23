@@ -22,6 +22,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <random>
 
 using namespace NereusSDR;
 
@@ -250,6 +251,46 @@ private slots:
         const double expected = 10.0 * std::log10((std::pow(10.0, -12.0) + std::pow(10.0, -11.0)) * 0.5);
         QVERIFY2(std::abs(nf.fftBinAverage() - static_cast<float>(expected)) < 1.0e-3f,
                  qPrintable(QString::number(nf.fftBinAverage())));
+    }
+
+    // PR 628 re-review: on a noisy band the median of the first frame sits
+    // above where the estimate settles, which is the pixel with
+    // requireSamples measured pixels below it (sensitivity 3: 3 in 20).
+    // A new follower seeds there.
+    void aNewFollowerSeedsWhereTheEstimateSettles()
+    {
+        NoiseFloorFollower nf;
+        QVector<float> ramp(20);
+        for (int i = 0; i < ramp.size(); ++i) {
+            ramp[(i * 7) % ramp.size()] = -130.0f + static_cast<float>(i);
+        }
+        nf.process(ramp, 30, 0);
+        QCOMPARE(nf.fftBinAverage(), -127.0f);
+        QCOMPARE(nf.lerpAverage(), -127.0f);
+
+        // Exponentially distributed power, as an FFT's noise bins are: the
+        // first frame's seed is within 1.5 dB of where the floor settles.
+        std::mt19937 rng(628);
+        std::exponential_distribution<double> power(1.0);
+        const auto noisyRow = [&] {
+            QVector<float> row(512);
+            for (float& dB : row) {
+                dB = static_cast<float>(-120.0 + 10.0 * std::log10(power(rng) + 1.0e-30));
+            }
+            return row;
+        };
+        NoiseFloorFollower noisy;
+        noisy.process(noisyRow(), 30, 0);
+        const float seed = noisy.lerpAverage();
+        double settledSum = 0.0;
+        for (int frame = 1; frame <= 600; ++frame) {
+            noisy.process(noisyRow(), 30, 33 * frame);
+            if (frame > 300) { settledSum += noisy.lerpAverage(); }
+        }
+        const double settled = settledSum / 300.0;
+        qInfo("noisy band: seed %.2f dBm, settled %.2f dBm", double(seed), settled);
+        QVERIFY2(std::abs(seed - settled) < 1.5,
+                 qPrintable(QStringLiteral("seed %1, settled %2").arg(seed).arg(settled)));
     }
 
     // The seam seeds both estimates.

@@ -37,8 +37,9 @@ struct DisplayCodecFrame {
     QVector<float> wideDbm;
     /// In process only, never encoded: the row the Core's noise floor
     /// measures when it is not traceDbm (SpectrumReducer::reduce's
-    /// measurementOut): the trace unaveraged while its average warms up,
-    /// with NaN where a pixel holds no data. Empty means traceDbm.
+    /// measurementOut): while the trace's average warms up, the average
+    /// with its starting value taken out, with NaN where a pixel holds no
+    /// data. Empty means traceDbm.
     QVector<float> measurementDbm;
 };
 
