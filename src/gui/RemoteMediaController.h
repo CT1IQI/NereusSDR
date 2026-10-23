@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: RemoteDisplayTelemetry::pans, the keyframe waits and the
+//               rows blended and repeated of each pan, and
+//               remoteDisplayPanDiagnosticsFields for the diagnostics line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: rxMeterHoldMapNs (none while no display is open) and
 //               rxMeterHoldMapFor, and the StationClient's RX meter hold
 //               clock set to the display's clock and map. J.J. Boyd
@@ -156,8 +160,10 @@
 #include "gui/PanStatusText.h"
 #include "gui/RemoteAudioStatus.h"
 #include <QHash>
+#include <QMap>
 #include <QObject>
 #include <QSet>
+#include <QStringList>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -172,6 +178,15 @@ class PanClarityRegistry;
 class PanadapterStack;
 class SpectrumWidget;
 
+/// One pan's share of RemoteDisplayTelemetry's keyframe waits and blended
+/// and repeated rows.
+struct RemoteDisplayPanTelemetry {
+    quint64 keyframeWaits = 0;
+    quint64 rowsBlended = 0;
+    quint64 rowsRepeated = 0;
+    bool operator==(const RemoteDisplayPanTelemetry&) const = default;
+};
+
 /// R-R3-21 / R-R3-08: this window's display counters for its media session
 /// (every pan together), for the diagnostics line.
 struct RemoteDisplayTelemetry {
@@ -182,6 +197,10 @@ struct RemoteDisplayTelemetry {
     /// Waterfall rows blended across a gap, and repeated while waiting.
     quint64 rowsBlended = 0;
     quint64 rowsRepeated = 0;
+    /// The same three counts for each pan that had any, by pan id (a pan's
+    /// mini display as "<panId>/mini"), for the bench check of the Core's
+    /// DisplayKeyframeEveryFrame. They add up to the totals above.
+    QMap<QString, RemoteDisplayPanTelemetry> pans;
     /// The largest time between two display messages of one pan arriving,
     /// in the last 10 s (any pan).
     std::optional<double> largestArrivalGapMs;
@@ -194,6 +213,12 @@ struct RemoteDisplayTelemetry {
     /// drawn on arrival (an older Core, or no clock echo yet).
     std::optional<double> displayDelayMs;
 };
+
+/// The diagnostics line's fields for `telemetry.pans`, in pan id order:
+/// "displayPanKeyframeWaits(<pan>)=N displayPanRowsBlended(<pan>)=N
+/// displayPanRowsRepeated(<pan>)=N" for each pan. Empty with no pan.
+NEREUS_GUI_EXPORT QStringList remoteDisplayPanDiagnosticsFields(
+    const RemoteDisplayTelemetry& telemetry);
 
 /// Owns the GUI's media session and one bounded subscription per logical pan.
 /// Layout reparenting does not retire a pan; removing it from the stack does.

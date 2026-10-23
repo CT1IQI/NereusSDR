@@ -17,6 +17,10 @@
 // number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-22: RX meter stamps: the remote window declares rxMeterStamps.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h),
+// below the kernel's ephemeral range, so a parallel test cannot take one
+// between the pick and the listen. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // =================================================================
 // tests/tst_station_session.cpp  (NereusSDR)
 // =================================================================
@@ -60,6 +64,7 @@
 //
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <algorithm>
@@ -5946,10 +5951,8 @@ void TstStationSession::failedInitialConnectReportsPromptly()
     //
     // v0.5.1 shipped "connection state stuck Connected on failed initial
     // connect". Same bug class, so it gets a test rather than a comment.
-    QTcpServer probe;
-    QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-    const quint16 deadPort = probe.serverPort();
-    probe.close();  // nothing is listening there now
+    const quint16 deadPort = unusedLoopbackPort();  // nothing is listening there now
+    QVERIFY(deadPort != 0);
 
     RadioModel clientModel(RadioModel::Role::Remote);
     SettingsProxy proxy;

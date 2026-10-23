@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-22: the display counters are also kept per pan
+//               (RemoteDisplayTelemetry::pans) for the diagnostics line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: RX meter stamps: the StationClient holds each slice's RX
 //               meter readings on the display's clock and map
 //               (rxMeterHoldMapNs, none while no display is open; set in
@@ -1700,6 +1703,12 @@ struct RemoteMediaController::Private {
     std::optional<qint64> lastAudioDelayNs;
     QTimer* presentTimer = nullptr;
     RemoteDisplayTelemetry displayCounters;
+    // The pan's own entry in displayCounters.pans.
+    RemoteDisplayPanTelemetry& displayPanCounters(const Binding& binding)
+    {
+        return displayCounters.pans[binding.isMini() ? binding.panId + QStringLiteral("/mini")
+                                                     : binding.panId];
+    }
     // NEREUS_TRACE_REMOTE_ROWS=1, read once: HANDOFF_JUMP lines from
     // handOverEarlyRows, at most kRemoteRowTraceEventCap a 10 s window.
     const bool traceRemoteRows = qEnvironmentVariableIntValue("NEREUS_TRACE_REMOTE_ROWS") == 1;
@@ -8499,6 +8508,7 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         const bool enteringKeyframeWait = !binding.presenter.waitingForKeyframe();
         if (enteringKeyframeWait) {
             ++d->displayCounters.keyframeWaits;
+            ++d->displayPanCounters(binding).keyframeWaits;
         }
         binding.presenter.noteLoss();
         if (enteringKeyframeWait && binding.widget) {
@@ -8566,6 +8576,17 @@ void RemoteMediaController::receiveDisplayExtras(const QByteArray& packet)
         binding.widget->m_wfExtrasDiagnostics = SpectrumWidget::WaterfallExtrasDiagnostics{
             decoded.frame.endpointId, decoded.frame.contextGeneration, decoded.frame.encoderSequence};
     }
+}
+
+QStringList remoteDisplayPanDiagnosticsFields(const RemoteDisplayTelemetry& telemetry)
+{
+    QStringList fields;
+    for (auto it = telemetry.pans.cbegin(); it != telemetry.pans.cend(); ++it) {
+        fields << QStringLiteral("displayPanKeyframeWaits(%1)=%2").arg(it.key()).arg(it->keyframeWaits)
+               << QStringLiteral("displayPanRowsBlended(%1)=%2").arg(it.key()).arg(it->rowsBlended)
+               << QStringLiteral("displayPanRowsRepeated(%1)=%2").arg(it.key()).arg(it->rowsRepeated);
+    }
+    return fields;
 }
 
 RemoteDisplayTelemetry RemoteMediaController::displayTelemetry() const
@@ -8775,8 +8796,10 @@ void RemoteMediaController::presentDueDisplay()
                     recordQueuedProvenance();
                     if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
                         ++d->displayCounters.rowsBlended;
+                        ++d->displayPanCounters(it->second).rowsBlended;
                     } else {
                         ++d->displayCounters.rowsRepeated;
+                        ++d->displayPanCounters(it->second).rowsRepeated;
                     }
                 }
                 continue;
@@ -8869,6 +8892,7 @@ void RemoteMediaController::handOverEarlyRows(quint32 endpointId, qint64 nowNs,
         }
         if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
             ++d->displayCounters.rowsBlended;
+            ++d->displayPanCounters(binding).rowsBlended;
         }
         if (d->traceRemoteRows) {
             d->traceEarlyRowHandoff(binding, item, nowNs, mapNs, dueInNs);
