@@ -425,6 +425,28 @@ private slots:
 
     // R-R3-32/33: host values reach the view and the history; absent values
     // leave gaps. R-R3-07/33: one diagnostics line a minute for the soak.
+    // The diagnostics line's per-pan display fields (bench check of the
+    // Core's DisplayKeyframeEveryFrame, 2026-10-22): none without a pan,
+    // then each pan's three counts in pan id order.
+    void displayPanFieldsListEachPansCounts()
+    {
+        RemoteDisplayTelemetry telemetry;
+        QVERIFY(remoteDisplayPanDiagnosticsFields(telemetry).isEmpty());
+        telemetry.pans.insert(QStringLiteral("pan-1"), RemoteDisplayPanTelemetry{0, 0, 2});
+        telemetry.pans.insert(QStringLiteral("pan-0"), RemoteDisplayPanTelemetry{3, 14, 7});
+        telemetry.pans.insert(QStringLiteral("pan-0/mini"), RemoteDisplayPanTelemetry{1, 0, 0});
+        QCOMPARE(remoteDisplayPanDiagnosticsFields(telemetry).join(QLatin1Char(' ')),
+                 QStringLiteral("displayPanKeyframeWaits(pan-0)=3"
+                                " displayPanRowsBlended(pan-0)=14"
+                                " displayPanRowsRepeated(pan-0)=7"
+                                " displayPanKeyframeWaits(pan-0/mini)=1"
+                                " displayPanRowsBlended(pan-0/mini)=0"
+                                " displayPanRowsRepeated(pan-0/mini)=0"
+                                " displayPanKeyframeWaits(pan-1)=0"
+                                " displayPanRowsBlended(pan-1)=0"
+                                " displayPanRowsRepeated(pan-1)=2"));
+    }
+
     void coreHostValuesAndPeriodicDiagnosticsLine()
     {
         QTemporaryDir dir;
