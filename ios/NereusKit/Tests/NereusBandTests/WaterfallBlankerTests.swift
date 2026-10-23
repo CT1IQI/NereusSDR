@@ -1,7 +1,8 @@
 // NereusSDR for iOS: tests for NB Blank's row decision on the phone
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-23: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
-//   new. The cases of the desktop's tst_waterfall_impulse_blanker (PR 625).
+//   new. The cases of the desktop's tst_waterfall_impulse_blanker (PR 625),
+//   and the reset when transmit ends, in the blanker and in BandState.
 
 import Testing
 @testable import NereusBand
@@ -219,8 +220,10 @@ import Testing
 
     // What the waterfall draws: a blanked row is the last accepted row, the
     // row over the hold is drawn as is and becomes the last accepted row,
-    // and nothing is judged while transmitting.
-    @Test func filteredSubstitutesTheLastAcceptedRowAndDrawsTheRowOverTheHold() {
+    // nothing is judged while transmitting, and when transmit ends the
+    // blanker starts over as the desktop's does: a zero run and no
+    // detection for 8 rows.
+    @Test func filteredSubstitutesTheLastAcceptedRowAndStartsOverWhenTransmitEnds() {
         var blanker = WaterfallBlanker()
         var rows = Rows()
         var last: [Float] = []
@@ -240,6 +243,65 @@ import Testing
         #expect(blanker.filtered(keyed, enabled: true, transmitting: true, thresholdDb: 3) == keyed)
         #expect(blanker.historyRows == history)
         #expect(blanker.consecutiveBurstRows == 2)
+        // Transmit ends: the first 8 receive rows are drawn as they are,
+        // however loud, and build a new baseline from a zero run.
+        let firstReceive = rows.row(10)
+        #expect(blanker.filtered(firstReceive, enabled: true, transmitting: false, thresholdDb: 3) == firstReceive)
+        #expect(blanker.consecutiveBurstRows == 0)
+        #expect(blanker.historyRows == 1)
+        for index in 1..<8 {
+            let row = rows.row(index % 2 == 0 ? 10 : 0)
+            #expect(blanker.filtered(row, enabled: true, transmitting: false, thresholdDb: 3) == row, "row \(index)")
+        }
+        #expect(blanker.historyRows == 8)
+        #expect(blanker.consecutiveBurstRows == 0)
+    }
+
+    // BandState learns that transmit ended when transmittingWaterfall
+    // falls, and the blanker starts over there, even when no row reached
+    // it while keyed (Stop on TX holds the waterfall).
+    @Test func bandStateResetsTheBlankerWhenTransmitEnds() throws {
+        let levels = WaterfallHistory.Levels(lowDbm: -130, highDbm: -60)
+        let quiet = [Float](repeating: -100, count: 16)
+        let impulse = [Float](repeating: -80, count: 16)
+        func band() -> BandState {
+            var state = BandState(waterfallLines: 64)
+            state.waterfallBlanking = true
+            state.waterfallBlankingThresholdDb = 6
+            return state
+        }
+        var sequence: UInt32 = 0
+        func send(_ row: [Float], to state: inout BandState) -> [UInt8] {
+            sequence += 1
+            state.receive(frame: BandFixtures.frame(trace: row, sequence: sequence), manualLevels: levels)
+            return Array(state.history.line(age: 0) ?? [])
+        }
+
+        // Without a transmission, the impulse after 8 quiet rows is blanked.
+        var steady = band()
+        var quietLine: [UInt8] = []
+        for _ in 0..<8 {
+            quietLine = send(quiet, to: &steady)
+        }
+        let impulseBlanked = send(impulse, to: &steady)
+        #expect(impulseBlanked == quietLine)
+
+        // Keyed and back, with no row offered while keyed: the impulse is
+        // the first receive row, drawn as it is.
+        var keyed = band()
+        for _ in 0..<8 {
+            _ = send(quiet, to: &keyed)
+        }
+        keyed.transmittingWaterfall = true
+        keyed.transmittingWaterfall = false
+        let impulseDrawn = send(impulse, to: &keyed)
+        #expect(impulseDrawn != quietLine)
+        // Re-asserting receive is no transmit end and resets nothing.
+        for _ in 0..<8 {
+            _ = send(quiet, to: &keyed)
+        }
+        keyed.transmittingWaterfall = false
+        #expect(send(impulse, to: &keyed) == quietLine)
     }
 
     // The selection agrees with a sort, odd and even counts, with ties.

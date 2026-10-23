@@ -3,7 +3,8 @@
 // 2026-10-23: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
 //   the detector follows NereusSDR's desktop WaterfallImpulseBlanker (PR 625):
 //   a row's median in dB against the median of accepted rows, at most two rows
-//   blanked in a row, and only accepted rows in the baseline.
+//   blanked in a row, and only accepted rows in the baseline. The blanker is
+//   reset when transmit ends, as the desktop's is.
 
 import Foundation
 
@@ -23,7 +24,9 @@ import Foundation
 /// attenuator change) and enter the baseline until a row that is no burst
 /// arrives, so the baseline follows a lasting rise within a few rows.
 /// Only accepted rows enter the baseline. The history pauses during
-/// transmit so receive resumes against its prior receive baseline.
+/// transmit, and when transmit ends the baseline, the burst run and the last
+/// accepted row are forgotten, as the desktop does: the first receive rows
+/// are drawn as they are and build a new baseline.
 public struct WaterfallBlanker: Equatable, Sendable {
     /// Accepted rows' levels the baseline is taken over.
     public static let historyLimit = 32
@@ -51,6 +54,8 @@ public struct WaterfallBlanker: Equatable, Sendable {
     private var ringIndex = 0
     private var ringCount = 0
     private var burstRun = 0
+    /// A row was offered while transmitting and receive has not resumed.
+    private var keyed = false
     /// The baseline of the latest judged row, dB; the fill when a burst
     /// has no last accepted row of its width.
     private var lastBaselineDb: Float = 0
@@ -67,8 +72,8 @@ public struct WaterfallBlanker: Equatable, Sendable {
     public var consecutiveBurstRows: Int { burstRun }
 
     public static func == (lhs: WaterfallBlanker, rhs: WaterfallBlanker) -> Bool {
-        lhs.ring == rhs.ring && lhs.ringIndex == rhs.ringIndex && lhs.ringCount == rhs.ringCount
-            && lhs.burstRun == rhs.burstRun && lhs.lastBaselineDb == rhs.lastBaselineDb
+        lhs.ring[0..<lhs.ringCount] == rhs.ring[0..<rhs.ringCount] && lhs.ringIndex == rhs.ringIndex && lhs.ringCount == rhs.ringCount
+            && lhs.burstRun == rhs.burstRun && lhs.keyed == rhs.keyed && lhs.lastBaselineDb == rhs.lastBaselineDb
             && lhs.lastAcceptedRow == rhs.lastAcceptedRow
     }
 
@@ -77,13 +82,22 @@ public struct WaterfallBlanker: Equatable, Sendable {
         ringIndex = 0
         ringCount = 0
         burstRun = 0
+        keyed = false
         lastBaselineDb = 0
         lastAcceptedRow.removeAll(keepingCapacity: true)
     }
 
     public mutating func filtered(_ row: [Float], enabled: Bool, transmitting: Bool,
                                   thresholdDb: Int) -> [Float] {
-        guard enabled, !transmitting else {
+        if transmitting {
+            keyed = true
+            return row
+        }
+        if keyed {
+            // Transmit has ended: receive starts a new baseline.
+            reset()
+        }
+        guard enabled else {
             return row
         }
         switch judge(row, thresholdDb: Float(thresholdDb)) {
