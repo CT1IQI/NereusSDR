@@ -1510,6 +1510,10 @@ nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 # restart (found reviewing PR 517). A connection that sends nothing, a real
 # StationServer and a remote window over the loopback; no radio, no audio.
 nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
+# JJ's report 2026-10-23: each slice's tuning step and AGC-T AUTO come back
+# from the settings file after a relaunch, on a SliceModel and on a radio
+# connected from this computer. A connection that sends nothing; no radio.
+nereus_add_test(tst_slice_step_agc_auto_persistence EXTRA_LABELS models core)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
