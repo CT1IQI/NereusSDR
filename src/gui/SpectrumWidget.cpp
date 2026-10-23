@@ -15,7 +15,11 @@
 //                 average still holds a placeholder. A remote pan takes the
 //                 Core's starting value out of a new picture's trace at Log
 //                 Recursive, or holds its estimate until the Core's average
-//                 is warm (noteRemoteTraceWarmUp).
+//                 is warm (noteRemoteTraceWarmUp). A same or moved picture
+//                 during that warm-up holds rather than takes the start out;
+//                 the grid follow and the 3D floor wait for an estimate; and
+//                 the noise floor's fast attack runs its full time again
+//                 from the end of a hold.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -2726,6 +2730,12 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     if (m_remoteContextPicture == RemoteContextPicture::New) {
         m_remoteTraceStartShare = 1.0;
         m_remoteTraceTakeStartOut = !m_noiseFloor.seeded();
+    } else if (m_remoteTraceStartShare > 0.0) {
+        // PR 628 round two: the start's share is carried from the last frame
+        // drawn, but the Core may have averaged frames this pan never drew,
+        // so the share is only an upper bound and taking it out would put
+        // the trace too high. The pan holds until the average is warm.
+        m_remoteTraceTakeStartOut = false;
     }
     m_remoteTraceStartShareAtContext = m_remoteTraceStartShare;
     if (samePicture) {
@@ -5106,6 +5116,17 @@ void SpectrumWidget::processNoiseFloor()
     m_noiseFloorMeasurementFresh = false;
     const QVector<float>& src = useMeasurement ? m_noiseFloorMeasurement : measurementPixels();
     if (src.isEmpty()) { return; }
+    // NereusSDR, not in Thetis: a row with no measured pixel (a remote pan
+    // holding while the Core's average warms) changes nothing in the
+    // follower, so fast attack's time would pass while it measures nothing
+    // and it would leave fast attack on the first frame after the hold. The
+    // fast attack runs its time again from the end of a hold.
+    const bool held = useMeasurement
+        && std::none_of(src.cbegin(), src.cend(), [](float dB) { return std::isfinite(dB); });
+    if (m_noiseFloorHeldLastFrame && !held && m_noiseFloor.fastAttack()) {
+        applyNoiseFloorFastAttack(true, NoiseFloorFollower::kFastAttackMinMs);
+    }
+    m_noiseFloorHeldLastFrame = held;
     const int fps = overlayFrameRate();
     if (m_noiseFloor.process(src, fps, displayNowMs())) {
         if (m_showNoiseFloor) { markOverlayDirty(); }
@@ -5118,8 +5139,9 @@ void SpectrumWidget::processNoiseFloor()
     //         m_fNoiseFloorRX1 = m_fLerpAverageRX1 + _fNFshiftDBM;
     //         m_bNoiseFloorGoodRX1 = true;
     //     }
-    // Thetis computes it only while not local_mox.
-    if (!m_moxOverlay && !m_noiseFloor.fastAttack()) {
+    // Thetis computes it only while not local_mox. NereusSDR: nor before a
+    // frame with data has given the follower an estimate (it reads -200).
+    if (!m_moxOverlay && !m_noiseFloor.fastAttack() && m_noiseFloor.seeded()) {
         m_gridFollowNfDbm = m_noiseFloor.lerpAverage() + m_nfShiftDbm;
         m_gridFollowNfGood = true;
     }
@@ -10274,7 +10296,11 @@ float SpectrumWidget::dssFloorDbm() const
     // same quantity NoiseFloorTracker::noiseFloor() exposes (both are the
     // Thetis display.cs:4628 lerp average). m_nfFftBinAverage is the
     // per-frame value and would make the surface jitter every frame.
-    return m_noiseFloor.lerpAverage() - static_cast<float>(m_dssFloorDepth);
+    // NereusSDR: before a frame with data has given the follower an
+    // estimate (it reads -200 dBm), the bottom of the dBm range stands in.
+    const float floorDbm = m_noiseFloor.seeded() ? m_noiseFloor.lerpAverage()
+                                                 : m_refLevel - m_dynamicRange;
+    return floorDbm - static_cast<float>(m_dssFloorDepth);
 }
 
 float SpectrumWidget::dssSpanDb() const

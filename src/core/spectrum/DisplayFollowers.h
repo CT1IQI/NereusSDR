@@ -174,12 +174,14 @@ public:
 
     /// One frame of display pixels (the measurement row: undented).
     /// Returns true when fast attack cleared itself on this frame
-    /// (display.cs:5904-5908), so a caller that draws the flag repaints.
+    /// (display.cs:5904-5908), or the seed turned it on, so a caller that
+    /// draws the flag repaints.
     /// Pixels at or below kInitialDbm, or not finite, are no measurement; a
     /// frame with nothing else changes nothing, and the quiet pixels the
     /// estimate needs are counted against the measured ones. The first
     /// frame with data seeds both estimates at the level the estimate
-    /// settles at on it (the pixel with the quiet pixels needed below it).
+    /// settles at on it (the pixel with the quiet pixels needed below it)
+    /// and turns fast attack on, as Thetis does when it creates a display.
     /// A caller whose trace is averaged passes, while its average warms up,
     /// the average with its starting value taken out
     /// (SpectrumReducer::reduce's measurementOut).

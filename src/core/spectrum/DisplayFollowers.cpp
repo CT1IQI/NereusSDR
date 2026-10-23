@@ -49,6 +49,10 @@
 //                 drew ordinary noise hot for about eight seconds. J.J.
 //                 Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-10-23 - The seed turns fast attack on, as Thetis does when it
+//                 creates the display (display.cs:3698-3700). J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -208,12 +212,17 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
         m_fftBinAverage = qBound(kInitialDbm, *settlesAt, 200.0f);
         m_lerpAverage = m_fftBinAverage;
         m_seeded = true;
-        // As at the end of this function (Thetis display.cs:5400-5404
-        // [v2.10.3.15]).
-        if (!m_fastAttack) {
-            m_good = true;
-        }
-        return false;
+        // From Thetis display.cs:3698-3700 [v2.10.3.15], when the display
+        // is created:
+        //   //[2.10.1.0] MW0LGE spectrum/bitmaps may be cleared or bad, so wait to settle
+        //   FastAttackNoiseFloorRX1 = true;
+        //   if(RX2Enabled) FastAttackNoiseFloorRX2 = true;
+        // NereusSDR: here at the seed, the first frame with data, so a
+        // display started, resumed or reset settles in fast attack from
+        // there: 3 dB a frame up and no attack lag, and not settled (NF-AGC
+        // and the grid wait) for at least the trigger's minimum. The setter
+        // clears the good flag; a longer trigger already running is kept.
+        return setFastAttack(true, nowMs);
     }
 
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:

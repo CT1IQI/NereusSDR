@@ -19,6 +19,12 @@
 //                                    the band from its first floor, new
 //                                    and across a Core restart.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A same context inside a new pan's
+//                                    hold, a grid tick inside it, and a
+//                                    band change whose hold outlasts its
+//                                    fast attack; the remote pans run on
+//                                    a display clock of the Core's frames.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -61,6 +67,134 @@ private:
     {
         const QVector<float> bins(4096, 1e-12f);   // a flat floor
         w.updateSpectrumLinear(0, bins, 2.0, -10.0);
+    }
+
+    static constexpr int kFps = 30;
+
+    // A Core feeding a remote pan: a real endpoint at Log Recursive and its
+    // encoder (both started again by start()), the pan's decoder, the
+    // FFT's exponentially distributed noise, and the pan's display clock,
+    // which moves on 34 ms a frame as the Core's frames do.
+    struct RemoteCore {
+        SpectrumEndpointSourceContext source;
+        SpectrumEndpointRequest request;
+        std::optional<SpectrumEndpoint> endpoint;
+        std::optional<DisplayCodecEncoder> encoder;
+        DisplayCodecDecoder decoder;
+        std::mt19937 rng {628};
+        std::exponential_distribution<float> noise {1.0f};
+        qint64 producedAtNs {0};
+        qint64 clockMs {0};
+        float bandLinear {1.0e-12f};
+
+        explicit RemoteCore(int averageTimeMs)
+        {
+            source.source = {2, FftTier::Wide};
+            source.sourceGeneration = 11;
+            source.fftBins = 1024;
+            source.centreHz = kPanCentreHz;
+            source.sampleRateHz = 192'000.0;
+            source.contextGeneration = 4;
+            request.endpointId = 91;
+            request.source = source.source;
+            request.centreHz = source.centreHz;
+            request.spanHz = 96'000.0;
+            request.pixels = 128;
+            request.targetFps = kFps;
+            request.framesPerLine = 1;
+            // The window a pan with a -150 to -50 dBm scale asks for.
+            request.minDbm = -150.0f;
+            request.maxDbm = -50.0f;
+            request.trace.detector = SpectrumDetectorMode::Peak;
+            request.trace.averageMode = 3;
+            request.trace.averageAlpha = averageAlphaForTimeMs(averageTimeMs, kFps);
+            request.waterfall.detector = SpectrumDetectorMode::Peak;
+            request.waterfall.averageMode = 0;
+        }
+
+        void start()
+        {
+            endpoint.emplace();
+            encoder.emplace();
+            QVERIFY(endpoint->configure(request, source));
+        }
+
+        // The pan takes the endpoint's context, with the Core's picture
+        // word if it sent one.
+        void attach(SpectrumWidget& w, std::optional<bool> coreCarriedOn = std::nullopt)
+        {
+            w.setDisplayClockForTest([this] { return clockMs; });
+            w.setRemoteSpectrumContext(endpoint->context(), source.centreHz,
+                                       source.sampleRateHz, 0, coreCarriedOn);
+        }
+
+        // The Core's next frame, averaged and reduced.
+        std::optional<DisplayCodecFrame> next()
+        {
+            DaemonSpectrumFrame input;
+            input.source = source.source;
+            input.generation = source.sourceGeneration;
+            input.centreHz = source.centreHz;
+            input.sampleRateHz = source.sampleRateHz;
+            producedAtNs += 34'000'000;
+            input.producedAtNs = producedAtNs;
+            input.windowEnb = 1.0;
+            input.dbmOffset = 0.0;
+            input.binsLinear.resize(source.fftBins);
+            for (float& bin : input.binsLinear) { bin = bandLinear * noise(rng); }
+            input.binsLinear[300] = 1.0e-5f;
+            clockMs += 34;
+            return endpoint->consume(input, 0.0);
+        }
+
+        // One frame from the Core into the window, through the codec.
+        void deliver(SpectrumWidget& w)
+        {
+            const std::optional<DisplayCodecFrame> reduced = next();
+            QVERIFY(reduced.has_value());
+            const QByteArray packet = encoder->encode(*reduced);
+            QVERIFY(!packet.isEmpty());
+            const DisplayCodecDecodeResult decoded = decoder.decode(packet);
+            QVERIFY(decoded.disposition == DisplayCodecDisposition::Accepted);
+            QVERIFY(w.updateRemoteSpectrum(decoded.frame));
+        }
+
+        // A frame the Core averaged and the pan never drew.
+        void skip()
+        {
+            QVERIFY(next().has_value());
+        }
+    };
+
+    static void configureRemote(SpectrumWidget& w, int averageTimeMs)
+    {
+        w.setSpectrumDetector(SpectrumDetector::Peak);
+        w.setSpectrumAveraging(SpectrumAveraging::LogRecursive);
+        w.setSpectrumAverageTimeMs(averageTimeMs);
+    }
+
+    // The mean of the floors over the last 3 s of a 10 s run.
+    static double settledOf(const QVector<float>& floors)
+    {
+        double settled = 0.0;
+        for (int frame = 7 * kFps; frame < 10 * kFps; ++frame) { settled += floors.at(frame); }
+        return settled / (3 * kFps);
+    }
+
+    // Where a new remote pan's floor settles on the RemoteCore's band.
+    static double settledRemoteFloor(int averageTimeMs)
+    {
+        RemoteCore core(averageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, averageTimeMs);
+        core.start();
+        core.attach(w);
+        QVector<float> floors;
+        for (int frame = 0; frame < 10 * kFps; ++frame) {
+            core.deliver(w);
+            floors.append(w.nfLerpAverageForTest());
+        }
+        return settledOf(floors);
     }
 
 private slots:
@@ -207,99 +341,36 @@ private slots:
     {
         QFETCH(int, averageTimeMs);
         QFETCH(bool, coreRestarts);
-        constexpr int kFps = 30;
-        SpectrumEndpointSourceContext source;
-        source.source = {2, FftTier::Wide};
-        source.sourceGeneration = 11;
-        source.fftBins = 1024;
-        source.centreHz = kPanCentreHz;
-        source.sampleRateHz = 192'000.0;
-        source.contextGeneration = 4;
-        SpectrumEndpointRequest request;
-        request.endpointId = 91;
-        request.source = source.source;
-        request.centreHz = source.centreHz;
-        request.spanHz = 96'000.0;
-        request.pixels = 128;
-        request.targetFps = kFps;
-        request.framesPerLine = 1;
-        // The window a pan with a -150 to -50 dBm scale asks for.
-        request.minDbm = -150.0f;
-        request.maxDbm = -50.0f;
-        request.trace.detector = SpectrumDetectorMode::Peak;
-        request.trace.averageMode = 3;
-        request.trace.averageAlpha = averageAlphaForTimeMs(averageTimeMs, kFps);
-        request.waterfall.detector = SpectrumDetectorMode::Peak;
-        request.waterfall.averageMode = 0;
-
-        // The Core: an endpoint and its encoder, started again on a restart.
-        std::optional<SpectrumEndpoint> endpoint;
-        std::optional<DisplayCodecEncoder> encoder;
-        const auto startCore = [&] {
-            endpoint.emplace();
-            encoder.emplace();
-            QVERIFY(endpoint->configure(request, source));
-        };
-        std::mt19937 rng(628);
-        std::exponential_distribution<float> noise(1.0f);
-        qint64 producedAtNs = 0;
-        DisplayCodecDecoder decoder;
-        // One frame from the Core into the window, through the codec.
-        const auto deliver = [&](SpectrumWidget& w) {
-            DaemonSpectrumFrame input;
-            input.source = source.source;
-            input.generation = source.sourceGeneration;
-            input.centreHz = source.centreHz;
-            input.sampleRateHz = source.sampleRateHz;
-            producedAtNs += 34'000'000;
-            input.producedAtNs = producedAtNs;
-            input.windowEnb = 1.0;
-            input.dbmOffset = 0.0;
-            input.binsLinear.resize(source.fftBins);
-            for (float& bin : input.binsLinear) { bin = 1.0e-12f * noise(rng); }
-            input.binsLinear[300] = 1.0e-5f;
-            const std::optional<DisplayCodecFrame> reduced = endpoint->consume(input, 0.0);
-            QVERIFY(reduced.has_value());
-            const QByteArray packet = encoder->encode(*reduced);
-            QVERIFY(!packet.isEmpty());
-            const DisplayCodecDecodeResult decoded = decoder.decode(packet);
-            QVERIFY(decoded.disposition == DisplayCodecDisposition::Accepted);
-            QVERIFY(w.updateRemoteSpectrum(decoded.frame));
-        };
+        RemoteCore core(averageTimeMs);
         SpectrumWidget w;
-        w.setSpectrumDetector(SpectrumDetector::Peak);
-        w.setSpectrumAveraging(SpectrumAveraging::LogRecursive);
-        w.setSpectrumAverageTimeMs(averageTimeMs);
-        startCore();
+        configureRemote(w, averageTimeMs);
+        core.start();
         QVERIFY(!QTest::currentTestFailed());
-        w.setRemoteSpectrumContext(endpoint->context(), source.centreHz, source.sampleRateHz);
+        core.attach(w);
 
         // Before a restart, or the reference for a new pan: 10 s, the last
         // 3 s of which is the settled floor.
         QVector<float> floors;
         for (int frame = 0; frame < 10 * kFps; ++frame) {
-            deliver(w);
+            core.deliver(w);
             QVERIFY(!QTest::currentTestFailed());
             floors.append(w.nfLerpAverageForTest());
         }
-        double settled = 0.0;
-        for (int frame = 7 * kFps; frame < 10 * kFps; ++frame) { settled += floors.at(frame); }
-        settled /= 3 * kFps;
+        const double settled = settledOf(floors);
         QVERIFY2(settled > -140.0 && settled < -110.0, qPrintable(QString::number(settled)));
 
         if (coreRestarts) {
             // The Core restarts: a new endpoint and encoder for the same
             // pan, a new picture, and frames from sequence 0 again.
-            source.sourceGeneration = 1;
-            source.contextGeneration = 1;
-            startCore();
-            decoder.reset();
+            core.source.sourceGeneration = 1;
+            core.source.contextGeneration = 1;
+            core.start();
+            core.decoder.reset();
             QVERIFY(!QTest::currentTestFailed());
-            w.setRemoteSpectrumContext(endpoint->context(), source.centreHz,
-                                       source.sampleRateHz, 0, false);
+            core.attach(w, false);
             floors.clear();
             for (int frame = 0; frame < 6 * kFps; ++frame) {
-                deliver(w);
+                core.deliver(w);
                 QVERIFY(!QTest::currentTestFailed());
                 floors.append(w.nfLerpAverageForTest());
             }
@@ -318,6 +389,154 @@ private slots:
         for (int frame = first; frame < floors.size(); ++frame) {
             QVERIFY2(std::abs(floors.at(frame) - settled) < 3.0,
                      qPrintable(QStringLiteral("frame %1: %2, settled %3")
+                                    .arg(frame).arg(floors.at(frame)).arg(settled)));
+        }
+    }
+
+    // PR 628 round two: a context for the same picture while a new pan
+    // waits for the Core's average to warm. The Core averaged frames the
+    // pan never drew, so the start's share the pan carried is too large and
+    // taking it out would put the floor high; the pan holds instead. At
+    // 650 ms with 1 to 3 Core frames never drawn, the floor is never more
+    // than 3 dB above where it settles, and within 3 dB once it has one.
+    void aSameContextInTheHoldKeepsTheFloorDown_data()
+    {
+        QTest::addColumn<int>("framesNeverDrawn");
+        QTest::newRow("1 frame never drawn") << 1;
+        QTest::newRow("2 frames never drawn") << 2;
+        QTest::newRow("3 frames never drawn") << 3;
+    }
+
+    void aSameContextInTheHoldKeepsTheFloorDown()
+    {
+        QFETCH(int, framesNeverDrawn);
+        constexpr int kAverageTimeMs = 650;
+        const double settled = settledRemoteFloor(kAverageTimeMs);
+        QVERIFY(!QTest::currentTestFailed());
+
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        // Two frames drawn, inside the hold.
+        core.deliver(w);
+        core.deliver(w);
+        QVERIFY(!QTest::currentTestFailed());
+        QCOMPARE(w.nfLerpAverageForTest(), -200.0f);
+        // Frames the Core averaged and the pan never drew, then a context
+        // for the same picture, whose encoder sequence starts again.
+        for (int frame = 0; frame < framesNeverDrawn; ++frame) {
+            core.skip();
+            QVERIFY(!QTest::currentTestFailed());
+        }
+        core.encoder.emplace();
+        core.decoder.reset();
+        core.attach(w, true);
+        QVERIFY(w.remoteContextKeptPicture());
+
+        QVector<float> floors;
+        for (int frame = 0; frame < 6 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            floors.append(w.nfLerpAverageForTest());
+        }
+        int first = 0;
+        while (first < floors.size() && floors.at(first) <= -199.0f) { ++first; }
+        double highest = -1.0e9;
+        for (int frame = first; frame < floors.size(); ++frame) {
+            highest = std::max(highest, floors.at(frame) - settled);
+        }
+        qInfo("%s: settled %.2f dBm, first floor on frame %d, at most %.2f dB above",
+              QTest::currentDataTag(), settled, first, highest);
+        QVERIFY2(first < 4 * kFps, qPrintable(QString::number(first)));
+        for (int frame = first; frame < floors.size(); ++frame) {
+            QVERIFY2(std::abs(floors.at(frame) - settled) < 3.0,
+                     qPrintable(QStringLiteral("frame %1: %2, settled %3")
+                                    .arg(frame).arg(floors.at(frame)).arg(settled)));
+        }
+    }
+
+    // PR 628 round two: while a new remote pan holds for the Core's
+    // average, its follower has no estimate (it reads -200 dBm). The grid
+    // does not follow it there, and the 3D floor stands at the bottom of
+    // the dBm range instead.
+    void aGridTickInsideTheHoldLeavesTheGridAlone()
+    {
+        constexpr int kAverageTimeMs = 650;
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        w.setDbmRange(-150.0f, -40.0f);
+        w.setNFOffsetGridFollow(-5);
+        w.setMaintainNFAdjustDelta(false);
+        w.setAdjustGridMinToNoiseFloor(true);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        core.deliver(w);
+        QVERIFY(!QTest::currentTestFailed());
+        QCOMPARE(w.nfLerpAverageForTest(), -200.0f);
+        w.gridFollowTickForTest();
+        QCOMPARE(w.gridMin(), -150);
+        QCOMPARE(w.gridMax(), -40);
+        QCOMPARE(w.dssFloorDbm(), -150.0f - static_cast<float>(w.dssFloorDepth()));
+    }
+
+    // PR 628 round two: a band change on a Core that sends no picture word
+    // is a new picture, and the pan holds (its follower has an estimate)
+    // until the Core's average is warm, longer than the band change's
+    // fast attack. The fast attack runs its time again from the end of
+    // the hold, so the floor reaches the new band within ten frames of it.
+    void aBandChangeHoldDoesNotUseUpTheFastAttack()
+    {
+        constexpr int kAverageTimeMs = 650;
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        QVector<float> floors;
+        for (int frame = 0; frame < 10 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            floors.append(w.nfLerpAverageForTest());
+        }
+        // The new band is 20 dB hotter, so it settles 20 dB higher.
+        const double settled = settledOf(floors) + 20.0;
+
+        // The band change: a new centre with no picture word, and the fast
+        // attack the desktop's trigger turns on for it.
+        core.source.centreHz += 1'000'000.0;
+        core.source.sourceGeneration = 12;
+        core.source.contextGeneration = 5;
+        core.request.centreHz = core.source.centreHz;
+        core.bandLinear = 1.0e-10f;
+        core.start();
+        core.decoder.reset();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        QVERIFY(!w.remoteContextKeptPicture());
+        w.setNoiseFloorFastAttack(true);
+
+        const float held = w.nfLerpAverageForTest();
+        floors.clear();
+        for (int frame = 0; frame < 8 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            floors.append(w.nfLerpAverageForTest());
+        }
+        int holdEnd = 0;
+        while (holdEnd < floors.size() && floors.at(holdEnd) == held) { ++holdEnd; }
+        qInfo("hold of %d frames; ten frames after it %.2f dB off the new band",
+              holdEnd, double(floors.value(holdEnd + 10)) - settled);
+        // The hold outlasts the band change's fast attack.
+        QVERIFY2(holdEnd * 34 > 1000 && holdEnd < 4 * kFps, qPrintable(QString::number(holdEnd)));
+        for (int frame = holdEnd + 10; frame < floors.size(); ++frame) {
+            QVERIFY2(std::abs(floors.at(frame) - settled) < 3.0,
+                     qPrintable(QStringLiteral("frame %1: %2, new band %3")
                                     .arg(frame).arg(floors.at(frame)).arg(settled)));
         }
     }

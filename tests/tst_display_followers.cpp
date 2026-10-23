@@ -152,6 +152,8 @@ private slots:
         nf.process(flatRow(100, -120.0f), 30, 0);
         QCOMPARE(nf.fftBinAverage(), -120.0f);
         QCOMPARE(nf.lerpAverage(), -120.0f);
+        // Out of the seed's fast attack.
+        nf.setFastAttack(false, 0);
         // No pixel is below -120, so the estimate drifts up 1 dB.
         QVERIFY(!nf.process(flatRow(100, -100.0f), 30, 33));
         QCOMPARE(nf.fftBinAverage(), -119.0f);
@@ -176,6 +178,7 @@ private slots:
     {
         NoiseFloorFollower nf;
         nf.process(flatRow(100, -119.0f), 30, 0);
+        nf.setFastAttack(false, 0);
         // 14 quiet pixels of 100 is under the 15 that sensitivity 3 needs.
         QVector<float> row = flatRow(100, -100.0f);
         for (int i = 0; i < 14; ++i) { row[i] = -130.0f; }
@@ -210,12 +213,45 @@ private slots:
         nf.process(band, 30, 99);
         QCOMPARE(nf.fftBinAverage(), -111.0f);
         QCOMPARE(nf.lerpAverage(), -111.0f);
-        QVERIFY(nf.settled());
+        // The seed starts fast attack (see aSeedStartsFastAttack...).
+        QVERIFY(nf.fastAttack());
+        QVERIFY(!nf.settled());
         for (int frame = 0; frame < 300; ++frame) {
             nf.process(band, 30, 132 + 33 * frame);
-            QVERIFY2(nf.lerpAverage() > -112.0f && nf.lerpAverage() < -110.0f,
+            // Fast attack's 3 dB step, then within 1 dB.
+            const float most = nf.fastAttack() ? 3.05f : 1.0f;
+            QVERIFY2(std::abs(nf.lerpAverage() + 111.0f) < most,
                      qPrintable(QString::number(nf.lerpAverage())));
         }
+        QVERIFY(nf.settled());
+    }
+
+    // PR 628 round two: from Thetis display.cs:3698-3700 [v2.10.3.15], a
+    // display starts in fast attack. The seed starts it, timed from the
+    // seed, not from frames with no data before it.
+    void aSeedStartsFastAttackTimedFromTheSeed()
+    {
+        NoiseFloorFollower nf;
+        for (int frame = 0; frame < 150; ++frame) {
+            QVERIFY(!nf.process(flatRow(100, -200.0f), 30, 33 * frame));
+        }
+        QVERIFY(!nf.fastAttack());
+        // The seed turns it on and says so.
+        QVERIFY(nf.process(flatRow(100, -120.0f), 30, 5000));
+        QVERIFY(nf.fastAttack());
+        QVERIFY(!nf.settled());
+        // Converged at once on this band, but held a second from the seed.
+        QVERIFY(!nf.process(flatRow(100, -120.0f), 30, 6000));
+        QVERIFY(nf.fastAttack());
+        QVERIFY(nf.process(flatRow(100, -120.0f), 30, 6001));
+        QVERIFY(nf.settled());
+        // A longer trigger already running is kept.
+        NoiseFloorFollower keyed;
+        keyed.setFastAttack(true, 0, 5000);
+        keyed.process(flatRow(100, -120.0f), 30, 100);
+        QVERIFY(!keyed.process(flatRow(100, -120.0f), 30, 4000));
+        QVERIFY(keyed.fastAttack());
+        QVERIFY(keyed.process(flatRow(100, -120.0f), 30, 5001));
     }
 
     // A window whose stream stops or reconnects keeps drawing frames with
@@ -306,6 +342,7 @@ private slots:
     {
         NoiseFloorFollower nf;
         nf.process(flatRow(100, -120.0f), 30, 0);
+        nf.setFastAttack(false, 0);
         QVERIFY(nf.setFastAttack(true, 1000));
         QVERIFY(!nf.setFastAttack(true, 1000));
         QVERIFY(nf.fastAttack());
@@ -382,7 +419,11 @@ private slots:
     {
         NoiseFloorFollower nf;
         QVERIFY(!nf.settled());
+        // The seed's fast attack keeps it unsettled until it clears.
         nf.process(flatRow(100, -120.0f), 30, 0);
+        QVERIFY(!nf.settled());
+        nf.setFastAttack(false, 0);
+        nf.process(flatRow(100, -120.0f), 30, 33);
         QVERIFY(nf.settled());
         nf.setFastAttack(true, 100);
         QVERIFY(!nf.settled());

@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the seed starts the floor's fast
+//                                    attack, so NF-AGC's low is the AGC's
+//                                    run level, -152.2 and -152.32.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  coreWaterfallAgcWindowContainsAcceptedLevels
 //                                    also widens the window for an NF-AGC
 //                                    low under it. AI-assisted via
@@ -9403,15 +9408,19 @@ private slots:
         // S7: NF-AGC is an option under AGC. Alone it leaves the stored
         // levels and asks the Core for none.
         QTest::newRow("nf-only") << false << true << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
-        // With AGC: the low is the pan's noise floor plus the offset of -5.
-        // The first row seeds the floor where the estimate settles on it,
-        // the pixel with 3 in 20 of the 128 below it: pixel 19 of
-        // -160 + 0.5 i, -150.5, so -155.5. The second row is 20 dB up, with
-        // no pixel under -150.5, so the estimate climbs 1 dB and the line
-        // follows over 41 frames at 20 a second:
-        // -150.5 + 1/41 - 5 = -155.4756.
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -155.47561f << 0.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -155.47561f << 0.0f;
+        // With AGC: the low is the pan's settled noise floor plus the offset
+        // of -5, and the AGC's run level until the floor settles. The first
+        // row seeds the floor where the estimate settles on it, the pixel
+        // with 3 in 20 of the 128 below it: pixel 19 of -160 + 0.5 i,
+        // -150.5, and starts its fast attack (as Thetis starts a display,
+        // display.cs:3698-3700 [v2.10.3.15]). The run level, primed at the
+        // restart floor of -150, moves 0.4 of the way to -155.5: -152.2.
+        // The second row is 20 dB up, with no pixel under -150.5, so in
+        // fast attack the estimate climbs 3 dB and the line follows at once,
+        // and the run level moves 0.4 of the way from -152.2 to -147.5 - 5:
+        // -152.32.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -152.2f << 0.0f << -152.32f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -152.2f << 0.0f << -152.32f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }

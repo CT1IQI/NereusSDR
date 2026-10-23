@@ -175,7 +175,7 @@ public:
 
     /// The recursive averages' starting values, as apply() seeds them after
     /// a resize() or clear(). From Thetis wdsp/analyzer.c:1854-1872
-    /// [@3759d096] (v2.10.3.15), SetDisplayAverageMode: 1.0e-12 for mode 1
+    /// [v2.10.3.15], SetDisplayAverageMode: 1.0e-12 for mode 1
     /// (linear) and -160.0 dB for mode 3 (log).
     static constexpr double kLinearRecursiveStart = 1.0e-12;
     static constexpr double kLogRecursiveStartDb = -160.0;
