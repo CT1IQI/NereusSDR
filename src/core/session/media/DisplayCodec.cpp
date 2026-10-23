@@ -4,15 +4,25 @@
 //
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 3.
 //
-// See DisplayCodec.h and docs/architecture/2026-09-20-display-codec-v1.md.
+// See DisplayCodec.h, docs/architecture/2026-09-20-display-codec-v1.md and
+// docs/architecture/2026-10-22-display-codec-v2-intra-rows.md.
 //
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 encoder: previous-bin Rice planes, the whole or
+//               split frame, and public quantize helpers.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayCodec.h"
 
+#include "core/session/media/DisplayBudget.h"
+#include "core/session/media/IMediaTransport.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <utility>
 
@@ -141,23 +151,12 @@ bool staleOrEqual(quint32 candidate, quint32 accepted)
 
 quint8 quantize(float value, const DisplayCodecContext& context)
 {
-    const double scaled = (static_cast<double>(value) - context.minDbm)
-        * 255.0 / (static_cast<double>(context.maxDbm) - context.minDbm);
-    const long rounded = std::lround(std::clamp(scaled, 0.0, 255.0));
-    return static_cast<quint8>(rounded);
+    return displayCodecQuantize(value, context.minDbm, context.maxDbm);
 }
 
 float dequantize(quint8 value, const DisplayCodecContext& context)
 {
-    // The negotiated endpoints are finite floats but their difference can
-    // overflow float arithmetic (e.g. -FLT_MAX..FLT_MAX). Keep the complete
-    // interpolation in double, clamp round-off to the finite source interval,
-    // then narrow only the already-bounded result.
-    const double minimum = context.minDbm;
-    const double maximum = context.maxDbm;
-    const double reconstructed = minimum
-        + static_cast<double>(value) * (maximum - minimum) / 255.0;
-    return static_cast<float>(std::clamp(reconstructed, minimum, maximum));
+    return displayCodecDequantize(value, context.minDbm, context.maxDbm);
 }
 
 bool validInputPlane(const QVector<float>& samples, quint16 expected)
@@ -351,7 +350,374 @@ DisplayCodecDecodeResult result(DisplayCodecDisposition disposition, DisplayCode
     return decoded;
 }
 
+// ---- NSDC v2 (docs/architecture/2026-10-22-display-codec-v2-intra-rows.md) ----
+
+constexpr quint8 kVersion2 = 2;
+constexpr quint8 kV2FlagWaterfallAdvance = 0x02;
+constexpr quint8 kV2FlagWide = 0x04;
+constexpr quint8 kV2FlagTrace = 0x08;
+constexpr quint8 kV2FlagWaterfall = 0x10;
+constexpr quint8 kV2FlagSplit = 0x20;
+// The flag bytes the encoder writes (section 4.1).
+constexpr quint8 kV2FlagsTraceOnly = kV2FlagTrace;                                   // 0x08
+constexpr quint8 kV2FlagsWhole = kV2FlagTrace | kV2FlagWaterfall | kV2FlagWaterfallAdvance; // 0x1A
+constexpr quint8 kV2FlagsRowPart = kV2FlagSplit | kV2FlagWaterfall | kV2FlagWaterfallAdvance; // 0x32
+constexpr quint8 kV2FlagsTracePart = kV2FlagSplit | kV2FlagTrace | kV2FlagWaterfallAdvance;  // 0x2A
+static_assert(kV2FlagsWhole == 0x1A && kV2FlagsRowPart == 0x32 && kV2FlagsTracePart == 0x2A);
+constexpr quint8 kV2PlaneCoding = 2;
+constexpr int kV2PlanePrefixBytes = 4;
+constexpr int kV2BlockSizes[] = {16, 32, 64};
+constexpr int kV2BlockSizeCount = 3;
+constexpr int kV2RiceParameterBits = 3;
+constexpr int kV2MaxRiceParameter = 6;
+constexpr int kV2RawEscape = 7;
+
+// The largest v2 frame (all three planes at their maximum length) stays well
+// under the decoder's message limit, so the encoder never needs to refuse a
+// valid frame for its size.
+static_assert(DisplayCodecEncoder::kHeaderBytes
+                  + 3 * displayCodecV2WorstCasePlaneBytes(DisplayCodecEncoder::kMaxSamplesPerPlane)
+              <= DisplayCodecEncoder::kMaxEncodedBytes);
+
+// Zigzag of the wrapping 8-bit residual x[i] - x[i-1], read as signed.
+quint8 zigzagResidual(quint8 value, quint8 previous)
+{
+    const auto residual = static_cast<qint8>(static_cast<quint8>(value - previous));
+    return residual >= 0 ? static_cast<quint8>(2 * residual)
+                         : static_cast<quint8>(-2 * residual - 1);
+}
+
+// Bits of one block coded with Rice parameter k (0..6): per sample z >> k
+// zeros, a one and k low bits.
+int riceBlockBits(const quint8* zigzag, int count, int k)
+{
+    int bits = count * (1 + k);
+    for (int i = 0; i < count; ++i) { bits += zigzag[i] >> k; }
+    return bits;
+}
+
+// The fewest-bits coding of one block: ties go to the smaller k, and the raw
+// escape only when it is strictly fewer bits than every k.
+int chooseRiceParameter(const quint8* zigzag, int count, int& bits)
+{
+    int bestK = 0;
+    int bestBits = riceBlockBits(zigzag, count, 0);
+    for (int k = 1; k <= kV2MaxRiceParameter; ++k) {
+        const int candidate = riceBlockBits(zigzag, count, k);
+        if (candidate < bestBits) {
+            bestBits = candidate;
+            bestK = k;
+        }
+    }
+    const int rawBits = 8 * count;
+    if (rawBits < bestBits) {
+        bestBits = rawBits;
+        bestK = kV2RawEscape;
+    }
+    bits = bestBits;
+    return bestK;
+}
+
+class BitWriter {
+public:
+    void put(quint32 value, int bits)
+    {
+        for (int bit = bits - 1; bit >= 0; --bit) {
+            m_current = static_cast<quint8>((m_current << 1) | ((value >> bit) & 1U));
+            if (++m_used == 8) {
+                m_bytes.append(static_cast<char>(m_current));
+                m_current = 0;
+                m_used = 0;
+            }
+        }
+    }
+    void zeros(int count)
+    {
+        while (count > 0) {
+            const int chunk = std::min(count, 32);
+            put(0, chunk);
+            count -= chunk;
+        }
+    }
+    QByteArray finish()
+    {
+        if (m_used > 0) {
+            m_bytes.append(static_cast<char>(m_current << (8 - m_used)));
+            m_current = 0;
+            m_used = 0;
+        }
+        return std::move(m_bytes);
+    }
+
+private:
+    QByteArray m_bytes;
+    quint8 m_current {0};
+    int m_used {0};
+};
+
+class BitReader {
+public:
+    BitReader(const unsigned char* data, int bytes)
+        : m_data(data), m_bitCount(static_cast<qint64>(bytes) * 8) {}
+
+    bool bit(quint32& value)
+    {
+        if (m_position >= m_bitCount) { return false; }
+        value = (m_data[m_position >> 3] >> (7 - (m_position & 7))) & 1U;
+        ++m_position;
+        return true;
+    }
+    bool bits(int count, quint32& value)
+    {
+        quint32 out = 0;
+        for (int i = 0; i < count; ++i) {
+            quint32 one = 0;
+            if (!bit(one)) { return false; }
+            out = (out << 1) | one;
+        }
+        value = out;
+        return true;
+    }
+    qint64 position() const { return m_position; }
+    qint64 bitCount() const { return m_bitCount; }
+
+private:
+    const unsigned char* m_data;
+    qint64 m_bitCount;
+    qint64 m_position {0};
+};
+
+void writeV2Header(Writer& writer, const DisplayCodecFrame& frame, quint8 flags)
+{
+    const DisplayCodecContext& context = frame.context;
+    writer.u32(kMagic);
+    writer.u8(kVersion2);
+    writer.u8(flags);
+    writer.u16(kHeaderBytes);
+    writer.u32(context.endpointId);
+    writer.u32(context.contextGeneration);
+    writer.u32(frame.encoderSequence);
+    writer.u64(frame.producerTimestamp);
+    writer.f32(context.minDbm);
+    writer.f32(context.maxDbm);
+    writer.u16(context.traceSamples);
+    writer.u16(context.waterfallSamples);
+    writer.u16(context.wideSamples);
+}
+
+QByteArray v2Message(const DisplayCodecFrame& frame, quint8 flags,
+                     std::initializer_list<const QByteArray*> planes)
+{
+    Writer writer;
+    writeV2Header(writer, frame, flags);
+    for (const QByteArray* plane : planes) { writer.bytes(*plane); }
+    return writer.take();
+}
+
 } // namespace
+
+quint8 displayCodecQuantize(float dbm, float minDbm, float maxDbm)
+{
+    const double scaled = (static_cast<double>(dbm) - minDbm)
+        * 255.0 / (static_cast<double>(maxDbm) - minDbm);
+    const long rounded = std::lround(std::clamp(scaled, 0.0, 255.0));
+    return static_cast<quint8>(rounded);
+}
+
+float displayCodecDequantize(quint8 q, float minDbm, float maxDbm)
+{
+    // The negotiated endpoints are finite floats but their difference can
+    // overflow float arithmetic (e.g. -FLT_MAX..FLT_MAX). Keep the complete
+    // interpolation in double, clamp round-off to the finite source interval,
+    // then narrow only the already-bounded result.
+    const double minimum = minDbm;
+    const double maximum = maxDbm;
+    const double reconstructed = minimum
+        + static_cast<double>(q) * (maximum - minimum) / 255.0;
+    return static_cast<float>(std::clamp(reconstructed, minimum, maximum));
+}
+
+QByteArray encodeDisplayCodecV2Plane(const QVector<quint8>& samples)
+{
+    const int count = static_cast<int>(samples.size());
+    if (count < 1 || count > DisplayCodecEncoder::kMaxSamplesPerPlane) { return {}; }
+
+    QVector<quint8> zigzag(count, 0);
+    for (int i = 1; i < count; ++i) {
+        zigzag[i] = zigzagResidual(samples.at(i), samples.at(i - 1));
+    }
+
+    // Every block size codes every block its cheapest way; the plane keeps
+    // the size with the fewest bytes, ties to the smaller size.
+    int bestCode = 0;
+    qint64 bestBytes = std::numeric_limits<qint64>::max();
+    QVector<quint8> bestParameters;
+    for (int code = 0; code < kV2BlockSizeCount; ++code) {
+        const int blockSize = kV2BlockSizes[code];
+        QVector<quint8> parameters;
+        qint64 bits = 8;
+        for (int first = 1; first < count; first += blockSize) {
+            const int blockCount = std::min(blockSize, count - first);
+            int blockBits = 0;
+            parameters.append(static_cast<quint8>(
+                chooseRiceParameter(zigzag.constData() + first, blockCount, blockBits)));
+            bits += kV2RiceParameterBits + blockBits;
+        }
+        const qint64 bytes = (bits + 7) / 8;
+        if (bytes < bestBytes) {
+            bestBytes = bytes;
+            bestCode = code;
+            bestParameters = std::move(parameters);
+        }
+    }
+
+    const int blockSize = kV2BlockSizes[bestCode];
+    BitWriter stream;
+    stream.put(samples.at(0), 8);
+    int block = 0;
+    for (int first = 1; first < count; first += blockSize, ++block) {
+        const int blockCount = std::min(blockSize, count - first);
+        const int k = bestParameters.at(block);
+        stream.put(static_cast<quint32>(k), kV2RiceParameterBits);
+        for (int i = first; i < first + blockCount; ++i) {
+            if (k == kV2RawEscape) {
+                stream.put(samples.at(i), 8);
+                continue;
+            }
+            const quint32 z = zigzag.at(i);
+            stream.zeros(static_cast<int>(z >> k));
+            stream.put(1, 1);
+            stream.put(z, k);
+        }
+    }
+    const QByteArray payload = stream.finish();
+
+    Writer writer;
+    writer.u8(kV2PlaneCoding);
+    writer.u8(static_cast<quint8>(bestCode));
+    writer.u16(static_cast<quint16>(payload.size()));
+    writer.bytes(payload);
+    return writer.take();
+}
+
+bool decodeDisplayCodecV2Plane(const QByteArray& bytes, int& offset, int length,
+                               QVector<quint8>& samples)
+{
+    if (offset < 0 || offset > bytes.size() || length < 1
+        || length > DisplayCodecEncoder::kMaxSamplesPerPlane
+        || bytes.size() - offset < kV2PlanePrefixBytes) {
+        return false;
+    }
+    const auto* data = reinterpret_cast<const unsigned char*>(bytes.constData()) + offset;
+    const int coding = data[0];
+    const int blockCode = data[1];
+    const int payloadBytes = (static_cast<int>(data[2]) << 8) | data[3];
+    if (coding != kV2PlaneCoding || blockCode >= kV2BlockSizeCount
+        || payloadBytes > bytes.size() - offset - kV2PlanePrefixBytes) {
+        return false;
+    }
+
+    BitReader reader(data + kV2PlanePrefixBytes, payloadBytes);
+    QVector<quint8> decoded(length);
+    quint32 value = 0;
+    if (!reader.bits(8, value)) { return false; }
+    decoded[0] = static_cast<quint8>(value);
+    const int blockSize = kV2BlockSizes[blockCode];
+    for (int first = 1; first < length; first += blockSize) {
+        const int blockCount = std::min(blockSize, length - first);
+        quint32 k = 0;
+        if (!reader.bits(kV2RiceParameterBits, k)) { return false; }
+        for (int i = first; i < first + blockCount; ++i) {
+            if (k == kV2RawEscape) {
+                if (!reader.bits(8, value)) { return false; }
+                decoded[i] = static_cast<quint8>(value);
+                continue;
+            }
+            // z >> k zeros, then a one. More zeros than 255 >> k would make
+            // z above 255, so stop there rather than read on.
+            quint32 quotient = 0;
+            for (;;) {
+                quint32 one = 0;
+                if (!reader.bit(one)) { return false; }
+                if (one != 0U) { break; }
+                if (++quotient > (255U >> k)) { return false; }
+            }
+            quint32 low = 0;
+            if (!reader.bits(static_cast<int>(k), low)) { return false; }
+            const quint32 z = (quotient << k) | low;
+            if (z > 255U) { return false; }
+            const int residual = (z & 1U) != 0U ? -static_cast<int>((z + 1U) >> 1)
+                                                : static_cast<int>(z >> 1);
+            decoded[i] = static_cast<quint8>(decoded.at(i - 1) + residual);
+        }
+    }
+    // The payload ends in the byte holding the last bit, and its pad is zero.
+    if ((reader.position() + 7) / 8 != payloadBytes) { return false; }
+    while (reader.position() < reader.bitCount()) {
+        quint32 pad = 0;
+        if (!reader.bit(pad) || pad != 0U) { return false; }
+    }
+    samples = std::move(decoded);
+    offset += kV2PlanePrefixBytes + payloadBytes;
+    return true;
+}
+
+qsizetype DisplayCodecV2Encoding::totalBytes() const
+{
+    qsizetype total = 0;
+    for (const QByteArray& message : messages) { total += message.size(); }
+    return total;
+}
+
+DisplayCodecV2Encoding encodeDisplayCodecV2(const DisplayCodecFrame& frame,
+                                            quint32 admittedFrameBytes)
+{
+    const DisplayCodecContext& context = frame.context;
+    DisplayCodecV2Encoding encoding;
+    if (!validContext(context)
+        || !validInputPlane(frame.traceDbm, context.traceSamples)
+        || !validInputPlane(frame.waterfallDbm, context.waterfallSamples)
+        || !validInputPlane(frame.wideDbm, context.wideSamples)) {
+        return encoding;
+    }
+    const auto quantizeRow = [&context](const QVector<float>& input) {
+        QVector<quint8> output;
+        output.reserve(input.size());
+        for (float value : input) { output.append(quantize(value, context)); }
+        return output;
+    };
+
+    const QByteArray tracePlane = encodeDisplayCodecV2Plane(quantizeRow(frame.traceDbm));
+    if (!frame.waterfallAdvance) {
+        // No row: the trace only, always one message.
+        encoding.messages.push_back(v2Message(frame, kV2FlagsTraceOnly, {&tracePlane}));
+        return encoding;
+    }
+
+    const QByteArray waterfallPlane = encodeDisplayCodecV2Plane(quantizeRow(frame.waterfallDbm));
+    const bool hasWide = context.wideSamples != 0;
+    const QByteArray widePlane = hasWide ? encodeDisplayCodecV2Plane(quantizeRow(frame.wideDbm))
+                                         : QByteArray();
+    // 0x04 is set exactly when the waterfall plane is present and the wide
+    // length is not zero.
+    const quint8 wideFlag = hasWide ? kV2FlagWide : quint8 {0};
+
+    const qsizetype wholeBytes = kHeaderBytes + tracePlane.size() + waterfallPlane.size()
+        + widePlane.size();
+    const qsizetype splitBytes = wholeBytes + kHeaderBytes;
+    if (wholeBytes > IMediaTransport::kSctpDataPayloadBytes
+        && splitBytes <= static_cast<qsizetype>(admittedFrameBytes)) {
+        // Row part first, then the trace part (section 5).
+        encoding.messages.push_back(v2Message(frame,
+                                              static_cast<quint8>(kV2FlagsRowPart | wideFlag),
+                                              {&waterfallPlane, &widePlane}));
+        encoding.messages.push_back(v2Message(frame, kV2FlagsTracePart, {&tracePlane}));
+        return encoding;
+    }
+    encoding.messages.push_back(v2Message(frame, static_cast<quint8>(kV2FlagsWhole | wideFlag),
+                                          {&tracePlane, &waterfallPlane, &widePlane}));
+    return encoding;
+}
 
 QByteArray encodeDisplayCodecAbsolutePlane(const QVector<float>& samplesDbm,
                                            float minDbm, float maxDbm)
