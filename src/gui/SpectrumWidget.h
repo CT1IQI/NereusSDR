@@ -1,4 +1,6 @@
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//                 remoteTraceStartShareForTest().
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 noise floor's measurement row (m_noiseFloorMeasurement),
 //                 the wing placeholders fillWidebandWings marks and the
@@ -1524,6 +1526,9 @@ public:
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
     void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // Test only: the share of the Core's trace average its starting value
+    // held at the last frame (0 once warm; noteRemoteTraceWarmUp).
+    double remoteTraceStartShareForTest() const { return m_remoteTraceStartShare; }
     // Test only (R-DISP-HOLD): the codec context of the remote display this
     // pan accepts frames for (all zero while it accepts none).
     const DisplayCodecContext& remoteCodecForTest() const { return m_remoteCodec; }

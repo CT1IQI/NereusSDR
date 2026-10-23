@@ -29,6 +29,10 @@
 //                                    pan, and a MOX un-key's fast attack
 //                                    across a hold. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A carried NSDC v2 trace inside a
+//                                    remote pan's warm-up leaves the floor
+//                                    and the start's share alone.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -460,6 +464,46 @@ private slots:
                      qPrintable(QStringLiteral("frame %1: %2, settled %3")
                                     .arg(frame).arg(floors.at(frame)).arg(settled)));
         }
+    }
+
+    // PR 628 with NSDC v2 (PR 631): a v2 frame whose trace part was lost
+    // carries the last decoded trace (traceCarried). Inside a new pan's
+    // warm-up that trace is not the Core's average at this frame's
+    // sequence, so taking the start's share out of it measures nothing
+    // real. A carried, stale, hot trace leaves the floor and the start's
+    // share where the fresh frame before it put them.
+    void aCarriedTraceInTheWarmUpLeavesTheFloorAlone()
+    {
+        constexpr int kAverageTimeMs = 650;
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        // Fresh frames until the pan reads a floor, still inside the warm-up.
+        int fresh = 0;
+        while (w.nfLerpAverageForTest() <= -199.0f && fresh < kFps) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            ++fresh;
+        }
+        core.deliver(w);
+        QVERIFY(!QTest::currentTestFailed());
+        const float floor = w.nfLerpAverageForTest();
+        const double share = w.remoteTraceStartShareForTest();
+        QVERIFY2(floor > -199.0f, qPrintable(QString::number(floor)));
+        QVERIFY2(share > 0.0, qPrintable(QString::number(share)));
+
+        // The Core's next frame reaches the pan with its trace part lost:
+        // the decoder carries an older trace, here a hot one.
+        std::optional<DisplayCodecFrame> carried = core.next();
+        QVERIFY(carried.has_value());
+        carried->traceDbm.fill(-130.0f);
+        carried->traceCarried = true;
+        QVERIFY(w.updateRemoteSpectrum(*carried));
+        QCOMPARE(w.nfLerpAverageForTest(), floor);
+        QCOMPARE(w.remoteTraceStartShareForTest(), share);
     }
 
     // PR 628 round two: while a new remote pan holds for the Core's
