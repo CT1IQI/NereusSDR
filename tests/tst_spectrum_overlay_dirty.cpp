@@ -9,9 +9,12 @@
 
 #include <QtTest>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QResizeEvent>
 
 #include "gui/SpectrumWidget.h"
+#include "gui/widgets/VfoWidget.h"
+#include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "support/ImdSpectrumTestAccess.h"
@@ -174,22 +177,33 @@ private slots:
 
     // ---- The IMD overlay ----
 
-    void shownImdOverlayRebuildsWhenItsMarkersChange()
+    // While the IMD display is shown the GPU path rebuilds the overlay on
+    // every frame (its markers follow each accepted frame and its
+    // annotations glide with the waterfall), so changed markers, and
+    // markers that stop being drawn, need no mark of their own.
+    void shownImdOverlayRebuildsEveryFrame()
     {
         SpectrumWidget w;
+        configure(w);
+        QVERIFY(!w.overlayRebuildsEveryFrameForTest());
         configureImd(w);
-        QVERIFY(dirties(w, [&] { ImdSpectrumTestAccess::seedVisiblePixels(w, imdFrame()); }));
+        QVERIFY(w.overlayRebuildsEveryFrameForTest());
+        ImdSpectrumTestAccess::seedVisiblePixels(w, imdFrame());
         QVERIFY(w.imdMeasurementFrame().context.sourceEligible);
-        QVector<float> moved = imdFrame();
-        moved[340] = -30.0f;
-        moved[460] = -30.0f;
-        QVERIFY(dirties(w, [&] { ImdSpectrumTestAccess::seedVisiblePixels(w, moved); }));
+        // A frame with no receiver (receiverId -1) is not eligible: its
+        // markers go, and the show condition still rebuilds the overlay.
+        w.updateSpectrumLinear(-1, linearBins(4096), 1.0, 0.0);
+        QVERIFY(!w.imdMeasurementFrame().context.sourceEligible);
+        QVERIFY(w.overlayRebuildsEveryFrameForTest());
+        w.setDisplayDuplex(false);
+        QVERIFY(!w.overlayRebuildsEveryFrameForTest());
     }
 
     void hiddenImdOverlayDoesNotRebuildPerFrame()
     {
         SpectrumWidget w;
         configure(w);   // MOX, two-tone and IMD display all off
+        QVERIFY(!w.overlayRebuildsEveryFrameForTest());
         ImdSpectrumTestAccess::seedVisiblePixels(w, imdFrame());
         int rebuilds = 0;
         for (int i = 0; i < kFrames; ++i) {
@@ -200,20 +214,6 @@ private slots:
             }
         }
         QCOMPARE(rebuilds, 0);
-    }
-
-    void imdOverlayThatStopsBeingDrawnClearsOnce()
-    {
-        SpectrumWidget w;
-        configureImd(w);
-        w.updateSpectrumLinear(0, linearBins(4096), 1.0, 0.0);
-        ImdSpectrumTestAccess::seedVisiblePixels(w, imdFrame());
-        QVERIFY(w.imdMeasurementFrame().context.sourceEligible);
-        // A frame with no receiver (receiverId -1) is not eligible: the
-        // markers it showed must go, once.
-        QVERIFY(dirties(w, [&] { w.updateSpectrumLinear(-1, linearBins(4096), 1.0, 0.0); }));
-        QVERIFY(!w.imdMeasurementFrame().context.sourceEligible);
-        QVERIFY(!dirties(w, [&] { w.updateSpectrumLinear(-1, linearBins(4096), 1.0, 0.0); }));
     }
 
     void imdToggleOffRebuilds()
@@ -272,7 +272,7 @@ private slots:
         QVERIFY(dirties(w, [&] { w.setSampleRate(384000.0); }));
     }
 
-    void ddcCentreMoveInExtendedViewRebuilds()
+    void ddcCenterMoveInExtendedViewRebuilds()
     {
         SpectrumWidget w;
         configure(w);
@@ -290,14 +290,38 @@ private slots:
         SpectrumWidget w;
         configure(w);
         w.setDbmCalOffset(5.0f);
-        // Same window, rate and DDC centre, no FFT grant: the one change is
+        // The local row period (50 ms) equals the remote one (1 frame a
+        // line at 20 fps), so the time scale does not move either.
+        w.setWfUpdatePeriodMs(50);
+        SpectrumEndpointContext context = remoteContext();
+        context.targetFps = 20;
+        // Same window, rate and DDC center, no FFT grant: the one change is
         // that a remote pan adds no local calibration to its grid.
         QVERIFY(dirties(w, [&] {
-            w.setRemoteSpectrumContext(remoteContext(), 14200000.0, 192000.0);
+            w.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
         }));
+        QCOMPARE(w.waterfallRowPeriodMsForTest(), 50.0);
     }
 
     // ---- The waterfall time scale ----
+
+    // The clock is in the static overlay; only its ticker refreshes it, so
+    // a timestamp loaded from settings has to start it.
+    void loadedTimestampStartsItsTicker()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(QStringLiteral("DisplayWfTimestampPos"),
+                                         QStringLiteral("1"));
+        SpectrumWidget w;
+        w.loadSettings();
+        QVERIFY(w.wfTimestampPosition() == SpectrumWidget::TimestampPosition::Left);
+        QVERIFY(w.wfTimestampTickerActiveForTest());
+        AppSettings::instance().setValue(QStringLiteral("DisplayWfTimestampPos"),
+                                         QStringLiteral("0"));
+        w.loadSettings();
+        QVERIFY(!w.wfTimestampTickerActiveForTest());
+        AppSettings::instance().clear();
+    }
 
     void waterfallUpdatePeriodChangeRebuilds()
     {
@@ -361,6 +385,27 @@ private slots:
 
     // ---- Cursor readout, slices and the dBm strip ----
 
+    // Over the waterfall time scale the hover returns early (its cursor),
+    // as over a spot, a notch or the LIVE button; the readout still moves.
+    void pointerMoveOverTheTimeScaleMovesTheCursorReadout()
+    {
+        SpectrumWidget w;
+        configure(w);
+        QResizeEvent resize(w.size(), QSize());
+        QCoreApplication::sendEvent(&w, &resize);
+        w.setCursorFreqVisible(true);
+        const QRect wf = w.waterfallRectForTest();
+        const QPointF first(w.width() - 4, wf.center().y());
+        const QPointF second(w.width() - 4, wf.center().y() + 20);
+        QMouseEvent move(QEvent::MouseMove, first, first,
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(dirties(w, [&] { QCoreApplication::sendEvent(&w, &move); }));
+        QCOMPARE(w.cursor().shape(), Qt::SizeVerCursor);
+        QMouseEvent next(QEvent::MouseMove, second, second,
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(dirties(w, [&] { QCoreApplication::sendEvent(&w, &next); }));
+    }
+
     void pointerLeavingRemovesTheCursorReadout()
     {
         SpectrumWidget w;
@@ -382,6 +427,34 @@ private slots:
         w.setFrontSliceIndex(0);
         QVERIFY(dirties(w, [&] { w.setFrontSliceIndex(1); }));
         QVERIFY(!dirties(w, [&] { w.setFrontSliceIndex(1); }));
+    }
+
+    void addingASliceFlagRebuilds()
+    {
+        SpectrumWidget w;
+        configure(w);
+        QVERIFY(dirties(w, [&] { w.addVfoWidget(0); }));
+    }
+
+    // The marker's triangle hangs off the flag's bottom edge: a flag tab
+    // opened or closed resizes the flag and moves the triangle.
+    void flagTabOpenedRebuilds()
+    {
+        SpectrumWidget w;
+        configure(w);
+        VfoWidget* flag = w.addVfoWidget(0);
+        flag->setFrequency(14200000.0);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        w.updateVfoPositions();
+        QVERIFY(flag->isVisible());
+        auto* tab = flag->findChild<QPushButton*>(QStringLiteral("audioTabButton"));
+        QVERIFY(tab);
+        const int closedHeight = flag->height();
+        QVERIFY(dirties(w, [&] { tab->click(); }));
+        QVERIFY(flag->height() != closedHeight);
+        QVERIFY(dirties(w, [&] { tab->click(); }));
+        QCOMPARE(flag->height(), closedHeight);
     }
 
     void removingASliceFlagRebuilds()

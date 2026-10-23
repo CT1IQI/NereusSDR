@@ -8,17 +8,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 a loaded waterfall timestamp starts its one-second
+//                 ticker; a flag that resizes, moves, shows or hides marks
+//                 the overlay (its marker triangle hangs off the flag), as
+//                 does a new flag; a pointer move marks it while the cursor
+//                 readout shows. An accepted or invalidated IMD frame no
+//                 longer marks it: the GPU path rebuilds it every frame
+//                 while the IMD display is shown.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 the static overlay is no longer rebuilt and uploaded on
 //                 every frame. An accepted IMD frame, or an IMD
 //                 invalidation, marks it only when the IMD markers it draws
 //                 change or go; the inputs that leaned on the per-frame
-//                 rebuild mark it themselves (sample rate, DDC centre in the
-//                 extended view, local FFT size under the normalise or the
-//                 Hz/bin readout, a pan turning remote, the waterfall row
-//                 period, the pointer leaving, the front slice, a removed
-//                 flag, the dBm strip arrows, a replaced history) and the
-//                 FPS readout counts frames outside the rebuild.
+//                 rebuild mark it themselves (sample rate, DDC center in the
+//                 extended view, local FFT size under the normalization or
+//                 the Hz/bin readout, a pan turning remote, the waterfall
+//                 row period, the pointer leaving, the front slice, a
+//                 removed flag, the dBm strip arrows, a replaced history)
+//                 and the FPS readout counts frames outside the rebuild.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -1516,6 +1524,9 @@ void SpectrumWidget::loadSettings()
                                  static_cast<int>(TimestampPosition::None));
     m_wfTimestampPos = static_cast<TimestampPosition>(qBound(0, tsPosRaw,
                            static_cast<int>(TimestampPosition::Count) - 1));
+    // The clock is drawn into the static overlay, which only its ticker
+    // refreshes; a timestamp loaded on must start it, as the setter does.
+    syncWfTimestampTicker();
     const int tsModeRaw = readInt(QStringLiteral("DisplayWfTimestampMode"),
                                   static_cast<int>(TimestampMode::UTC));
     m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
@@ -3434,7 +3445,7 @@ double SpectrumWidget::waterfallRowPeriodMs() const
 
 void SpectrumWidget::applyWaterfallTickerPeriod()
 {
-    // The waterfall time scale is labelled at the row period; a remote pan's
+    // The waterfall time scale is labeled at the row period; a remote pan's
     // follows the Core's frame rate and frames per line.
     const double rowPeriodMs = waterfallRowPeriodMs();
     if (rowPeriodMs != m_overlayRowPeriodMs) {
@@ -3688,7 +3699,7 @@ void SpectrumWidget::setSampleRate(double hz)
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
         invalidateImdMeasurement();
-        // The bin width (normalise shift, Hz/bin readout) and the DDC
+        // The bin width (normalization shift, Hz/bin readout) and the DDC
         // island bounds follow the sample rate.
         markOverlayDirty();
         update();
@@ -6288,12 +6299,10 @@ void SpectrumWidget::setWfAverageMode(AverageMode m)
     update();
 }
 
-void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
+// Start/stop the 1 Hz overlay refresh timer so the clock ticks live.
+void SpectrumWidget::syncWfTimestampTicker()
 {
-    if (m_wfTimestampPos == p) { return; }
-    m_wfTimestampPos = p;
-    // Start/stop the 1 Hz overlay refresh timer so the clock ticks live.
-    if (p != TimestampPosition::None) {
+    if (m_wfTimestampPos != TimestampPosition::None) {
         if (!m_wfTimestampTicker) {
             m_wfTimestampTicker = new QTimer(this);
             m_wfTimestampTicker->setInterval(1000);
@@ -6304,6 +6313,13 @@ void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
     } else if (m_wfTimestampTicker) {
         m_wfTimestampTicker->stop();
     }
+}
+
+void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
+{
+    if (m_wfTimestampPos == p) { return; }
+    m_wfTimestampPos = p;
+    syncWfTimestampTicker();
     scheduleSettingsSave();
     markOverlayDirty();
     announceDisplaySetting(QStringLiteral("DisplayWfTimestampPos"));
@@ -6835,7 +6851,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (m_imdLocalSource != receiverId) { invalidateImdMeasurement(); }
     m_imdLocalSource = receiverId;
     m_localSpectrumSource = receiverId;
-    // A new FFT size is a new bin width: the 1 Hz normalise shift (grid and
+    // A new FFT size is a new bin width: the 1 Hz normalization shift (grid and
     // dBm scale) and the Hz/bin readout in the static overlay move with it.
     if (m_fullLinearBins.size() != binsLinear.size()
         && (normalizeActive() || m_showBinWidth)) {
@@ -12397,27 +12413,23 @@ void SpectrumWidget::invalidateImdMeasurement()
     const ImdStatus status = !context.measurementsEnabled ? ImdStatus::Disabled
         : !context.mox || !context.testing ? ImdStatus::WaitingForTx
         : !context.duplex ? ImdStatus::DuplexRequired : ImdStatus::WaitingForSpectrum;
-    const bool markersWereDrawn = imdMarkersDrawn();
     m_imdPresenter.invalidate(status, context);
     emit imdMeasurementChanged(m_imdPresenter.frame());
-    // An invalidated frame is never source-eligible, so it draws no markers
-    // or annotations: the overlay changes only if it was showing them. The
-    // display transmit path and remote held traces invalidate on every
-    // frame, so an unconditional mark rebuilt the overlay on each one.
-    // Callers that change anything else the overlay draws mark it
-    // themselves.
-    if (markersWereDrawn) {
-        markOverlayDirty();
-    }
+    // No overlay mark: while the IMD display is shown the GPU path rebuilds
+    // the overlay every frame (imdOverlayShown()), and the CPU path repaints
+    // all of it on each frame. The display transmit path and remote held
+    // traces invalidate on every frame, so a mark here rebuilt the overlay
+    // on each one. Callers that change anything else the overlay draws mark
+    // it themselves.
 }
 
-// What drawImdOverlay() and drawWaterfallChrome() require before they draw
-// any IMD marker, guide or annotation (Thetis display.cs:5008 show
-// condition plus an eligible accepted frame).
-bool SpectrumWidget::imdMarkersDrawn() const
+// Thetis display.cs:5008 show condition, which drawImdOverlay() and
+// drawWaterfallChrome() require before they draw any IMD marker, guide or
+// annotation.
+bool SpectrumWidget::imdOverlayShown() const
 {
     return m_moxOverlay && m_testingIMD && m_showIMDMeasurements
-        && m_displayDuplex && m_imdPresenter.frame().context.sourceEligible;
+        && m_displayDuplex;
 }
 
 void SpectrumWidget::queueImdCorrectionEdge(bool correctionsApplied)
@@ -12474,8 +12486,6 @@ void SpectrumWidget::acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligi
         m_imdPixelCount = m_renderedPixels.size();
         invalidateImdMeasurement();
     }
-    const bool markersWereDrawn = imdMarkersDrawn();
-    const ImdMeasurementFrame before = m_imdPresenter.frame();
     const ImdInputContext context = imdInputContext(sequence, sourceEligible);
     m_imdPresenter.acceptVisibleSpectrum(m_renderedPixels, context);
     if (sourceEligible && context.mox && context.testing
@@ -12484,40 +12494,11 @@ void SpectrumWidget::acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligi
         ++m_imdAcceptedFrameOrdinal;
     }
     emit imdMeasurementChanged(m_imdPresenter.frame());
-    // The markers live in the static overlay, which this runs under on every
-    // local and remote frame. Mark it only while they are drawn and moved,
-    // or once when they stop being drawn; an unconditional mark rebuilt and
-    // uploaded the whole overlay on every frame.
-    const bool markersDrawn = imdMarkersDrawn();
-    if (markersDrawn ? !markersWereDrawn
-                       || !sameImdMarkers(before, m_imdPresenter.frame())
-                     : markersWereDrawn) {
-        markOverlayDirty();
-    }
-}
-
-// The parts of an accepted IMD frame that drawImdOverlay() and
-// drawWaterfallChrome() turn into pixels.
-bool SpectrumWidget::sameImdMarkers(const ImdMeasurementFrame& a,
-                                    const ImdMeasurementFrame& b)
-{
-    if (a.context.sourceEligible != b.context.sourceEligible
-        || a.context.contextRevision != b.context.contextRevision
-        || a.context.firstSampleHz != b.context.firstSampleHz
-        || a.context.sampleStepHz != b.context.sampleStepHz
-        || a.expectedFrequencyHz != b.expectedFrequencyHz) {
-        return false;
-    }
-    for (size_t index = 0; index < a.peaks.size(); ++index) {
-        const auto& left = a.peaks[index];
-        const auto& right = b.peaks[index];
-        if (left.has_value() != right.has_value()) { return false; }
-        if (left && (left->frequencyHz != right->frequencyHz
-                     || left->absoluteDbm != right->absoluteDbm)) {
-            return false;
-        }
-    }
-    return true;
+    // The markers live in the static overlay, but this runs on every local
+    // and remote frame, so it does not mark it: while the markers can be
+    // drawn (imdOverlayShown()) the GPU path rebuilds the overlay every
+    // frame anyway, and the CPU path repaints all of it on each frame. A
+    // mark here rebuilt and uploaded the whole overlay on every frame.
 }
 
 void SpectrumWidget::setImdSelectedProduct(ImdProduct product)
@@ -12681,6 +12662,22 @@ void SpectrumWidget::paintMoxOverlay(QPainter& p)
 // This eventFilter forwards them to our mouseMoveEvent/mousePressEvent/etc.
 bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // This pan's slice flags (addVfoWidget): the marker triangle sits at the
+    // flag's bottom edge.
+    if (obj->parent() == this && qobject_cast<VfoWidget*>(obj)) {
+        switch (ev->type()) {
+        case QEvent::Resize:
+        case QEvent::Move:
+        case QEvent::Show:
+        case QEvent::Hide:
+            markOverlayDirty();
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
     // Phase 3Q-8: clicks on the disconnect-overlay label open the connection panel.
     if (obj == m_disconnectLabel) {
         if (ev->type() == QEvent::MouseButtonPress) {
@@ -13693,6 +13690,12 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 
 void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    // The cursor frequency readout (drawCursorInfo) is in the static
+    // overlay and reads m_mousePos. Mark it here, before the hover and drag
+    // branches below, several of which return without marking.
+    if (m_showCursorFreq && (!m_mouseInWidget || event->pos() != m_mousePos)) {
+        markOverlayDirty();
+    }
     m_mousePos = event->pos();
     m_mouseInWidget = true;
     int mx = static_cast<int>(event->position().x());
@@ -15850,13 +15853,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = true;
         }
 
-        // Phase 3M-4 Task 12 — IMD overlay needs live re-rendering each
-        // frame because peak detection runs against the current spectrum
-        // buffer. Force the otherwise-static overlay to rebuild while the
+        // Phase 3M-4 Task 12 — the IMD overlay needs live re-rendering
+        // each frame: its correction annotations glide down the waterfall
+        // with the sub-row scroll (drawWaterfallChrome, imdEventY with
+        // m_imdWaterfallGlideRows), and its markers follow each accepted
+        // frame. Force the otherwise-static overlay to rebuild while the
         // IMD show condition is satisfied. Cost is one QImage repaint per
         // frame; only paid during PureSignal two-tone calibration.
-        if (m_moxOverlay && m_testingIMD && m_showIMDMeasurements
-                && m_displayDuplex) {
+        if (imdOverlayShown()) {
             m_overlayStaticDirty = true;
         }
 
@@ -16912,9 +16916,16 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::flagDragFinished, this, [this]() {
         m_flagDragActive = false;
     });
+    // The marker's triangle hangs off the flag's bottom edge
+    // (drawSliceMarker), and the markers are in the static overlay: a flag
+    // that changes size (a tab opened or closed), moves, shows or hides
+    // marks it (eventFilter).
+    w->installEventFilter(this);
     w->show();
     w->raise();
     emit flagsRaised();
+    // The new slice's marker, whatever else is or is not marking.
+    markOverlayDirty();
     return w;
 }
 
@@ -16970,7 +16981,7 @@ void SpectrumWidget::refreshSliceFlags()
 void SpectrumWidget::setFrontSliceIndex(int sliceIndex)
 {
     if (m_frontSliceIndex != sliceIndex) {
-        markOverlayDirty();  // the off-screen arrow takes the front slice's colour
+        markOverlayDirty();  // the off-screen arrow takes the front slice's color
     }
     m_frontSliceIndex = sliceIndex;
     raiseFrontVfoWidget();
