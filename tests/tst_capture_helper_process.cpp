@@ -95,10 +95,11 @@ constexpr char kMicModeBundle[] = "com.example.window";
 // 2026-10-23: the helper child marks the process detach on its stderr.
 // Windows calls the exe's TLS callbacks with DLL_PROCESS_DETACH from
 // ExitProcess (std::_Exit, exit), the same pass that runs every DLL's
-// static destructors; TerminateProcess calls none.  MinGW and clang link a
-// .CRT$XLY callback into the exe's TLS callback list.
+// static destructors; TerminateProcess calls none.  A .CRT$XLY callback
+// joins the exe's TLS callback list: by a section attribute under MinGW
+// (GCC or clang), by const_seg under MSVC and clang-cl (main below).
 constexpr char kProcessDetachMark[] = "nereus-test: process detach ran";
-#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
+#if defined(Q_OS_WIN)
 constexpr bool kMarksProcessDetach = true;
 bool s_markProcessDetach = false;  // set once in main, before any thread
 
@@ -542,7 +543,7 @@ private slots:
     void helperExitAtStdinEofRunsNoProcessDetach()
     {
         if (!kMarksProcessDetach) {
-            QSKIP("the process detach is marked only in a Windows GCC or clang build");
+            QSKIP("the process detach is marked only on Windows");
         }
         {
             Child helper;
@@ -888,9 +889,17 @@ private slots:
     }
 };
 
-#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
-// The exe's TLS callback (see kProcessDetachMark).  Not const, as the
-// MinGW runtime's own entries in this list are not.
+#if defined(Q_OS_WIN) && defined(Q_CC_MSVC)
+// The exe's TLS callback (see kProcessDetachMark), for MSVC and clang-cl
+// (which defines Q_CC_MSVC too): kept by /INCLUDE, with the TLS directory.
+#pragma comment(linker, "/INCLUDE:_tls_used")
+#pragma comment(linker, "/INCLUDE:nereusTestProcessDetachCallback")
+#pragma const_seg(".CRT$XLY")
+extern "C" const PIMAGE_TLS_CALLBACK nereusTestProcessDetachCallback = markProcessDetach;
+#pragma const_seg()
+#elif defined(Q_OS_WIN)
+// The exe's TLS callback (see kProcessDetachMark), for MinGW GCC or clang.
+// Not const, as the MinGW runtime's own entries in this list are not.
 extern "C" __attribute__((section(".CRT$XLY"), used))
 PIMAGE_TLS_CALLBACK nereusTestProcessDetachCallback = markProcessDetach;
 #endif
@@ -910,7 +919,7 @@ int main(int argc, char* argv[])
         // Fake query only: exercise logging before the real entry point,
         // without reaching a platform device API.
         NereusSDR::tracedNativeAudioQuery("test.no-device-query", -1, [] { return 0; });
-#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
+#if defined(Q_OS_WIN)
         s_markProcessDetach = true;
 #endif
         return captureHelperEntryPointForTest(argc - 1, argv + 1);

@@ -208,6 +208,19 @@ qint64 readInput(char* buffer, qint64 size)
     }
 }
 
+void exitProcessNow(int code)
+{
+    std::fflush(stderr);
+#ifdef Q_OS_WIN
+    ::TerminateProcess(::GetCurrentProcess(), static_cast<UINT>(code));
+    // Only reached if the process could not end itself.
+    std::fprintf(stderr, "nereus-audio-capture: TerminateProcess failed, error %lu\n",
+                 static_cast<unsigned long>(::GetLastError()));
+    std::fflush(stderr);
+#endif
+    std::_Exit(code);
+}
+
 } // namespace CaptureHelperIo
 
 int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
@@ -307,15 +320,12 @@ struct CommandQueue {
 // down the helper's statics after a Warm and aborted in libgcc's emutls
 // (0x40000015 in libgcc_s_seh-1.dll), each time the Core closed its first
 // helper at startup.  TerminateProcess runs none of that.  On macOS and
-// Linux std::_Exit is the _exit system call, which runs nothing either.
+// Linux std::_Exit is the _exit system call, which runs nothing either
+// (CaptureHelperIo::exitProcessNow).
 [[noreturn]] void exitNow(const char* why)
 {
     std::fprintf(stderr, "nereus-audio-capture: exiting: %s\n", why);
-    std::fflush(stderr);
-#ifdef Q_OS_WIN
-    ::TerminateProcess(::GetCurrentProcess(), 0);
-#endif
-    std::_Exit(0);
+    CaptureHelperIo::exitProcessNow(0);
 }
 
 // Parses one parent record.  Anything but a valid Configure / AttachRing /

@@ -135,6 +135,12 @@ bool writeRecord(const QByteArray& record);
 // error.
 qint64 readInput(char* buffer, qint64 size);
 
+// 2026-10-23: ends the process at once with this code, from any thread,
+// running no static destructor: TerminateProcess on Windows (std::_Exit
+// there is ExitProcess, which runs every DLL's DLL_PROCESS_DETACH and its
+// static destructors on the calling thread), std::_Exit elsewhere.
+[[noreturn]] void exitProcessNow(int code);
+
 } // namespace CaptureHelperIo
 
 } // namespace NereusSDR
