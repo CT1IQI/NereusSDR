@@ -81,6 +81,13 @@
 //                                    its one Opus fallback, as in
 //                                    tst_remote_vax_feeder. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A feed wait that times out says how
+//                                    many blocks the stage's mailbox
+//                                    evicted; a "lossless, forced fallback"
+//                                    row runs the trial's Opus fallback on
+//                                    CapacityLimitedTransport, as
+//                                    tst_remote_vax_feeder does. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -103,6 +110,7 @@
 #include "core/session/media/RemoteTciAudioStage.h"
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/session/media/OpusAudioCodec.h"
+#include "fakes/CapacityLimitedTransport.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/RemoteAudioStatus.h"
@@ -306,12 +314,14 @@ struct FakeReceiverSource {
     // `caughtUp`, each next packet waits until it holds for the frames sent
     // so far (the app has every whole block they owe), not for wall time: a
     // starved worker that ran several packets at once would push more
-    // blocks than the stage's per-client mailbox holds and evict one.
+    // blocks than the stage's per-client mailbox holds and evict one; a
+    // wait that times out says how many the stage evicted.
     void deliverRamp(int sliceId, int firstFrame, int frames,
                      const std::function<bool(int framesSent)>& caughtUp = {})
     {
         IReceiverPcmSink* const sink = sinks.value(sliceId);
         QVERIFY(sink != nullptr);
+        const auto stage = static_cast<WorkerSink*>(sink)->stage;
         constexpr int kPacket = 1920;   // one 40 ms Opus packet
         std::vector<float> pcm(kPacket * 2);
         for (int sent = 0; sent < frames; sent += kPacket) {
@@ -322,7 +332,11 @@ struct FakeReceiverSource {
             }
             sink->receiverAudioBlock(sliceId, pcm.data(), n);
             if (caughtUp) {
-                QTRY_VERIFY_WITH_TIMEOUT(caughtUp(sent + n), 5000);
+                QTRY_VERIFY2_WITH_TIMEOUT(
+                    caughtUp(sent + n),
+                    qPrintable(QStringLiteral("%1 frames sent, %2 mailbox evictions")
+                                   .arg(sent + n).arg(stage->diagnostics().mailboxEvictions)),
+                    5000);
             }
         }
     }
@@ -1567,12 +1581,22 @@ private slots:
             // not 10 ms: a starved worker would otherwise run several packets
             // at once and push more blocks than the stage's mailbox holds.
             const int owed = (sent + kPacket) / kBlockInputFrames;
-            QTRY_VERIFY_WITH_TIMEOUT(rxAudio(binary, 0).blocks >= owed, 5000);
+            QTRY_VERIFY2_WITH_TIMEOUT(
+                rxAudio(binary, 0).blocks >= owed,
+                qPrintable(QStringLiteral("%1 of %2 blocks, %3 mailbox evictions")
+                               .arg(rxAudio(binary, 0).blocks).arg(owed)
+                               .arg(stage->diagnostics().mailboxEvictions)),
+                5000);
         }
         // Wait for the audio, not for a fixed 300 ms: 48000 frames in make 23
         // blocks of 512 frames at 12 kHz, and at load about 120 only 20 had
         // been sent 300 ms after the last packet (20480 samples).
-        QTRY_VERIFY_WITH_TIMEOUT(rxAudio(binary, 0).samples.size() >= 2 * 11000, 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            rxAudio(binary, 0).samples.size() >= 2 * 11000,
+            qPrintable(QStringLiteral("%1 samples, %2 mailbox evictions")
+                           .arg(rxAudio(binary, 0).samples.size())
+                           .arg(stage->diagnostics().mailboxEvictions)),
+            5000);
         const RxAudio audio = rxAudio(binary, 0);
         QCOMPARE(audio.channels, 2u);
         QVERIFY2(audio.samples.size() >= 2 * 11000,
@@ -1805,13 +1829,18 @@ private slots:
     void appsHearTheCoresSlices_data()
     {
         QTest::addColumn<bool>("lossless");
-        QTest::newRow("opus") << false;
-        QTest::newRow("lossless") << true;
+        QTest::addColumn<bool>("forceFallback");
+        QTest::newRow("opus") << false << false;
+        QTest::newRow("lossless") << true << false;
+        // The link cannot carry lossless: the trial fails every time, so
+        // the one fallback this case allows a loaded computer always runs.
+        QTest::newRow("lossless, forced fallback") << true << true;
     }
 
     void appsHearTheCoresSlices()
     {
         QFETCH(bool, lossless);
+        QFETCH(bool, forceFallback);
         AppSettings::instance().setValue(
             QLatin1String(RemoteMediaController::kAudioProfileSettingKey),
             lossless ? QStringLiteral("Lossless") : QStringLiteral("Opus"));
@@ -1822,7 +1851,17 @@ private slots:
         Harness h;
         QCOMPARE(h.sliceA, 0);
         QCOMPARE(h.sliceB, 1);
-        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        // The window's media transport: the real one, or, for the forced
+        // row, CapacityLimitedTransport (Opus fits, lossless does not)
+        // through the controller's MediaPeer::TransportFactory seam, as
+        // tst_remote_vax_feeder forces its fallback.
+        MediaPeer::TransportFactory transport;
+        if (forceFallback) {
+            transport = [](QObject* parent) -> IMediaTransport* {
+                return new CapacityLimitedTransport(parent);
+            };
+        }
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr, nullptr, transport);
         DaemonMediaController daemonMedia(&h.server, &h.station);
         TciServer tci(&h.remote);
         wire(tci, remoteMedia);
@@ -1888,8 +1927,34 @@ private slots:
         QTest::qWait(1000);
         source.start();
         QTRY_VERIFY_WITH_TIMEOUT(texts(textA).contains(QStringLiteral("audio_start:0;")), 5000);
-        QTRY_VERIFY_WITH_TIMEOUT(frameCount(rxAudio(binaryA, 0)) >= 48000
-                                     && frameCount(rxAudio(binaryB, 1)) >= 48000
+        // The tones are measured from here on. A forced fallback is waited
+        // for first, and only what the apps heard once both slices received
+        // Opus is measured: before it, the lossless stream lost most of its
+        // packets on the limited link.
+        int fromA = 0;
+        int fromB = 0;
+        if (forceFallback) {
+            QTRY_VERIFY_WITH_TIMEOUT(remoteErrors.count() >= 1, 20000);
+            QTRY_VERIFY_WITH_TIMEOUT(enabledRequests(coreControls, 0) >= 2
+                                         && enabledRequests(coreControls, 1) >= 2, 5000);
+            QTRY_VERIFY_WITH_TIMEOUT(
+                [&remoteMedia] {
+                    for (const RemoteReceiverAudioStatus& receiver :
+                         remoteMedia.audioStatus().receivers) {
+                        if (receiver.state != RemoteReceiverAudioStatus::State::Receiving
+                            || receiver.runningProfile
+                                   != std::optional<RemoteAudioProfile>(RemoteAudioProfile::Opus)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }(),
+                10000);
+            fromA = frameCount(rxAudio(binaryA, 0));
+            fromB = frameCount(rxAudio(binaryB, 1));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(frameCount(rxAudio(binaryA, 0)) >= fromA + 48000
+                                     && frameCount(rxAudio(binaryB, 1)) >= fromB + 48000
                                      && frameCount(rxAudio(binarySecondB, 1)) >= 48000, 20000);
 
         // One request per slice, at the session's one quality choice. The
@@ -1902,10 +1967,15 @@ private slots:
         QVERIFY2(fallbacks == 0 || (lossless && fallbacks == 1),
                  qPrintable(QStringLiteral("lossless fallbacks: %1 (-1: another error)")
                                 .arg(fallbacks)));
+        // The forced row ran the fallback branch below.
+        QVERIFY2(!forceFallback || fallbacks >= 1,
+                 qPrintable(QStringLiteral("forced, but lossless fallbacks: %1").arg(fallbacks)));
         const QString wantedProfile = lossless ? QStringLiteral("lossless") : QStringLiteral("opus");
         QStringList wantedProfiles{wantedProfile};
         if (fallbacks == 1) {
-            qInfo() << "the lossless link trial failed on this computer's load; the slices moved to Opus";
+            qInfo() << (forceFallback
+                            ? "the forced lossless link trial failed; the slices moved to Opus"
+                            : "the lossless link trial failed on this computer's load; the slices moved to Opus");
             wantedProfiles << QStringLiteral("opus");
             QTRY_VERIFY_WITH_TIMEOUT(enabledRequests(coreControls, 0) >= 2
                                          && enabledRequests(coreControls, 1) >= 2, 5000);
@@ -1939,11 +2009,11 @@ private slots:
         QCOMPARE(b.channels, 2u);
         constexpr int kSettle = 4800;
         for (int channel : {0, 1}) {
-            const double a617 = Test::toneAmplitude(a.samples, channel, Harness::kSliceAToneHz, kSettle);
-            const double a1579 = Test::toneAmplitude(a.samples, channel, Harness::kSliceBToneHz, kSettle);
-            const double b1579 = Test::toneAmplitude(b.samples, channel, Harness::kSliceBToneHz, kSettle);
-            const double b617 = Test::toneAmplitude(b.samples, channel, Harness::kSliceAToneHz, kSettle);
-            qInfo() << (lossless ? "lossless" : "opus") << "channel" << channel
+            const double a617 = Test::toneAmplitude(a.samples, channel, Harness::kSliceAToneHz, fromA + kSettle);
+            const double a1579 = Test::toneAmplitude(a.samples, channel, Harness::kSliceBToneHz, fromA + kSettle);
+            const double b1579 = Test::toneAmplitude(b.samples, channel, Harness::kSliceBToneHz, fromB + kSettle);
+            const double b617 = Test::toneAmplitude(b.samples, channel, Harness::kSliceAToneHz, fromB + kSettle);
+            qInfo() << (running == RemoteAudioProfile::Lossless ? "lossless" : "opus") << "channel" << channel
                     << "TCI rx0 617/1579" << a617 << a1579 << "TCI rx1 1579/617" << b1579 << b617;
             QVERIFY(a617 > 0.1);
             QVERIFY(a617 > 8.0 * a1579);
