@@ -37,6 +37,10 @@
 //               connect and shutdown; the window keeps letters instead of
 //               holding slices. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-23: PR 627 round three: kept letters across a radio switch,
+//               a Run Core off/on cycle and admission step 2. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -52,6 +56,7 @@
 
 #include <QSslSocket>
 
+#include <algorithm>
 #include <functional>
 #include <vector>
 
@@ -63,6 +68,11 @@ namespace {
 const QString kMac = QStringLiteral("aa:bb:cc:11:22:33");
 constexpr int kDeviceStepHz = 1000;
 constexpr double kDeviceFrequencyHz = 7074000.0;
+// Another radio the window connects to, with its own layout and settings.
+const QString kOtherMac = QStringLiteral("aa:bb:cc:44:55:66");
+constexpr int kOtherLetter = 3;
+constexpr int kOtherStepHz = 250;
+constexpr double kOtherFrequencyHz = 14074000.0;
 
 enum class Hosting { Headless, Window, WindowRunCoreOff };
 
@@ -301,6 +311,37 @@ void verifyWindowSlice(Station& station, int sliceId)
     QVERIFY(slice->streamIndex() >= 0);
     QCOMPARE(model.txBoundSlice(), slice);
     QCOMPARE(model.activeSlice(), slice);
+}
+
+// The other radio's layout: the device on Slice D there, with that letter's
+// settings saved for that radio.
+void seedOtherRadio(const QByteArray& device)
+{
+    SliceModel slice(kOtherLetter);
+    slice.setSettingsRadioIdentity(kOtherMac);
+    slice.setFrequency(kOtherFrequencyHz);
+    slice.setStepHz(kOtherStepHz);
+    slice.setAutoAgcEnabled(true);
+    slice.saveToSettings(slice.band());
+    ReceiveSliceState kept;
+    kept.id = kOtherLetter;
+    kept.panKey = QStringLiteral("pan-0");
+    kept.frequencyHz = kOtherFrequencyHz;
+    kept.dspMode = DSPMode::USB;
+    kept.owner = device;
+    QString reason;
+    QVERIFY2(ReceiveLayoutStore::stage(AppSettings::instance(), kOtherMac, {kept}, &reason),
+             qPrintable(reason));
+}
+
+bool layoutKeeps(const QString& radioMac, const Device& device, int letter)
+{
+    const ReceiveLayoutStore::LoadResult layout =
+        ReceiveLayoutStore::load(AppSettings::instance(), radioMac);
+    return std::any_of(layout.slices.cbegin(), layout.slices.cend(),
+                       [&device, letter](const ReceiveSliceState& entry) {
+                           return entry.owner == device.key.fingerprint() && entry.id == letter;
+                       });
 }
 
 QList<int> sliceIds(Station& station)
@@ -612,6 +653,103 @@ private slots:
         QCOMPARE(core->model().reservedSliceLetters(), QList<int>{1});
     }
 
+    // Run Core turned on while disconnected keeps the last radio's letters;
+    // the window then connects to another radio. The device gets that
+    // radio's letter and settings, and the last radio's kept letter never
+    // reaches that radio's layout (controller ruling 3).
+    void anotherRadioAfterRunCoreTurnedOnWhileDisconnectedUsesItsOwnLetters()
+    {
+        anotherRadioUsesItsOwnLetters(false);
+    }
+
+    // The same when the window, already hosting, switches radios.
+    void switchingRadiosWhileHostingUsesTheNewRadiosLetters()
+    {
+        anotherRadioUsesItsOwnLetters(true);
+    }
+
+    // A device placed on its kept letter changes its settings there. Run
+    // Core turned off and on again, with its slice closed in between, gives
+    // it its current settings, never the connect's older snapshot
+    // (controller ruling 3).
+    void runCoreOffAndOnKeepsTheDevicesCurrentSettings()
+    {
+        Sandbox sandbox;
+        Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{0});
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
+
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 1);
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{0});
+        verifyDeviceSettings(*core, 0);
+        setDeviceSettings(*core, 0, kOtherStepHz);
+        core->model().requestSettingsSave();
+        core->model().flushPendingSettingsSave();
+
+        // Run Core off keeps the iPhone's slice in the window, held for it,
+        // and its letter in the layout. The window then closes that slice,
+        // so Run Core on keeps the letter again from the layout.
+        QVERIFY(core->runtime->setRunCore(false));
+        core->model().removeSlice(0);
+        QCOMPARE(sliceIds(*core), QList<int>{1});
+        QVERIFY(Sandbox::turnOnRunCore(*core));
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{0});
+        verifyDeviceSettings(*core, 0, kOtherStepHz);
+    }
+
+    // Admission step 2: a device's saved slice on a letter the window's
+    // Core keeps for another device goes to a free letter, and the other
+    // device still gets its letter (controller ruling 3).
+    void aSavedSliceNeverTakesALetterKeptForAnotherDevice()
+    {
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{0});
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
+
+        // The Mac's own saved slice, also on A, from an earlier session. It
+        // is inside the window's receiver (B at 14.225 MHz), so the
+        // iPhone's 7.074 MHz still has a receiver of its own.
+        constexpr double kSavedFrequencyHz = 14200000.0;
+        QVERIFY(DeviceLayoutStore::append(
+            AppSettings::instance(), kMac, mac.key.fingerprint(),
+            SavedSlice{0, QStringLiteral("pan-0"), kSavedFrequencyHz, DSPMode::USB, {}},
+            WdspEngine::kMaxSliceChannels));
+
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 1);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{2});
+        QCOMPARE(core->model().sliceById(2)->frequency(), kSavedFrequencyHz);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{0});
+        verifyDeviceSettings(*core, 0);
+    }
+
     // HermesII (two letters), the Mac on A and the iPhone on B: the window
     // takes B. The iPhone does not sign in while the window writes B; its
     // B settings stay its own and come back to it on the next headless
@@ -725,6 +863,62 @@ private slots:
         QVERIFY(admitted(Sandbox::signIn(*core, mac)));
         QVERIFY(ownedBy(*core, mac).contains(0));
         verifyDeviceSettings(*core, 0);
+    }
+private:
+    // The Mac on A and the iPhone on B of the first radio; the iPhone on D
+    // of the other. The window starts on the first radio, Run Core on
+    // (hostingAtConnect) or turned on after a disconnect, then connects to
+    // the other radio.
+    void anotherRadioUsesItsOwnLetters(bool hostingAtConnect)
+    {
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        seedOtherRadio(iphone.key.fingerprint());
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{1});
+        setDeviceSettings(*core, 1);
+        Sandbox::stop(core);
+
+        core = sandbox.start(hostingAtConnect ? Hosting::Window : Hosting::WindowRunCoreOff);
+        QVERIFY(core);
+        core->model().disconnectFromRadio();
+        QTRY_VERIFY(!core->model().isConnected());
+        if (!hostingAtConnect) {
+            QVERIFY(Sandbox::turnOnRunCore(*core));
+        }
+        QCOMPARE(core->model().reservedSliceLetters(),
+                 hostingAtConnect ? (QList<int>{0, 1}) : QList<int>{1});
+
+        RadioDiscovery::clearHoldOffForTest();
+        RadioInfo other = core->radio->radioInfo();
+        other.macAddress = kOtherMac;
+        core->model().connectToRadio(other);
+        QTRY_COMPARE_WITH_TIMEOUT(core->model().connectionState(), ConnectionState::Connected,
+                                  10000);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{kOtherLetter});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{kOtherLetter});
+        const SliceModel* slice = core->model().sliceById(kOtherLetter);
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), kOtherFrequencyHz);
+        QCOMPARE(slice->stepHz(), kOtherStepHz);
+        Sandbox::stop(core);
+
+        QVERIFY2(!layoutKeeps(kOtherMac, iphone, 1),
+                 "the other radio's layout has the first radio's kept letter");
+        QVERIFY(layoutKeeps(kOtherMac, iphone, kOtherLetter));
+        QVERIFY(layoutKeeps(kMac, iphone, 1));
     }
 };
 

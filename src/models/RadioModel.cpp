@@ -1318,6 +1318,9 @@
 //                local connect snapshots the device letters' settings so a
 //                device never gets the window's; windowSliceId names the
 //                window's own starting slice for its one-time wiring.
+//                Kept letters belong to the radio they were kept for
+//                (m_deviceReservationsMac), and a letter's snapshot is
+//                dropped once a device is placed on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -18451,7 +18454,7 @@ void RadioModel::setHostsStationDevice(bool hosts)
             captureHostedReceiveLayout();
         }
         m_deviceSliceReservations.clear();
-        m_deviceLettersReserved = false;
+        m_deviceReservationsMac.clear();
         m_hostsStationDevice = false;
         return;
     }
@@ -18461,7 +18464,8 @@ void RadioModel::setHostsStationDevice(bool hosts)
     // now, for the radio the window last had. A letter the window already
     // uses is not kept; its device gets the lowest free letter, with the
     // settings its letter had at connect (the snapshot). With no radio
-    // address yet, the next connect keeps them (addStartingSlices). Before
+    // address yet, or when the next connect is to another radio, that
+    // connect keeps them for its radio (addStartingSlices). Before
     // the window has slices, addStartingSlices does this.
     if (!m_receiveLayoutManaged && !m_slices.isEmpty()) {
         reserveDeviceSlices(m_lastRadioInfo.macAddress);
@@ -18505,19 +18509,18 @@ int RadioModel::startingSliceCap() const
     if (m_streamAllocator.streamCount() > 0) {
         return sliceChannelLimit();
     }
-    const int board = boardCapabilities().maxSlices;
-    return board > 0 ? std::min(board, WdspEngine::kMaxSliceChannels)
-                     : WdspEngine::kMaxSliceChannels;
+    return deviceLayoutLimit();
 }
 
 void RadioModel::reserveDeviceSlices(const QString& radioMac)
 {
     m_deviceSliceReservations.clear();
+    m_deviceReservationsMac.clear();
     if (role() != Role::Local || m_receiveLayoutManaged || !m_hostsStationDevice
         || AppSettings::normalizedRadioMac(radioMac).isEmpty()) {
         return;
     }
-    m_deviceLettersReserved = true;
+    m_deviceReservationsMac = AppSettings::normalizedRadioMac(radioMac);
     AppSettings& store = AppSettings::instance();
     const ReceiveLayoutStore::LoadResult layout = ReceiveLayoutStore::load(store, radioMac);
     if (layout.state != ReceiveLayoutStore::LoadState::Loaded) {
@@ -18589,9 +18592,15 @@ int RadioModel::addStartingSlices(const QString& radioMac)
         return -1;
     }
     if (!m_slices.isEmpty()) {
-        // A reconnect keeps its slices. Run Core turned on before any
-        // radio address was known keeps its letters now.
-        if (m_hostsStationDevice && !m_receiveLayoutManaged && !m_deviceLettersReserved) {
+        // A reconnect keeps its slices. Connecting to another radio than
+        // the one the snapshot and the kept letters were made for (or Run
+        // Core turned on before any radio address was known): that
+        // radio's letters and settings, never the last radio's.
+        const QString mac = AppSettings::normalizedRadioMac(radioMac);
+        if (AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac) != mac) {
+            snapshotDeviceLetterSettings(radioMac);
+        }
+        if (m_hostsStationDevice && !m_receiveLayoutManaged && m_deviceReservationsMac != mac) {
             reserveDeviceSlices(radioMac);
         }
         return -1;
@@ -18651,6 +18660,10 @@ int RadioModel::placeReservedSlicesFor(const QByteArray& device)
     if (mac.isEmpty()) {
         return 0;
     }
+    // Letters kept for another radio are never placed on this one.
+    if (m_deviceReservationsMac != AppSettings::normalizedRadioMac(mac)) {
+        return 0;
+    }
     QList<DeviceSliceReservation> mine;
     QList<DeviceSliceReservation> others;
     for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
@@ -18690,6 +18703,9 @@ int RadioModel::placeReservedSlicesFor(const QByteArray& device)
             DeviceLayoutStore::append(store, mac, device, saved, deviceLayoutLimit());
             continue;
         }
+        // The device's settings for its kept letter now live on its slice
+        // (restoreSliceFor dropped that letter's snapshot).
+        m_deviceLetterSnapshot.remove(kept.id);
         ++placed;
     }
     requestSettingsSave();
@@ -18728,9 +18744,16 @@ bool RadioModel::captureHostedReceiveLayout()
                        mark.owner, mark.heldFor});
         ids.insert(slice->sliceIndex());
     }
-    // Letters still kept for devices that have not signed in.
+    // Letters still kept for devices that have not signed in. Letters kept
+    // for another radio are not this radio's and are left as they are.
+    const bool reservationsHere =
+        m_deviceReservationsMac == AppSettings::normalizedRadioMac(mac);
     QList<DeviceSliceReservation> reservations;
     for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
+        if (!reservationsHere) {
+            reservations.append(reservation);
+            continue;
+        }
         if (ids.contains(reservation.state.id) || sliceById(reservation.state.id) != nullptr) {
             // Another slice has that letter now (a device's or the window's
             // own): the device's saved slices keep this one, with its own
@@ -18825,6 +18848,10 @@ int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
         return refuse(rejection.isEmpty() ? tr("All the radio's receivers are in use.")
                                           : rejection);
     }
+    // A device is on this letter now (a kept letter, or a saved slice at
+    // admission): its connect-time snapshot is stale from here on, and a
+    // later Run Core off/on cycle reads the letter's current settings.
+    m_deviceLetterSnapshot.remove(id);
     if (reason) {
         reason->clear();
     }

@@ -703,6 +703,9 @@
 //                local connect snapshots the device letters' settings so a
 //                device never gets the window's; windowSliceId names the
 //                window's own starting slice for its one-time wiring.
+//                Kept letters belong to the radio they were kept for
+//                (m_deviceReservationsMac), and a letter's snapshot is
+//                dropped once a device is placed on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -8383,8 +8386,11 @@ private:
         bool letterKept {false};
     };
     QList<DeviceSliceReservation> m_deviceSliceReservations;
-    // reserveDeviceSlices ran for this hosting run (with a radio address).
-    bool m_deviceLettersReserved{false};
+    // The normalized MAC of the radio m_deviceSliceReservations were made
+    // for (reserveDeviceSlices); empty when none were made this hosting
+    // run. Kept letters belong to that radio's layout and are never placed
+    // on, or saved into, another radio's.
+    QString m_deviceReservationsMac;
     // snapshotDeviceLetterSettings: per letter, for m_deviceLetterSnapshotMac.
     QString m_deviceLetterSnapshotMac;
     QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
