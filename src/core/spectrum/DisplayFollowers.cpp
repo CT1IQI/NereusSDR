@@ -41,6 +41,14 @@
 //                 noise-floor fast attack takes a minimum length. J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-23 - The noise floor takes no estimate from a frame with no
+//                 data (empty, or every pixel at the FFT's -200 dBm floor
+//                 or not finite), and it seeds both estimates from the
+//                 median of the first frame that has data instead of
+//                 climbing from -200 dBm. A display started or resumed
+//                 drew ordinary noise hot for about eight seconds. J.J.
+//                 Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -116,6 +124,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace NereusSDR {
 
@@ -168,6 +177,37 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     const int width = src.size();
     if (width <= 0) { return false; }
 
+    // NereusSDR, not in Thetis: a pixel at or below -200 dBm (the floor
+    // FFTEngine writes for a bin with no power) or not finite is no
+    // measurement. A frame with no other pixel is a display that has no
+    // data yet, or a stream that paused; it would pull the estimate down to
+    // the bottom of the scale, so it is skipped.
+    const auto isMeasured = [](float dB) { return std::isfinite(dB) && dB > kInitialDbm; };
+    if (std::none_of(src.cbegin(), src.cend(), isMeasured)) { return false; }
+
+    // NereusSDR, based on Thetis display.cs:4639-4642 [v2.10.3.15] (both
+    // estimates start at -200): Thetis climbs from there, 1 dB a frame out
+    // of fast attack, and the line lags it by the attack time, so a display
+    // started or resumed reads far below the band for seconds and NF-AGC
+    // maps ordinary noise hot. Here both estimates start at the median of
+    // the first frame that has data, which is that frame's estimate; the
+    // estimate below runs from the next frame.
+    if (!m_seeded) {
+        QVector<float> measured;
+        measured.reserve(width);
+        std::copy_if(src.cbegin(), src.cend(), std::back_inserter(measured), isMeasured);
+        const auto middle = measured.begin() + measured.size() / 2;
+        std::nth_element(measured.begin(), middle, measured.end());
+        m_fftBinAverage = qBound(kInitialDbm, *middle, 200.0f);
+        m_lerpAverage = m_fftBinAverage;
+        m_seeded = true;
+        // As the end of this function (Thetis display.cs:5400-5404).
+        if (!m_fastAttack) {
+            m_good = true;
+        }
+        return false;
+    }
+
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:
     //   if (!mox && max_copy < currentAverage) {
     //       averageSum += fastPow10Raw(max_copy);
@@ -180,6 +220,7 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     int    averageCount = 0;
     for (int i = 0; i < width; ++i) {
         const float dB = src[i];
+        if (!isMeasured(dB)) { continue; }
         if (dB < currentAverage) {
             averageSum += std::pow(10.0, static_cast<double>(dB) / 10.0);
             averageCount++;

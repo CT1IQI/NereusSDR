@@ -41,6 +41,10 @@
 //                 a minimum length, and the follower says when it is
 //                 settled. J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-10-23 - The noise floor skips frames with no data and seeds from
+//                 the median of the first frame that has data. J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -170,6 +174,9 @@ public:
     /// One frame of display pixels (the measurement row: undented).
     /// Returns true when fast attack cleared itself on this frame
     /// (display.cs:5904-5908), so a caller that draws the flag repaints.
+    /// Pixels at or below kInitialDbm, or not finite, are no measurement; a
+    /// frame with nothing else changes nothing. The first frame with data
+    /// seeds both estimates from its median.
     bool process(const QVector<float>& pixels, int fps, qint64 nowMs);
 
     /// Thetis m_fFFTBinAverageRX1: this frame's estimate.
@@ -177,7 +184,12 @@ public:
     /// Thetis m_fLerpAverageRX1: the smoothed estimate the line is drawn at.
     float lerpAverage() const { return m_lerpAverage; }
     /// Seeds the smoothed estimate (SpectrumWidget's 3D floor test seam).
-    void setLerpAverage(float dbm) { m_lerpAverage = dbm; }
+    /// A seeded follower takes no seed from its first frame.
+    void setLerpAverage(float dbm)
+    {
+        m_lerpAverage = dbm;
+        m_seeded = true;
+    }
 
 private:
     float m_fftBinAverage {kInitialDbm};
@@ -189,6 +201,8 @@ private:
     qint64 m_fastAttackMinMs {kFastAttackMinMs};
     // Thetis m_bNoiseFloorGoodRX1.
     bool m_good {false};
+    // Whether a frame with data has seeded the estimates.
+    bool m_seeded {false};
 };
 
 /// When a display's noise floor goes to fast attack, as the desktop's

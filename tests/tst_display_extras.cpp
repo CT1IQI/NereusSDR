@@ -36,6 +36,9 @@
 //                                    planes that hold nothing, with one
 //                                    endpoint started before the other.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A started display reads the band from
+//                                    its first frame with data.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -776,6 +779,32 @@ private:
     };
 
 private slots:
+    // JJ 2026-10-23: each time the phone came back from a sound-only
+    // stretch, and each time a window's Core restarted, the Core started a
+    // fresh display. Its noise floor read about -194 dBm and climbed to the
+    // band's -111 over about eight seconds, and NF-AGC drew the waterfall
+    // against it, so ordinary noise came out bright. The fresh display reads
+    // the band from its first frame with data, and frames with none (a
+    // display that has nothing yet) change nothing.
+    void aStartedDisplayReadsTheBandFromItsFirstFrameWithData()
+    {
+        Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
+        const DisplayExtrasFrame empty = run.frames(5, -200.0f);
+        QVERIFY(empty.noiseFloorDbm.has_value());
+        const DisplayExtrasFrame first = run.frames(1, -111.0f);
+        QVERIFY2(std::abs(*first.noiseFloorDbm + 111.0f) < 0.05f,
+                 qPrintable(QString::number(*first.noiseFloorDbm)));
+        QVERIFY2(std::abs(first.waterfallLevelsDbm->first + 111.0f) < 0.05f,
+                 qPrintable(QString::number(first.waterfallLevelsDbm->first)));
+        for (int i = 0; i < 300; ++i) {
+            const DisplayExtrasFrame out = run.frames(1, -111.0f);
+            QVERIFY2(std::abs(*out.noiseFloorDbm + 111.0f) < 1.0f,
+                     qPrintable(QString::number(*out.noiseFloorDbm)));
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first + 111.0f) < 1.0f,
+                     qPrintable(QString::number(out.waterfallLevelsDbm->first)));
+        }
+    }
+
     // D17, R-DSP-23, R-DSP-24: the rows of a key are 40 dB hotter than the
     // band. The AGC's run level and its low level stay where they were
     // through the key, and the first receive row after it starts from them:

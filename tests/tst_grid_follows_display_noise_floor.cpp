@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-09-28  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A pan reads the band from its first
+//                                    frame with data. AI-assisted via
+//                                    Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -99,6 +102,39 @@ private slots:
         feed(w);
         QTest::qWait(700);
         QCOMPARE(w.gridMin(), -105);
+    }
+
+    // JJ 2026-10-23: after a reconnect the window drew the waterfall bright
+    // for seconds while its floor climbed from -200 dBm. A pan that starts,
+    // or that drew frames with nothing in them while its stream was down,
+    // reads the band from its first frame with data.
+    void aPanReadsTheBandFromItsFirstFrameWithData()
+    {
+        SpectrumWidget w;
+        w.setFrequencyRange(kPanCentreHz, kPanSpanHz);
+        w.setDdcCenterFrequency(kPanCentreHz);
+        w.setSampleRate(kPanSpanHz);
+        w.setSpectrumDetector(SpectrumDetector::Peak);
+        w.setSpectrumAveraging(SpectrumAveraging::None);
+        const QVector<float> nothing(4096, 0.0f);
+        for (int frame = 0; frame < 5; ++frame) {
+            w.updateSpectrumLinear(0, nothing, 2.0, -10.0);
+        }
+        QCOMPARE(w.nfLerpAverageForTest(), -200.0f);
+        feed(w);
+        const float first = w.nfLerpAverageForTest();
+        for (int frame = 0; frame < 300; ++frame) {
+            feed(w);
+        }
+        const float settled = w.nfLerpAverageForTest();
+        QVERIFY2(settled > -150.0f, qPrintable(QString::number(settled)));
+        QVERIFY2(std::abs(first - settled) < 1.0f,
+                 qPrintable(QStringLiteral("first %1, settled %2").arg(first).arg(settled)));
+        // The stream drops: frames with nothing leave the floor alone.
+        for (int frame = 0; frame < 100; ++frame) {
+            w.updateSpectrumLinear(0, nothing, 2.0, -10.0);
+        }
+        QCOMPARE(w.nfLerpAverageForTest(), settled);
     }
 
     void offDoesNothing()

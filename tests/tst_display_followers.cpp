@@ -147,20 +147,21 @@ private slots:
         NoiseFloorFollower nf;
         QCOMPARE(nf.fftBinAverage(), -200.0f);
         QCOMPARE(nf.lerpAverage(), -200.0f);
-        // No pixel is below -200, so the estimate drifts up 1 dB.
-        QVERIFY(!nf.process(flatRow(100, -120.0f), 30, 0));
-        QCOMPARE(nf.fftBinAverage(), -199.0f);
+        // The first frame with data seeds both estimates at its median.
+        nf.process(flatRow(100, -120.0f), 30, 0);
+        QCOMPARE(nf.fftBinAverage(), -120.0f);
+        QCOMPARE(nf.lerpAverage(), -120.0f);
+        // No pixel is below -120, so the estimate drifts up 1 dB.
+        QVERIFY(!nf.process(flatRow(100, -100.0f), 30, 33));
+        QCOMPARE(nf.fftBinAverage(), -119.0f);
         // framesInAttack = int(30 / 1000 * 2000) + 1 = 61.
-        QCOMPARE(nf.lerpAverage(), -200.0f + 1.0f / 61.0f);
+        QCOMPARE(nf.lerpAverage(), -120.0f + 1.0f / 61.0f);
     }
 
     void quietPixelsBlendInTheLinearDomain()
     {
         NoiseFloorFollower nf;
-        // Drift the estimate above the row: 81 frames reach -119 dBm.
-        for (int frame = 0; frame < 81; ++frame) {
-            nf.process(flatRow(100, -120.0f), 30, 0);
-        }
+        nf.process(flatRow(100, -119.0f), 30, 0);
         QCOMPARE(nf.fftBinAverage(), -119.0f);
         // Every pixel (-120) is now below it: the average of -120 and -119
         // taken in power, 10*log10((10^-12 + 10^-11.9) / 2).
@@ -173,9 +174,7 @@ private slots:
     void tooFewQuietPixelsKeepsDrifting()
     {
         NoiseFloorFollower nf;
-        for (int frame = 0; frame < 81; ++frame) {
-            nf.process(flatRow(100, -120.0f), 30, 0);
-        }
+        nf.process(flatRow(100, -119.0f), 30, 0);
         // 14 quiet pixels of 100 is under the 15 that sensitivity 3 needs.
         QVector<float> row = flatRow(100, -100.0f);
         for (int i = 0; i < 14; ++i) { row[i] = -130.0f; }
@@ -183,15 +182,70 @@ private slots:
         QCOMPARE(nf.fftBinAverage(), -118.0f);
     }
 
+    // JJ 2026-10-23: the waterfall drew bright rows for about eight seconds
+    // each time a display started or came back from a sound-only stretch;
+    // the floor read -194 dBm and climbed to -111. A display that starts,
+    // or resumes after frames with no data, reads the band from its first
+    // frame with data.
+    void aResumeAfterFramesWithNoDataReadsTheBandFromItsFirstRealFrame()
+    {
+        NoiseFloorFollower nf;
+        const float inf = std::numeric_limits<float>::infinity();
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        // Nothing yet: an empty frame, a frame at the FFT's log(0) floor,
+        // and one of nothing finite.
+        QVERIFY(!nf.process({}, 30, 0));
+        QVERIFY(!nf.process(flatRow(100, -200.0f), 30, 33));
+        QVector<float> notFinite = flatRow(100, -inf);
+        notFinite[3] = nan;
+        QVERIFY(!nf.process(notFinite, 30, 66));
+        QCOMPARE(nf.lerpAverage(), -200.0f);
+        // The band at -111 dBm, with a carrier and a few log(0) pixels.
+        QVector<float> band = flatRow(100, -111.0f);
+        band[40] = -60.0f;
+        band[41] = -70.0f;
+        band[0] = -200.0f;
+        band[1] = -inf;
+        nf.process(band, 30, 99);
+        QCOMPARE(nf.fftBinAverage(), -111.0f);
+        QCOMPARE(nf.lerpAverage(), -111.0f);
+        QVERIFY(nf.settled());
+        for (int frame = 0; frame < 300; ++frame) {
+            nf.process(band, 30, 132 + 33 * frame);
+            QVERIFY2(nf.lerpAverage() > -112.0f && nf.lerpAverage() < -110.0f,
+                     qPrintable(QString::number(nf.lerpAverage())));
+        }
+    }
+
+    // A window whose stream stops or reconnects keeps drawing frames with
+    // no data; the floor it had stays until the band comes back.
+    void framesWithNoDataLeaveAFloorAlone()
+    {
+        NoiseFloorFollower nf;
+        for (int frame = 0; frame < 100; ++frame) {
+            nf.process(flatRow(100, -111.0f), 30, 33 * frame);
+        }
+        const float before = nf.lerpAverage();
+        QVERIFY2(std::abs(before + 111.0f) < 1.0f, qPrintable(QString::number(before)));
+        for (int frame = 100; frame < 400; ++frame) {
+            QVERIFY(!nf.process(flatRow(100, -200.0f), 30, 33 * frame));
+        }
+        QCOMPARE(nf.lerpAverage(), before);
+        QVERIFY(nf.settled());
+        nf.process(flatRow(100, -111.0f), 30, 33 * 400);
+        QVERIFY(std::abs(nf.lerpAverage() + 111.0f) < 1.0f);
+    }
+
     void fastAttackDriftsThreeDbAndTheLineFollowsAtOnce()
     {
         NoiseFloorFollower nf;
+        nf.process(flatRow(100, -120.0f), 30, 0);
         QVERIFY(nf.setFastAttack(true, 1000));
         QVERIFY(!nf.setFastAttack(true, 1000));
         QVERIFY(nf.fastAttack());
-        nf.process(flatRow(100, -120.0f), 30, 1000);
-        QCOMPARE(nf.fftBinAverage(), -197.0f);
-        QCOMPARE(nf.lerpAverage(), -197.0f);
+        nf.process(flatRow(100, -100.0f), 30, 1000);
+        QCOMPARE(nf.fftBinAverage(), -117.0f);
+        QCOMPARE(nf.lerpAverage(), -117.0f);
     }
 
     void fastAttackClearsOnlyOnceSettledAndASecondHasPassed()
