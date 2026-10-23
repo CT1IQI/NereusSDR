@@ -41,6 +41,11 @@
 // the second from freePortOtherThan(), since two freePort() calls in a row
 // can return the same port (CI Linux, PR 605). J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include "MultiDeviceHarness.h"
 
 #include <QtTest/QtTest>
@@ -80,23 +85,16 @@ namespace {
 
 quint16 freePort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
-// A second free port that is not `taken`. freePort() closes its
-// reservation, so two calls in a row can return the same port; a test
-// that moves a server from one port to another would then see no move.
+// A second free port that is not `taken`. unusedLoopbackPort() picks at
+// random, so two freePort() calls in a row can still return the same port;
+// a test that moves a server from one port to another would then see no
+// move. The helper's `except` argument rules the first port out.
 quint16 freePortOtherThan(quint16 taken)
 {
-    quint16 port = freePort();
-    while (port == taken) {
-        port = freePort();
-    }
-    return port;
+    return unusedLoopbackPort(QHostAddress::LocalHost, taken);
 }
 
 QNetworkAddressEntry entry(const char* ip, int prefix)
@@ -1363,7 +1361,9 @@ private slots:
     void coreRetriesAFailedStationListener()
     {
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
         RadioModel model;
         StationTciModel state;
@@ -1436,7 +1436,9 @@ private slots:
                   "for the station.");
         }
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const quint16 port = blocker.serverPort();
         RadioModel model;
         StationTciModel state;

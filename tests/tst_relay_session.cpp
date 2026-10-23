@@ -52,6 +52,13 @@
 //   2026-10-15: the slow Core over the web relay with the window racing
 //               every path (PathRacer), as JJ's window dials. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the slow Core over a direct pair races, as a real window
+//               does, and runs both orders on every pass: direct first
+//               (rank ServiceDirect at connect) and relay first (the web
+//               relay at connect, moved to a direct pair within the first
+//               step of the better-path search). ICE nominating the web
+//               relay first on a loaded runner failed the old check.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -81,6 +88,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationRendezvous.h"
 #include "core/session/StationServer.h"
+#include "core/session/SwitchableTransport.h"
 #include "core/settings/SettingsProxy.h"
 #include "models/RadioModel.h"
 
@@ -272,6 +280,7 @@ private slots:
         RelayLeg::setRelayUrlForTest(QUrl());
         DataChannelTransport::setAnswererOpenDelayForTest(0);
         RendezvousDialer::setLeavesServiceAtOpenForTest(false);
+        DataChannelTransport::setDirectCandidateDelayForTest(0);
     }
 
     // Only the web relay works: the session runs over it, both ends' legs
@@ -497,12 +506,41 @@ private slots:
     // 2026-10-15: the same over a direct pair, every path open: the window
     // leaving the service at its own open ended every introduction the
     // service brokered, not only the relayed ones.
-    void aSlowCoreStillOpensOverADirectPair_data() { windowRows(); }
+    // PR 616: the window races, as a real window dials a paired Core, and
+    // both orders ICE can settle in are run on every pass. Direct first
+    // (the web relay's datagrams held back): the session opens on the
+    // direct pair. Relay first (the far end's signalled candidates held
+    // back on each connection that has the web relay's leg): the session
+    // opens on the web relay, and the window's better-path search moves it
+    // to a direct pair at the first step of its schedule.
+    void aSlowCoreStillOpensOverADirectPair_data()
+    {
+        QTest::addColumn<bool>("olderWindow");
+        QTest::addColumn<bool>("relayFirst");
+        QTest::newRow("this window, direct first") << false << false;
+        QTest::newRow("this window, relay first") << false << true;
+        QTest::newRow("older window, direct first") << true << false;
+        QTest::newRow("older window, relay first") << true << true;
+    }
     void aSlowCoreStillOpensOverADirectPair()
     {
         QFETCH(bool, olderWindow);
+        QFETCH(bool, relayFirst);
+        // Direct first: as aDirectPairStillWins, the relay's pair cannot
+        // succeed before the direct one. Relay first: the direct pairs are
+        // not formed until the web relay's pair has been nominated.
+        constexpr int kRelayHoldMs = 3000;
+        constexpr int kDirectDelayMs = 3000;
+        // The first step of the better-path search, then a whole new
+        // connection through the service, then the move.
+        constexpr int kUpgradeWaitMs = PathRacer::kUpgradeRetryMs.front() + kDirectDelayMs
+            + kServiceConnectBudgetMs + SwitchableTransport::kSwitchDeadlineMs;
         RendezvousDialer::setLeavesServiceAtOpenForTest(olderWindow);
         StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        if (!relayFirst) {
+            relay.holdDatagramsMs = kRelayHoldMs;
+        }
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
         RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
@@ -510,6 +548,9 @@ private slots:
         CoreThroughService station;
         QVERIFY2(station.start(service), qPrintable(station.failure));
         DataChannelTransport::setAnswererOpenDelayForTest(1000);
+        if (relayFirst) {
+            DataChannelTransport::setDirectCandidateDelayForTest(kDirectDelayMs);
+        }
 
         QTemporaryDir keyDir;
         auto key = std::make_shared<const ClientDeviceIdentity>(
@@ -519,10 +560,23 @@ private slots:
         SettingsProxy proxy;
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = station.rendezvous->client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        window.setServiceRoute(route);
         QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
+        EndWatch ends;
+        ends.watch(&window);
+        // A paired Core's identity key: the window races (link 21.1).
+        window.connectToStation(QUrl(), QString(), QString(), false,
+                                StationIdentity::fingerprintOf(
+                                    station.core.server->stationIdentity().publicKeySpki()));
         QString why;
-        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
-        QCOMPARE(window.pathRank(), int(PathRacer::ServiceDirect));
+        QVERIFY2(waitForHandshake(window, kServiceConnectBudgetMs, &why, nullptr, &ends),
+                 qPrintable(why));
+        QCOMPARE(window.pathRank(), int(relayFirst ? PathRacer::Floor : PathRacer::ServiceDirect));
         if (!olderWindow) {
             // This window's own fix, with or without the Core's: it stays
             // with the service until the Core speaks, so no introduction
@@ -530,6 +584,16 @@ private slots:
             const QString code = ended.isEmpty() ? QString() : ended.first().at(1).toString();
             QVERIFY2(ended.isEmpty(),
                      qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
+        }
+        if (relayFirst) {
+            // waitUntil, not QTRY_*: it ends at its bound (or the session's
+            // end) and says why, where a QTRY_* wait runs on for twice its
+            // timeout, past QTest's function timeout at this bound.
+            QVERIFY2(waitUntil([&window] { return window.pathRank() == PathRacer::ServiceDirect; },
+                               kUpgradeWaitMs, ends,
+                               QStringLiteral("the session to move to a direct pair"), &why),
+                     qPrintable(QStringLiteral("%1 (rank %2)").arg(why).arg(window.pathRank())));
+            QVERIFY(window.isHandshakeComplete());
         }
         window.disconnectFromStation(QStringLiteral("test done"));
     }
