@@ -5889,6 +5889,12 @@ void SpectrumWidget::blankWaterfallRow(QVector<float>& rowDbm)
     // TX-era row) for ~10–18 s while baseline slowly re-converges —
     // visible as a frozen, striped waterfall.  Freezing the ring across TX
     // means post-TX rows are compared against the pre-TX baseline instead.
+    // NereusSDR: the lines above are AetherSDR's (SpectrumWidget.cpp:8426-8433
+    // [@1e0718ad]). Here, as in AetherSDR's own setTransmitting (:7750-7751),
+    // the ring is frozen while keyed and then cleared at the end of the
+    // transmission (setMoxOverlay, resetWaterfallBlanker), so receive does
+    // not use the pre-TX baseline: it re-learns one, and nothing is blanked
+    // for the first 8 receive rows.
     if (m_wfBlankerEnabled && !(m_moxOverlay || m_txActiveForTest)) {
         const int binCount = rowDbm.size();
         const WaterfallImpulseBlanker::Decision decision = m_wfBlanker.judge(
