@@ -14,10 +14,13 @@
 // read 1792 samples of whatever memory followed each chunk. The Core logged
 // 28544 non-finite output samples and the S-meter stuck at +3086 dBm.
 //
-// The first case stands in for that memory with NaN after each short chunk,
-// so the over-read is seen every run. The second measures what a NaN burst
-// that does reach WDSP leaves behind: the audio flushes out, and the log
-// line records the meters.
+// The first cases stand in for that memory with NaN after each short chunk,
+// so the over-read is seen every run; with NB1 on, the blanker used to write
+// its old block size back into the caller's legs as well, so that case also
+// checks nothing past the chunk is written. A chunk longer than the channel's
+// block (the move the other way) is silenced too. The last case measures
+// what a NaN burst that does reach WDSP leaves behind: the audio flushes
+// out, and the log line records the meters.
 //
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -35,6 +38,7 @@
 #include "core/SampleRateCatalog.h"
 #include "core/WdspEngine.h"
 #include "core/WdspTypes.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -54,6 +58,7 @@ struct Tally {
     long nonFinite = 0;
     long lastNonFiniteBlock = -1;
     double peak = 0.0;
+    long tailWrites = 0;   // blocks that wrote into the leg past the chunk
 };
 
 // Feeds `blocks` chunks of `chunk` samples of a 1 kHz tone at `rateHz` to
@@ -78,6 +83,14 @@ void feed(RxChannel* rx, int rateHz, int chunk, int blocks, long& n, Tally& t,
         std::fill(outI.begin(), outI.end(), 0.0f);
         std::fill(outQ.begin(), outQ.end(), 0.0f);
         rx->processIq(inI.data(), inQ.data(), outI.data(), outQ.data(), chunk, outSize);
+        bool wrote = false;
+        for (int i = chunk; i < kLegLength; ++i) {
+            const auto k = static_cast<std::size_t>(i);
+            wrote = wrote || !std::isnan(inI[k]) || !std::isnan(inQ[k]);
+            inI[k] = nan;
+            inQ[k] = nan;
+        }
+        t.tailWrites += wrote ? 1 : 0;
         for (int i = 0; i < kLegLength; ++i) {
             const float a = outI[static_cast<std::size_t>(i)];
             const float b = outQ[static_cast<std::size_t>(i)];
@@ -115,43 +128,44 @@ private slots:
     // reading may be non-finite, and the tone plays after the change.
     void aChunkShorterThanTheChannelsInputNeverReachesWdsp()
     {
-        RxChannel* rx = m_engine->createRxChannel(0, bufferSizeForRate(kOldRateHz), kDspSize,
-                                                  kOldRateHz, kDspRateHz, kOutRateHz);
+        moveToASlowerStream(0, NbMode::Off);
+    }
+
+    // The same with NB1 on. The blanker runs before fexchange2, in place on
+    // the caller's legs, over its own buffsize (nob.c:437-446): a short chunk
+    // used to be blanked and written 1792 samples past its end.
+    void withNb1OnNothingPastTheChunkIsReadOrWritten()
+    {
+        moveToASlowerStream(4, NbMode::NB);
+    }
+
+    // The move the other way: a 1536 kHz stream's 2048-sample chunks reach a
+    // channel still built for 256. In bounds, but at the wrong rate, so the
+    // chunks are silenced and counted rather than played.
+    void aChunkLongerThanTheChannelsInputIsSilenced()
+    {
+        RxChannel* rx = m_engine->createRxChannel(5, bufferSizeForRate(kNewRateHz), kDspSize,
+                                                  kNewRateHz, kDspRateHz, kOutRateHz);
         QVERIFY(rx);
         rx->setActive(true);
-        QCOMPARE(rx->wdspInputSize(), bufferSizeForRate(kOldRateHz));
-
         long n = 0;
         Tally before;
-        feed(rx, kOldRateHz, bufferSizeForRate(kOldRateHz), 200, n, before, 100);
-        QCOMPARE(before.nonFinite, 0L);
-        QVERIFY2(before.peak > 0.0, "the channel never played the tone at 1536 kHz");
-
-        // The window: the worker drains the 192 kHz stream into a channel
-        // still built for 2048 samples (27 ms on the Core, about 20 chunks).
+        feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 300, n, before, 200);
+        QVERIFY(before.peak > 0.0);
+        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
         Tally window;
         long m = 0;
-        feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 40, m, window);
+        feed(rx, kOldRateHz, bufferSizeForRate(kOldRateHz), 40, m, window);
+        QCOMPARE(rx->takeInputSizeMismatchChunks(), 40LL); // new API
+        qInfo("longer chunks: output peak %.6f, non-finite %ld", window.peak, window.nonFinite);
+        QCOMPARE(window.nonFinite, 0L);
+        QCOMPARE(window.peak, 0.0);
+        m_engine->destroyRxChannel(5);
+    }
 
-        QVERIFY(m_engine->setRxChannelRate(0, kNewRateHz));
-        QCOMPARE(rx->wdspInputSize(), bufferSizeForRate(kNewRateHz));
-
-        Tally after;
-        feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 800, m, after, 600);
-
-        const double sPeak = rx->getMeter(RxMeterType::SignalPeak);
-        const double sAvg = rx->getMeter(RxMeterType::SignalAvg);
-        qInfo("non-finite output samples: %ld in the window, %ld after the rate change "
-              "(last in block %ld); peak %.4f before, %.4f after; S-meter peak %.1f dB, "
-              "average %.1f dB",
-              window.nonFinite, after.nonFinite, after.lastNonFiniteBlock, before.peak,
-              after.peak, sPeak, sAvg);
-
-        QCOMPARE(window.nonFinite + after.nonFinite, 0L);
-        QVERIFY2(meterSane(sPeak) && meterSane(sAvg), "the S-meter holds a non-finite reading");
-        QVERIFY2(after.peak > 0.0, "the channel never played the tone at 192 kHz");
-
-        m_engine->destroyRxChannel(0);
+    void theCoreLogLineCountsTheSilencedChunks()
+    {
+        QCOMPARE(RadioModel::inputSizeMismatchLogLine(1, 20, 2048), QStringLiteral("Slice B (index 1): 20 I/Q chunk(s) silenced since the last report, their size not WDSP's input block of 2048 samples")); // new API
     }
 
     // What NaN does once it is inside a channel. A burst of whole NaN
@@ -203,6 +217,52 @@ private slots:
     }
 
 private:
+    void moveToASlowerStream(int id, NbMode nb)
+    {
+        RxChannel* rx = m_engine->createRxChannel(id, bufferSizeForRate(kOldRateHz), kDspSize,
+                                                  kOldRateHz, kDspRateHz, kOutRateHz);
+        QVERIFY(rx);
+        rx->setActive(true);
+        rx->setNbMode(nb);
+        QCOMPARE(rx->wdspInputSize(), bufferSizeForRate(kOldRateHz));
+
+        long n = 0;
+        Tally before;
+        feed(rx, kOldRateHz, bufferSizeForRate(kOldRateHz), 200, n, before, 100);
+        QCOMPARE(before.nonFinite, 0L);
+        QVERIFY2(before.peak > 0.0, "the channel never played the tone at 1536 kHz");
+        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
+
+        // The window: the worker drains the 192 kHz stream into a channel
+        // still built for 2048 samples (27 ms on the Core, about 20 chunks).
+        Tally window;
+        long m = 0;
+        feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 40, m, window);
+        QCOMPARE(rx->takeInputSizeMismatchChunks(), 40LL); // new API
+
+        QVERIFY(m_engine->setRxChannelRate(id, kNewRateHz));
+        QCOMPARE(rx->wdspInputSize(), bufferSizeForRate(kNewRateHz));
+
+        Tally after;
+        feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 800, m, after, 600);
+        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
+
+        const double sPeak = rx->getMeter(RxMeterType::SignalPeak);
+        const double sAvg = rx->getMeter(RxMeterType::SignalAvg);
+        qInfo("NB %d: non-finite output samples: %ld in the window, %ld after the rate change "
+              "(last in block %ld); %ld window blocks wrote past the chunk; peak %.4f before, "
+              "%.4f after; S-meter peak %.1f dB, average %.1f dB",
+              static_cast<int>(nb), window.nonFinite, after.nonFinite, after.lastNonFiniteBlock,
+              window.tailWrites, before.peak, after.peak, sPeak, sAvg);
+
+        QCOMPARE(window.tailWrites, 0L);
+        QCOMPARE(window.nonFinite + after.nonFinite, 0L);
+        QVERIFY2(meterSane(sPeak) && meterSane(sAvg), "the S-meter holds a non-finite reading");
+        QVERIFY2(after.peak > 0.0, "the channel never played the tone at 192 kHz");
+
+        m_engine->destroyRxChannel(id);
+    }
+
     QTemporaryDir m_directory;
     std::unique_ptr<WdspEngine> m_engine;
 };

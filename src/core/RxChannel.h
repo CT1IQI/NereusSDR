@@ -87,7 +87,8 @@
 //                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. NereusSDR-original.
 //   2026-10-23 - wdspInputSize(): the input block WDSP's channel holds, so
-//                 processIq keeps a chunk shorter than it out of fexchange2
+//                 processIq keeps a chunk of another size out of fexchange2,
+//                 counted for the Core log (takeInputSizeMismatchChunks)
 //                 (a slice moved to a slower stream before its rate change
 //                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -355,7 +356,7 @@ public:
     // in_size, then SetInputBuffsize on each rate change. bufferSize() is the
     // carry, which runs ahead of the lane; this follows WDSP itself.
     // WdspEngine sets it on the lane, while the DSP worker is quiesced.
-    // processIq never hands fexchange2 a shorter chunk.
+    // processIq hands fexchange2 only a chunk of exactly this size.
     int wdspInputSize() const { return m_wdspInputSize.load(std::memory_order_acquire); }
     void setWdspInputSize(int inSize) { m_wdspInputSize.store(inSize, std::memory_order_release); }
 
@@ -1259,6 +1260,14 @@ public:
     // periodic owner only: RadioModel's load sampler.
     qint64 takeOutputNonFiniteSamples() const;
 
+    // 2026-10-23: chunks processIq silenced since the previous take because
+    // their size did not match wdspInputSize(). A short window while a slice
+    // changes stream is expected; a count that keeps growing means a drain
+    // threshold and the channel's input block have parted for good.
+    // Diagnostics only. Lock-free; one periodic owner only: RadioModel's
+    // load sampler.
+    qint64 takeInputSizeMismatchChunks() const;
+
     // --- Per-mode DSP-Options live-apply (Task 4.2) ---
     //
     // Called when SliceModel emits dspModeChanged. Reads per-mode DSP-Options
@@ -1522,6 +1531,9 @@ private:
     // 2026-10-22: non-finite samples in fexchange2's output since the last
     // takeOutputNonFiniteSamples (written on the DSP thread, relaxed).
     mutable std::atomic<qint64> m_outputNonFinite{0};
+    // 2026-10-23: chunks the input-size guard silenced since the last
+    // takeInputSizeMismatchChunks (written on the DSP thread, relaxed).
+    mutable std::atomic<qint64> m_inputSizeMismatchChunks{0};
 
 #ifdef HAVE_DFNR
     // DeepFilterNet3 filter instance (Sub-epic C-1, Task 9).

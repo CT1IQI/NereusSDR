@@ -690,6 +690,10 @@
 //                noise-reduction calls over 50 ms with the stages that ran,
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - inputSizeMismatchLogLine: the Core log counts I/Q chunks a
+//                slice's channel silenced because their size was not its
+//                WDSP input block. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2291,6 +2295,12 @@ public:
 
     /// The non-finite output line reportDspDiagnostics logs (lcDsp).
     static QString outputNonFiniteLogLine(int sliceIndex, qint64 samples);
+
+    /// 2026-10-23: the line reportDspDiagnostics logs (lcDsp), at most every
+    /// kOutputNonFiniteLogIntervalMs per slice, for I/Q chunks processIq
+    /// silenced because their size was not the channel's WDSP input block
+    /// (RxChannel::takeInputSizeMismatchChunks).
+    static QString inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int wdspInputSize);
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
@@ -7772,6 +7782,9 @@ private:
         qint64 lastLogMs{-1};
     };
     QHash<int, OutputNonFiniteLog> m_outputNonFiniteLog;
+    // 2026-10-23: the same, for chunks silenced by RxChannel's input-size
+    // guard (pending counts chunks).
+    QHash<int, OutputNonFiniteLog> m_inputSizeMismatchLog;
     QThread*         m_dspThread{nullptr};
     std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
     int m_waveformTxSlice = -1;
