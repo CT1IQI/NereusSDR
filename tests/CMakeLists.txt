@@ -4136,6 +4136,13 @@ target_link_libraries(tst_radio_discovery_probe PRIVATE Qt6::Network)
 nereus_add_test(tst_pinned_radio_wait)
 target_link_libraries(tst_pinned_radio_wait PRIVATE Qt6::Network)
 
+# Review of PR 600, Important 2: a walk running when a local connection
+# starts sends nothing until it is Connected (or failed) plus the quiet
+# period, then finishes (RadioDiscovery connect hold, RadioModel).
+nereus_add_test(tst_discovery_connect_hold fakes/P1FakeRadio.cpp)
+target_link_libraries(tst_discovery_connect_hold PRIVATE Qt6::Network)
+target_compile_definitions(tst_discovery_connect_hold PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3Q Task 4: AddCustomRadioDialog — SKU model picker + action buttons ──
 # 4 tests: Auto-detect at index 0, all 16 SKUs present in modelCombo,
 # saveOfflineButton + probeButton objectNames accessible via findChild.
@@ -5986,7 +5993,10 @@ nereus_add_test(tst_telemetry_history)
 # R-R3-35: clock offset from probe exchanges and the measured audio delay.
 nereus_add_test(tst_audio_clock_estimator)
 # R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
+# NSDC v2: its loss case reads the codec's scenes (DisplayCodecV2Vectors.h).
 nereus_add_test(tst_remote_display_presenter)
+target_compile_definitions(tst_remote_display_presenter PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 nereus_add_test(tst_remote_waterfall_cadence)
 # NEREUS_TRACE_MAIN_STALLS: slow GUI-thread deliveries log MAIN_STALL; off, nothing.
 nereus_add_test(tst_gui_application_stall_trace)
@@ -7038,7 +7048,7 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
-# + band + modeGroup). Five tests:
+# + band + modeGroup). Six tests:
 #   parsesSampleAdif (10 QSO bundled fixture, first/last callsigns
 #   resolve, SSB -> PHONE / CW -> CW group normalisation),
 #   emitsFinishedSignal (QSignalSpy waits parseFileAsync ->
@@ -7046,6 +7056,8 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 #   skipsHeaderSection (no <adif_ver> / <programid> leakage),
 #   handlesCaseInsensitiveTags (mixed-case <CALL> / <Call> /
 #   <call> + <EOR> / <eor> / <Eor> all parse),
+#   handlesTypeIndicatorTags (<CALL:6:S> / <FREQ:6:N> typed tags
+#   parse like plain ones; Longpath tests/tst_adif_parser.cpp [@383f058]),
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
@@ -10432,6 +10444,22 @@ nereus_add_test(tst_remote_audio_status)
 
 # Remote Daemon R3, Task 3: bounded native trace, waterfall, and DSS codec.
 nereus_add_test(tst_display_codec)
+# Display codec v2 Task 1: the NSDC v2 encoder, its bound and the golden
+# vectors in tests/data/display_codec_v2/vectors.json, which the regen
+# target writes into NEREUS_DISPLAY_CODEC_V2_REGEN_OUT only.
+nereus_add_test(tst_display_codec_v2)
+target_compile_definitions(tst_display_codec_v2 PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+nereus_add_test(tst_display_codec_v2_regen)
+target_compile_definitions(tst_display_codec_v2_regen PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+# Display codec v2 Task 3: negotiation. displayCodecVersion goes only to a
+# peer that declared displayCodec 2, last before coreBuildInfo; the media
+# start may ask for version 2 only then; RemoteDisplayCodecV2 off withdraws
+# it from every peer.
+nereus_add_test(tst_display_codec_v2_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 nereus_add_test(tst_display_budget)
 # iPhone app Task 76 (R-IOS-31): the Core's display budget shared among
 # the devices signed in to it, holder first.
@@ -11067,6 +11095,10 @@ endif()
 # document, section 12.8): the Core's relay-leg runner over the relay
 # fixtures in rendezvous/conformance/v1/relay/, and the leg's own rules.
 # Loopback only.
+# 2026-10-22: Happy Eyeballs (RFC 8305) for WebSockets to a host name: a
+# silent IPv6 address (a full accept queue on ::1) and an answering IPv4 one,
+# the in-process CONNECT tunnel, and the cases left as before. Loopback only.
+nereus_add_test(tst_happy_eyeballs EXTRA_LABELS session)
 nereus_add_test(tst_relay_leg EXTRA_LABELS session)
 target_compile_definitions(tst_relay_leg PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
