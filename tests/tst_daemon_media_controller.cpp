@@ -6,6 +6,11 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: keyframeEveryFrameSendsRowsThatDecodeAlone (the bench
+//               setting DisplayKeyframeEveryFrame), and the diagnostics
+//               line's framesSent, keyframesSent, meanFrameBytes and
+//               keyframeEveryFrame. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: Display send thread: on the real transport the failing
 //               display send is the display thread's, made while this
 //               thread is held, so the close and the error drain together;
@@ -787,6 +792,8 @@ private slots:
     void pureSignalKeepsItsDisplayShareWhileSpectrumIsContended();
     void legacyPansOnTwoSourcesKeepTheirEvenShare();
     void failedDisplayAttemptDebitsCreditAndRecoversWithKeyframe();
+    void keyframeEveryFrameSendsRowsThatDecodeAlone_data();
+    void keyframeEveryFrameSendsRowsThatDecodeAlone();
     void exhaustedDisplayCreditDoesNotBlockAudioRtp();
     void mediaPeerReplacementDoesNotMintDisplayCredit();
     void mixedSpectrumAndPs3StayWithinInjectedIntervalBoundsAndBothProgress();
@@ -2263,6 +2270,173 @@ void TstDaemonMediaController::realMicLineTornDownWhileItsThreadDelivers()
     QCOMPARE(ownerMicPackets, 0);
 }
 
+// Bench setting DisplayKeyframeEveryFrame (JJ approved 2026-10-22, option C
+// of the waterfall loss study). On: every frame the transport takes is a
+// keyframe no larger than the endpoint's admitted frame bytes, each decodes
+// alone whatever was lost before it, a window's keyframe request is still
+// counted and honoured and sends no second frame, and the diagnostics count
+// every frame as a keyframe. Off: today's delta chain, which a loss stops
+// until a keyframe comes.
+void TstDaemonMediaController::keyframeEveryFrameSendsRowsThatDecodeAlone_data()
+{
+    QTest::addColumn<bool>("everyFrame");
+    QTest::newRow("on") << true;
+    QTest::newRow("off") << false;
+}
+
+void TstDaemonMediaController::keyframeEveryFrameSendsRowsThatDecodeAlone()
+{
+    QFETCH(bool, everyFrame);
+    Harness harness;
+    harness.useManualDisplayTicks();
+    QVERIFY(!harness.controller.displayKeyframeEveryFrame());
+    harness.controller.setDisplayKeyframeEveryFrame(everyFrame);
+    QCOMPARE(harness.controller.displayKeyframeEveryFrame(), everyFrame);
+    harness.establishSession();
+    QSignalSpy controls(&harness.client, &StationClient::mediaControlReceived);
+    harness.startReadyPeer();
+    // A new peer's counts start from zero and carry the setting.
+    DaemonDisplayDiagnostics expectedStart;
+    expectedStart.displayKeyframeEveryFrame = everyFrame;
+    QCOMPARE(harness.controller.displayDiagnostics(), expectedStart);
+    constexpr int kPixels = 1024;
+    QJsonObject request = subscription(
+        71, 1, harness.sliceId, harness.radio.streamCentreHz(harness.streamIndex));
+    request.insert(QStringLiteral("pixels"), kPixels);
+    request.insert(QStringLiteral("spanHz"), 192000.0);
+    request.insert(QStringLiteral("fftSize"), 4096);
+    QVERIFY(harness.client.sendMediaControl(request, harness.client.sessionEpoch()));
+    QTRY_VERIFY(([&] {
+        harness.feedRadio();
+        return !messageFor(controls, QStringLiteral("context"), 71).isEmpty();
+    })());
+    const QJsonObject context = messageFor(controls, QStringLiteral("context"), 71);
+
+    int cycle = 0;
+    const auto sendOneFrame = [&harness, &cycle] {
+        const qsizetype before = harness.mediaTransport->displays.size();
+        QTRY_VERIFY(([&] {
+            harness.feedRadio(0.125 + 0.0078125 * (++cycle % 16));
+            harness.sendDisplayTick();
+            return harness.mediaTransport->displays.size() == before + 1;
+        })());
+    };
+    constexpr int kFrames = 24;
+    for (int i = 0; i < kFrames; ++i) {
+        sendOneFrame();
+    }
+
+    // A window asks for a keyframe: counted and honoured, and the next turn
+    // sends one frame, not two.
+    QVERIFY(harness.client.sendMediaControl({
+        {QStringLiteral("op"), QStringLiteral("keyframe")},
+        {QStringLiteral("connectionId"), QLatin1String(kConnectionId)},
+        {QStringLiteral("endpointId"), 71},
+        {QStringLiteral("contextGeneration"),
+         context.value(QStringLiteral("contextGeneration")).toInteger()}},
+        harness.client.sessionEpoch()));
+    QTRY_COMPARE(harness.controller.displayDiagnostics().displayKeyframeRequests, quint64{1});
+    QCOMPARE(harness.controller.displayDiagnostics().displayKeyframeRequestsRefused, quint64{0});
+    sendOneFrame();
+    QVERIFY(isKeyframe(harness.mediaTransport->displays.constLast()));
+    const qsizetype afterRequest = harness.mediaTransport->displays.size();
+    harness.sendDisplayTick();
+    QCoreApplication::processEvents();
+    QCOMPARE(harness.mediaTransport->displays.size(), afterRequest);
+    sendOneFrame();
+    QCOMPARE(isKeyframe(harness.mediaTransport->displays.constLast()), everyFrame);
+
+    const QList<QByteArray> sent = harness.mediaTransport->displays;
+    QCOMPARE(sent.size(), kFrames + 2);
+    // The budget: a keyframe is the worst case the endpoint was charged for,
+    // so none is ever dropped as oversized.
+    const std::optional<SpectrumDisplayCost> cost = spectrumDisplayCost(kPixels, 60, false);
+    QVERIFY(cost.has_value());
+    quint64 bytes = 0;
+    int keyframes = 0;
+    for (const QByteArray& frame : sent) {
+        QVERIFY(frame.size() <= static_cast<qsizetype>(cost->maximumFrameBytes));
+        bytes += static_cast<quint64>(frame.size());
+        if (isKeyframe(frame)) {
+            ++keyframes;
+        }
+    }
+    if (everyFrame) {
+        QCOMPARE(keyframes, sent.size());
+        for (const QByteArray& frame : sent) {
+            QCOMPARE(frame.size(), int(cost->maximumFrameBytes));
+        }
+    } else {
+        // The first frame and the requested one.
+        QCOMPARE(keyframes, 2);
+        QVERIFY(isKeyframe(sent.constFirst()));
+    }
+
+    // Each surviving frame after a loss: with the setting on it decodes
+    // alone, to exactly what a decoder that never saw another frame makes
+    // of it. Off, a loss waits for a keyframe.
+    const QList<QList<bool>> dropPatterns = [&] {
+        QList<QList<bool>> patterns;
+        QList<bool> everyOther, bursts, scattered;
+        quint32 lcg = 12345;
+        bool inBurst = false;
+        for (qsizetype i = 0; i < sent.size(); ++i) {
+            everyOther.append(i % 2 == 1);
+            bursts.append(i % 7 >= 2 && i % 7 <= 4);
+            // Gilbert-Elliott-like: bursts that start and end at random.
+            lcg = lcg * 1664525u + 1013904223u;
+            const quint32 roll = (lcg >> 16) % 100;
+            inBurst = inBurst ? roll < 67 : roll < 15;
+            scattered.append(i != 0 && inBurst);
+        }
+        patterns << everyOther << bursts << scattered;
+        return patterns;
+    }();
+    for (const QList<bool>& dropped : dropPatterns) {
+        DisplayCodecDecoder chain;
+        bool lossSeen = false;
+        int waits = 0;
+        for (qsizetype i = 0; i < sent.size(); ++i) {
+            if (dropped.at(i)) {
+                lossSeen = true;
+                continue;
+            }
+            const DisplayCodecDecodeResult decoded = chain.decode(sent.at(i));
+            if (everyFrame) {
+                QCOMPARE(decoded.disposition, DisplayCodecDisposition::Accepted);
+                DisplayCodecDecoder alone;
+                const DisplayCodecDecodeResult fresh = alone.decode(sent.at(i));
+                QCOMPARE(fresh.disposition, DisplayCodecDisposition::Accepted);
+                QCOMPARE(decoded.frame.traceDbm, fresh.frame.traceDbm);
+                QCOMPARE(decoded.frame.waterfallDbm, fresh.frame.waterfallDbm);
+                QCOMPARE(decoded.frame.encoderSequence, fresh.frame.encoderSequence);
+            } else if (decoded.disposition == DisplayCodecDisposition::NeedKeyframe) {
+                ++waits;
+            }
+        }
+        QVERIFY(lossSeen);
+        if (!everyFrame) {
+            QVERIFY(waits > 0);
+        }
+    }
+
+    // The diagnostics count what went, and the line says so.
+    const DaemonDisplayDiagnostics diagnostics = harness.controller.displayDiagnostics();
+    QCOMPARE(diagnostics.displayFramesSent, quint64(sent.size()));
+    QCOMPARE(diagnostics.displayKeyframesSent, quint64(keyframes));
+    QCOMPARE(diagnostics.displayBytesSent, bytes);
+    QCOMPARE(diagnostics.displayKeyframeEveryFrame, everyFrame);
+    const QString line = daemonDisplayDiagnosticsLine(diagnostics);
+    QVERIFY2(line.contains(QStringLiteral(" framesSent=%1 keyframesSent=%2 meanFrameBytes=%3"
+                                          " keyframeEveryFrame=%4")
+                               .arg(sent.size())
+                               .arg(keyframes)
+                               .arg(QString::number(double(bytes) / double(sent.size()), 'f', 1),
+                                    everyFrame ? QStringLiteral("on") : QStringLiteral("off"))),
+             qPrintable(line));
+    harness.finish();
+}
+
 void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
 {
     DaemonDisplayDiagnostics small;
@@ -2276,6 +2450,8 @@ void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
                             " queuedLate=0 keyframeRequests=0"
                             " keyframeRequestsRefused=0"
                             " sourceFramesReplaced=0 panFramesReplaced=0"
+                            " framesSent=0 keyframesSent=0 meanFrameBytes=-1"
+                            " keyframeEveryFrame=off"
                             " senderGapMaxMs=-1"));
 
     DaemonDisplayDiagnostics largest;
@@ -2290,6 +2466,10 @@ void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
     largest.displaySourceFramesReplaced = 40;
     largest.displayPanFramesReplaced = 9;
     largest.displaySenderGapMaxUs = 141'200;
+    largest.displayFramesSent = 3;
+    largest.displayKeyframesSent = 3;
+    largest.displayBytesSent = 9361 + 9361 + 9360;
+    largest.displayKeyframeEveryFrame = true;
     QCOMPARE(daemonDisplayDiagnosticsLine(largest),
              QStringLiteral("largestKeyframe=9361 bytes/11 fragments"
                             " largestDelta=9361 bytes/11 fragments"
@@ -2297,6 +2477,8 @@ void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
                             " queuedLate=3 keyframeRequests=12"
                             " keyframeRequestsRefused=1"
                             " sourceFramesReplaced=40 panFramesReplaced=9"
+                            " framesSent=3 keyframesSent=3 meanFrameBytes=9360.7"
+                            " keyframeEveryFrame=on"
                             " senderGapMaxMs=141.2"));
     QCOMPARE(IMediaTransport::sctpFragmentCount(876), quint64(1));
     QCOMPARE(IMediaTransport::sctpFragmentCount(877), quint64(2));
