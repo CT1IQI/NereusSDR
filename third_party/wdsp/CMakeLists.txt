@@ -60,6 +60,7 @@ set(WDSP_SOURCES
     src/linux_port.c
     src/lmath.c
     src/main.c
+    src/meter.c
     src/matchedCW.c
     src/meter.c
     src/meterlog10.c
@@ -223,6 +224,7 @@ set(WDSP_EDITED_SOURCES
     src/iqc.c
     src/linux_port.c
     src/main.c
+    src/meter.c
     src/netinterface_stub.c
     src/nnet.c
     src/nnio.c
