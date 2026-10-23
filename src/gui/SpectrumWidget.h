@@ -1311,8 +1311,8 @@ public:
     // (default off) and WaterfallBlankingThresholdDb (default 6).
     // From AetherSDR src/gui/SpectrumWidget.h:412-413 [@1e0718ad]
     // NereusSDR design (follow-up wave F1): the threshold is in dB, 1 to
-    // 20: how far above the baseline a row's mean power must be to be
-    // replaced. AetherSDR's is a factor of raw tile intensity, which has
+    // 20: how far above the baseline a row's level (the median of its
+    // pixels in dB) must be to be replaced. AetherSDR's is a factor of raw tile intensity, which has
     // no dB meaning; it is not carried over and its key
     // (WaterfallBlankingThreshold) is no longer read.
     bool waterfallBlankingEnabled() const { return m_wfBlankerEnabled; }

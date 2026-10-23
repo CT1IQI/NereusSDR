@@ -10,6 +10,15 @@
 // burst such as an electric fence charger's click, which draws one thin
 // line across every bin), and so to be replaced by the last accepted row?
 //
+// Based on AetherSDR's waterfall blanker:
+//   src/gui/SpectrumWidget.{h,cpp} @ 1e0718ad, and its later
+//   src/gui/WaterfallImpulseBlanker.h @ 52b6f7ad (#6117)
+//   https://github.com/ten9876/AetherSDR
+// AetherSDR project lead: Jeremy Fielder (KK7GWY, ten9876).
+// The upstream files have no top-of-file licence header; AetherSDR's
+// project-level GNU GPLv3 LICENSE applies. No upstream code is copied
+// here; the decision below is NereusSDR's own.
+//
 // NereusSDR design. The feature and its workflow come from AetherSDR's
 // blanker (#277: a ring of 32 row levels as the rolling baseline, 8 rows of
 // history before anything is called a burst, the burst replaced by the last
@@ -49,7 +58,7 @@
 //                 most two rows in a row and lets only accepted rows into
 //                 the baseline, so a loud SSB station no longer freezes
 //                 the waterfall while a fence charger's line is still
-//                 hidden.
+//                 hidden. Fix wave: AetherSDR block-level attribution.
 // =================================================================
 
 #include <array>

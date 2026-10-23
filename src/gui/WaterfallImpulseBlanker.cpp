@@ -3,6 +3,9 @@
 // src/gui/WaterfallImpulseBlanker.cpp  (NereusSDR)
 // =================================================================
 // The design and what it keeps from AetherSDR are in the header.
+// Based on AetherSDR's waterfall blanker, https://github.com/ten9876/AetherSDR
+// (project lead Jeremy Fielder, KK7GWY; project-level GNU GPLv3, no per-file
+// header upstream).
 // Modification history (NereusSDR):
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): new. Median row level, median

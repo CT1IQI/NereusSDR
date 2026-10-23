@@ -13,11 +13,12 @@
 //     while the baseline follows, then judged against the new floor;
 //   - nothing is blanked before 8 rows of history;
 //   - a row with no finite bin is not blanked and leaves the baseline as
-//     it was;
+//     it was, and a pulse with most bins not finite is judged on the rest;
 //   - the threshold is the edge in dB at 6 dB.
 // Modification history (NereusSDR):
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-//                 (Claude Opus 5.5): new.
+//                 (Claude Opus 5.5): new. Fix wave: the partial
+//                 non-finite case is a pulse with -inf in 500 of 800 bins.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -234,15 +235,34 @@ private slots:
         QVERIFY(expect(judge(b, rows.row(10.0f)), Verdict::Blanked, 23));
         QVERIFY(expect(judge(b, rows.row()), Verdict::Accepted, 24));
 
-        // A row with some bins not finite is judged on the rest.
-        std::vector<float> partial = rows.row();
-        for (int i = 0; i < kBins; i += 3) {
-            partial[std::size_t(i)] = -std::numeric_limits<float>::infinity();
-        }
-        QVERIFY(expect(judge(b, partial), Verdict::Accepted, 25));
-
         // An empty row counts as no finite bin.
         QCOMPARE(b.judge(nullptr, 0, 3.0f).verdict, Verdict::NoFiniteBins);
+    }
+
+    // ── A pulse with most bins not finite is judged on the rest ─────────
+    //
+    // A +10 dB pulse with -inf in 500 of its 800 bins is still blanked.
+    // Were the -inf bins counted, the row's median would be -inf and the
+    // pulse would be drawn. Only -inf here, never NaN, so the filter is
+    // what is under test, not how a selection orders NaN.
+    void mostlyNonFinitePulse_judgedOnTheRest()
+    {
+        WaterfallImpulseBlanker b;
+        Rows rows;
+        for (int i = 0; i < 32; ++i) {
+            judge(b, rows.row());
+        }
+        std::vector<float> mostlyEmptyPulse = rows.row(10.0f);
+        int emptied = 0;
+        for (int i = 0; i < kBins; ++i) {
+            if (i % 8 < 5) {
+                mostlyEmptyPulse[std::size_t(i)] = -std::numeric_limits<float>::infinity();
+                ++emptied;
+            }
+        }
+        QCOMPARE(emptied, 500);
+        QVERIFY(expect(judge(b, mostlyEmptyPulse), Verdict::Blanked, 32));
+        QVERIFY(expect(judge(b, rows.row()), Verdict::Accepted, 33));
     }
 
     // ── The threshold is the edge in dB ─────────────────────────────────
