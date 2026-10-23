@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 noise floor's measurement row (m_noiseFloorMeasurement)
+//                 and the wing placeholders fillWidebandWings marks.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -3190,10 +3193,13 @@ private:
     /// picks the DDC noise reference the wings are calibrated against. Passed
     /// per call rather than read off a member because the trace and the
     /// waterfall choose their detectors independently.
+    /// `placeholder`, when given, is set true for each wing pixel filled
+    /// with the window's bottom because there was no wideband data for it.
     void fillWidebandWings(QVector<float>& linearPixels,
                            int islandFirstPx, int islandLastPx,
                            double dbmOffset,
-                           SpectrumDetector detector) const;
+                           SpectrumDetector detector,
+                           QVector<bool>* placeholder = nullptr) const;
 
 
 
@@ -3583,6 +3589,13 @@ private:
     QVector<float> m_extendedWaterfallLinearPixels;
     NereusSDR::SpectrumAvenger m_extendedSpectrumAvenger;
     NereusSDR::SpectrumAvenger m_extendedWaterfallAvenger;
+    // The extended trace's wing pixels that held no data this frame.
+    QVector<bool> m_extendedSpectrumPlaceholder;
+    // The row the noise floor measures when it is not the trace: the trace
+    // unaveraged while its average warms up, with NaN for wing pixels that
+    // hold no data. Fresh only for the frame the local reduce wrote it.
+    QVector<float> m_noiseFloorMeasurement;
+    bool m_noiseFloorMeasurementFresh {false};
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default

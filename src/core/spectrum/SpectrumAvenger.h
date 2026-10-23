@@ -39,6 +39,11 @@
 //                                    daemon build split (R1).  No logic
 //                                    change.  AI-assisted transformation via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  warmingUp() and toDb(): whether the
+//                                    recursive average still carries its
+//                                    starting value, and the unaveraged
+//                                    row, for the noise floor.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -153,6 +158,23 @@ public:
                double normOneHzDb,
                QVector<float>& pixelsOut);
 
+    /// NereusSDR, not in WDSP: the share of the recursive average (modes 1
+    /// and 3) still held by the starting value WDSP seeds it with (1e-12
+    /// linear, -160 dB log) at or below which the average counts as warm:
+    /// e^-4, four time constants. Mode 3 then reads within 1 dB of a band
+    /// 50 dB above its seed.
+    static constexpr double kWarmSeedShare = 0.018315638888734179;
+
+    /// Whether the average still carries enough of its starting value to
+    /// read below the band: true from a resize() or clear() until the
+    /// recursive average has run kWarmSeedShare down. The other modes are
+    /// warm after their first frame.
+    bool warmingUp() const { return m_seedShare > kWarmSeedShare; }
+
+    /// The row apply() would write with no averaging (mode 0), with no
+    /// correction and no normalisation: 10*log10(scale * tPixels[i]).
+    static void toDb(const QVector<float>& tPixels, double scale, QVector<float>& pixelsOut);
+
     int  numPixels()   const { return m_avSum.size(); }
     int  numAverage()  const { return m_numAverage; }
     int  availFrames() const { return m_availFrames; }
@@ -176,6 +198,8 @@ private:
     int m_avInIdx{0};
     int m_avOutIdx{0};
     int m_availFrames{0};
+    // The share of the average still held by its starting value.
+    double m_seedShare{1.0};
 };
 
 }  // namespace NereusSDR

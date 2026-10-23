@@ -12,8 +12,9 @@
 //   2026-09-28  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  A pan reads the band from its first
-//                                    frame with data. AI-assisted via
-//                                    Anthropic Claude Code.
+//                                    frame with data, also at Log
+//                                    Recursive. AI-assisted via Anthropic
+//                                    Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -135,6 +136,46 @@ private slots:
             w.updateSpectrumLinear(0, nothing, 2.0, -10.0);
         }
         QCOMPARE(w.nfLerpAverageForTest(), settled);
+    }
+
+    // PR 628 review: at Log Recursive (the default) the average starts at
+    // -160 dBm, so a fresh pan's first rows read below the band. The floor
+    // is within 3 dB of where it settles from the first frame, at 30 ms and
+    // at 650 ms.
+    void aPanAtLogRecursiveReadsTheBandFromItsFirstFrame_data()
+    {
+        QTest::addColumn<int>("averageTimeMs");
+        QTest::newRow("30 ms") << 30;
+        QTest::newRow("650 ms") << 650;
+    }
+
+    void aPanAtLogRecursiveReadsTheBandFromItsFirstFrame()
+    {
+        QFETCH(int, averageTimeMs);
+        const auto fresh = [averageTimeMs](SpectrumWidget& w) {
+            w.setFrequencyRange(kPanCentreHz, kPanSpanHz);
+            w.setDdcCenterFrequency(kPanCentreHz);
+            w.setSampleRate(kPanSpanHz);
+            w.setSpectrumDetector(SpectrumDetector::Peak);
+            w.setSpectrumAveraging(SpectrumAveraging::LogRecursive);
+            w.setSpectrumAverageTimeMs(averageTimeMs);
+        };
+        SpectrumWidget settledPan;
+        fresh(settledPan);
+        for (int frame = 0; frame < 600; ++frame) {
+            feed(settledPan);
+        }
+        const float settled = settledPan.nfLerpAverageForTest();
+        QVERIFY2(settled > -150.0f, qPrintable(QString::number(settled)));
+
+        SpectrumWidget w;
+        fresh(w);
+        for (int frame = 0; frame < 120; ++frame) {
+            feed(w);
+            QVERIFY2(std::abs(w.nfLerpAverageForTest() - settled) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1: %2, settled %3")
+                                    .arg(frame).arg(w.nfLerpAverageForTest()).arg(settled)));
+        }
     }
 
     void offDoesNothing()

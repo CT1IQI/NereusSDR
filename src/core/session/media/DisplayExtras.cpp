@@ -39,6 +39,11 @@
 //                                    the per-band AGC levels of the old
 //                                    mode. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  The noise floor measures the frame's
+//                                    measurement row when it has one (the
+//                                    trace unaveraged while its average
+//                                    warms up, wings with no data marked).
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayExtras.h"
@@ -860,7 +865,13 @@ DisplayExtrasFrame DisplayExtrasProcessor::process(const DisplayCodecFrame& fram
     const bool noiseFloorAgcAsked = m_request.waterfallLevels
         && m_request.waterfallLevels->mode == WaterfallLevelMode::NoiseFloorAgc;
     if (noiseFloorAsked || noiseFloorAgcAsked) {
-        m_noiseFloor.process(trace, fps, inputs.nowMs);
+        // The endpoint's measurement row while the trace's average warms up
+        // from its starting value, or while a wing holds no data
+        // (DisplayCodecFrame::measurementDbm): the floor never measures the
+        // average's warm-up or a placeholder.
+        const QVector<float>& measured = frame.measurementDbm.size() == trace.size()
+            ? frame.measurementDbm : trace;
+        m_noiseFloor.process(measured, fps, inputs.nowMs);
     }
     if (noiseFloorAsked) {
         if (m_request.noiseFloor->fastAttack) {

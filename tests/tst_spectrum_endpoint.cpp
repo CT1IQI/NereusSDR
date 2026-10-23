@@ -774,6 +774,78 @@ private slots:
         }
     }
 
+    // PR 628 review: the frame carries the row the noise floor measures
+    // while the trace's Log Recursive average warms up from -160 dBm: the
+    // trace with no averaging. Once warm it is empty (the trace itself),
+    // and a new picture warms up again.
+    void theMeasurementRowIsTheUnaveragedTraceWhileTheAverageWarmsUp()
+    {
+        SpectrumEndpointSourceContext source = sourceContext();
+        SpectrumEndpointRequest req = request();
+        req.framesPerLine = 1;
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        SpectrumEndpointRequest plain = req;
+        plain.trace.averageMode = 0;
+        SpectrumEndpoint unaveraged;
+        QVERIFY(unaveraged.configure(plain, source));
+
+        qint64 at = 0;
+        const auto next = [&](SpectrumEndpoint& ep, qint64 when) {
+            return ep.consume(frame(source, when), 0.0);
+        };
+        at += 40'000'000;
+        auto first = next(endpoint, at);
+        auto reference = next(unaveraged, at);
+        QVERIFY(first.has_value() && reference.has_value());
+        QVERIFY(reference->measurementDbm.isEmpty());
+        QCOMPARE(first->measurementDbm, reference->traceDbm);
+        QVERIFY(first->traceDbm != reference->traceDbm);
+        // 0.5^6 = 0.016 is under e^-4: warm on the sixth frame.
+        int warmFrames = 1;
+        for (; warmFrames < 20; ++warmFrames) {
+            at += 40'000'000;
+            const auto out = next(endpoint, at);
+            QVERIFY(out.has_value());
+            if (out->measurementDbm.isEmpty()) { break; }
+        }
+        QCOMPARE(warmFrames, 5);
+
+        source.sourceGeneration += 1;
+        source.contextGeneration += 1;
+        QVERIFY(endpoint.configure(req, source));
+        QVERIFY(endpoint.tracePicture() == SpectrumPictureKind::New);
+        at += 40'000'000;
+        const auto restarted = next(endpoint, at);
+        QVERIFY(restarted.has_value());
+        QCOMPARE(restarted->measurementDbm.size(), restarted->traceDbm.size());
+    }
+
+    // PR 628 review: an extended view's wing pixels with no wideband data
+    // hold the request's minimum in the trace and no data (NaN) in the row
+    // the noise floor measures.
+    void anExtendedViewMarksItsPlaceholderWingsAsNoData()
+    {
+        const SpectrumEndpointSourceContext source = extendedSourceContext();
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(extendedRequest(), source));
+        const auto out = endpoint.consume(frame(source, 1'000'000'000), 0.0);
+        QVERIFY(out.has_value());
+        QCOMPARE(out->measurementDbm.size(), out->traceDbm.size());
+        int placeholders = 0;
+        for (int x = 0; x < out->traceDbm.size(); ++x) {
+            if (std::isnan(out->measurementDbm.at(x))) {
+                ++placeholders;
+                QCOMPARE(out->traceDbm.at(x), extendedRequest().minDbm);
+            } else {
+                QCOMPARE(out->measurementDbm.at(x), out->traceDbm.at(x));
+            }
+        }
+        QVERIFY2(placeholders > out->traceDbm.size() / 2, qPrintable(QString::number(placeholders)));
+    }
+
     void extendedPermissionAndActivationRemainSeparate()
     {
         SpectrumEndpointRequest unavailablePermission = request();

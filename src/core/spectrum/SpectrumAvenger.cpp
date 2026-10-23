@@ -32,6 +32,10 @@
 //                                    window depth, idempotent configuration
 //                                    and changed-depth accumulator reset.
 //                                    AI-assisted via OpenAI Codex.
+//   2026-10-23  J.J. Boyd / KG4VCF  Track the share of the recursive
+//                                    average its starting value still
+//                                    holds (warmingUp), and toDb().
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -102,6 +106,7 @@ void SpectrumAvenger::resize(int numPixels)
         m_availFrames = 0;
         m_avInIdx = 0;
         m_avOutIdx = 0;
+        m_seedShare = 1.0;
         return;
     }
     // resize() + fill() instead of assign() — QVector::assign was added in
@@ -117,6 +122,7 @@ void SpectrumAvenger::resize(int numPixels)
     m_availFrames = 0;
     m_avInIdx = 0;
     m_avOutIdx = 0;
+    m_seedShare = 1.0;
 }
 
 void SpectrumAvenger::setNumAverage(int numFrames)
@@ -159,6 +165,16 @@ void SpectrumAvenger::clear()
     m_availFrames = 0;
     m_avInIdx = 0;
     m_avOutIdx = 0;
+    m_seedShare = 1.0;
+}
+
+void SpectrumAvenger::toDb(const QVector<float>& tPixels, double scale, QVector<float>& pixelsOut)
+{
+    // As apply()'s case 0 with no correction.
+    pixelsOut.resize(tPixels.size());
+    for (int i = 0; i < tPixels.size(); ++i) {
+        pixelsOut[i] = static_cast<float>(tenLog10(scale * tPixels[i]));
+    }
 }
 
 // From Thetis WDSP analyzer.c:464-554 [v2.10.3.13] — avenger() verbatim port.
@@ -275,6 +291,13 @@ void SpectrumAvenger::apply(const QVector<float>& tPixels,
     if (normalize) {
         for (i = 0; i < num_pixels; i++)
             pixelsOut[i] += static_cast<float>(normOneHzDb);
+    }
+    // NereusSDR, not in WDSP: the recursive modes keep avBackmult of the
+    // starting value each frame; the others hold none of it after a frame.
+    if (avMode == 1 || avMode == 3) {
+        m_seedShare *= std::clamp(avBackmult, 0.0, 1.0);
+    } else {
+        m_seedShare = 0.0;
     }
 }
 

@@ -17,6 +17,12 @@
 //   2026-09-22  J.J. Boyd / KG4VCF  Remote daemon R3, Core extraction.
 //                                    AI-assisted transformation via
 //                                    OpenAI Codex.
+//   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
+//                                    noise floor measures: unaveraged while
+//                                    the average warms up, and with the
+//                                    placeholder wing pixels marked as no
+//                                    data. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 /*
@@ -77,7 +83,8 @@ public:
                 double adcRateHz,
                 double stationOffsetDb,
                 double floorDbm,
-                QVector<float>& out);
+                QVector<float>& out,
+                QVector<float>* measurementOut = nullptr);
 
     /// Pixel span [first, last] occupied by the clipped listenable DDC island
     /// in an extended window, or {0, -1} when it does not overlap the window.
@@ -86,6 +93,8 @@ public:
 private:
     ReducerConfig m_cfg;
     QVector<float> m_linearPixels;
+    // Pixels this frame filled with floorDbm because it had no data for them.
+    QVector<bool> m_placeholder;
     SpectrumAvenger m_avenger;
 };
 

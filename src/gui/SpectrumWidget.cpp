@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 pan's noise floor measures the trace unaveraged while
+//                 its average warms up, and not the extended view's wing
+//                 pixels that hold no data.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -613,6 +617,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace NereusSDR {
@@ -5017,7 +5022,14 @@ void SpectrumWidget::processNoiseFloor()
     // (design section 8.3).  Upstream does the same: its accumulator takes
     // max_copy from the pristine array while everything else in that loop
     // takes the dented max - display.cs:5256-5259 [v2.10.3.15].
-    const QVector<float>& src = measurementPixels();
+    // While the trace's average warms up from its starting value, or while
+    // an extended view's wing holds no data, the local reduce leaves the row
+    // to measure in m_noiseFloorMeasurement for this frame only (as the
+    // Core's DisplayCodecFrame::measurementDbm).
+    const bool useMeasurement = m_noiseFloorMeasurementFresh
+        && m_noiseFloorMeasurement.size() == measurementPixels().size();
+    m_noiseFloorMeasurementFresh = false;
+    const QVector<float>& src = useMeasurement ? m_noiseFloorMeasurement : measurementPixels();
     if (src.isEmpty()) { return; }
     const int fps = overlayFrameRate();
     if (m_noiseFloor.process(src, fps, displayNowMs())) {
@@ -6977,7 +6989,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         // Keep the extracted reducer as the normal display path and as the
         // implementation shared with nereusd.
         m_spectrumReducer.reduce(binsLinear, windowEnb, dbmOffset,
-                                 m_renderedPixels);
+                                 m_renderedPixels, &m_noiseFloorMeasurement);
+        m_noiseFloorMeasurementFresh = !m_noiseFloorMeasurement.isEmpty();
     } else {
         // Extended mode composes the DDC island and the wideband wings in
         // linear power before the common avenger runs.
@@ -6995,7 +7008,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                 invEnb, 0.0, static_cast<double>(sliceCount), 0.0);
         }
         fillWidebandWings(m_extendedSpectrumLinearPixels, islandFirstPx,
-                          islandLastPx, dbmOffset, m_spectrumDetector);
+                          islandLastPx, dbmOffset, m_spectrumDetector,
+                          &m_extendedSpectrumPlaceholder);
         if (cfg.averageMode == SpectrumAvenger::kTimeWindowMode) {
             m_extendedSpectrumAvenger.setNumAverage(cfg.averageFrames);
         }
@@ -7004,6 +7018,27 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
             avengerMode(m_spectrumAveraging),
             static_cast<double>(m_spectrumAverageAlpha), dbmScale,
             noCorrection, false, 0.0, m_renderedPixels);
+        // The row the noise floor measures, as the Core's
+        // ExtendedSpectrumReducer writes it: unaveraged while the average
+        // warms up, and no data (NaN) where a wing had none.
+        const bool anyPlaceholder = std::find(m_extendedSpectrumPlaceholder.cbegin(),
+                                              m_extendedSpectrumPlaceholder.cend(), true)
+            != m_extendedSpectrumPlaceholder.cend();
+        m_noiseFloorMeasurement.clear();
+        if (m_extendedSpectrumAvenger.warmingUp()) {
+            SpectrumAvenger::toDb(m_extendedSpectrumLinearPixels, dbmScale,
+                                  m_noiseFloorMeasurement);
+        } else if (anyPlaceholder) {
+            m_noiseFloorMeasurement = m_renderedPixels;
+        }
+        if (anyPlaceholder && m_noiseFloorMeasurement.size() == m_extendedSpectrumPlaceholder.size()) {
+            for (int x = 0; x < m_noiseFloorMeasurement.size(); ++x) {
+                if (m_extendedSpectrumPlaceholder[x]) {
+                    m_noiseFloorMeasurement[x] = std::numeric_limits<float>::quiet_NaN();
+                }
+            }
+        }
+        m_noiseFloorMeasurementFresh = !m_noiseFloorMeasurement.isEmpty();
     }
 
     // FFT-replan crossfade (Option A from the 2026-05-08 design).  For the
@@ -9523,9 +9558,13 @@ std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) con
 void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
                                        int islandFirstPx, int islandLastPx,
                                        double dbmOffset,
-                                       SpectrumDetector detector) const
+                                       SpectrumDetector detector,
+                                       QVector<bool>* placeholder) const
 {
     const int width = static_cast<int>(linearPixels.size());
+    if (placeholder) {
+        placeholder->fill(false, std::max(width, 0));
+    }
     if (width <= 0 || m_bandwidthHz <= 0.0) {
         return;
     }
@@ -9569,6 +9608,7 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
         }
         if (!haveBins) {
             linearPixels[x] = static_cast<float>(floorLinear);
+            if (placeholder) { (*placeholder)[x] = true; }
             continue;
         }
 
@@ -9586,6 +9626,7 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
             // no wideband data to show there, so say so rather than smear
             // the nearest bin across it.
             linearPixels[x] = static_cast<float>(floorLinear);
+            if (placeholder) { (*placeholder)[x] = true; }
             continue;
         }
 

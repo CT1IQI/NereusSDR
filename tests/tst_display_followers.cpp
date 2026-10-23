@@ -184,10 +184,10 @@ private slots:
 
     // JJ 2026-10-23: the waterfall drew bright rows for about eight seconds
     // each time a display started or came back from a sound-only stretch;
-    // the floor read -194 dBm and climbed to -111. A display that starts,
-    // or resumes after frames with no data, reads the band from its first
-    // frame with data.
-    void aResumeAfterFramesWithNoDataReadsTheBandFromItsFirstRealFrame()
+    // the floor read -194 dBm and climbed to -111. A new follower takes no
+    // estimate from frames with no data and takes its first estimate from
+    // the first frame that has some.
+    void aNewFollowerTakesItsFirstEstimateFromTheFirstFrameWithData()
     {
         NoiseFloorFollower nf;
         const float inf = std::numeric_limits<float>::infinity();
@@ -236,6 +236,31 @@ private slots:
         QVERIFY(std::abs(nf.lerpAverage() + 111.0f) < 1.0f);
     }
 
+    // Pixels with no data do not count toward the quiet pixels the
+    // estimate needs: sensitivity 3 asks for 3 of the 20 measured pixels.
+    void theQuietPixelsNeededCountOnlyMeasuredPixels()
+    {
+        NoiseFloorFollower nf;
+        nf.process(flatRow(100, -110.0f), 30, 0);
+        QVector<float> row = flatRow(100, std::numeric_limits<float>::quiet_NaN());
+        for (int i = 0; i < 20; ++i) { row[i] = -100.0f; }
+        for (int i = 0; i < 3; ++i) { row[i] = -120.0f; }
+        nf.process(row, 30, 33);
+        // The three quiet pixels blend in: 10*log10((10^-12 + 10^-11) / 2).
+        const double expected = 10.0 * std::log10((std::pow(10.0, -12.0) + std::pow(10.0, -11.0)) * 0.5);
+        QVERIFY2(std::abs(nf.fftBinAverage() - static_cast<float>(expected)) < 1.0e-3f,
+                 qPrintable(QString::number(nf.fftBinAverage())));
+    }
+
+    // The seam seeds both estimates.
+    void setLerpAverageSeedsBothEstimates()
+    {
+        NoiseFloorFollower nf;
+        nf.setLerpAverage(-100.0f);
+        QCOMPARE(nf.lerpAverage(), -100.0f);
+        QCOMPARE(nf.fftBinAverage(), -100.0f);
+    }
+
     void fastAttackDriftsThreeDbAndTheLineFollowsAtOnce()
     {
         NoiseFloorFollower nf;
@@ -251,6 +276,8 @@ private slots:
     void fastAttackClearsOnlyOnceSettledAndASecondHasPassed()
     {
         NoiseFloorFollower nf;
+        // The seeding frame, so the frames below run the estimate.
+        nf.process(flatRow(100, -120.0f), 30, 0);
         nf.setFastAttack(true, 10'000);
         // Converged at once (the line follows in one frame), but only
         // 1000 ms have passed: the flag stays.
@@ -265,6 +292,8 @@ private slots:
     void retriggeringFastAttackRestartsItsSecond()
     {
         NoiseFloorFollower nf;
+        // The seeding frame, so the frames below run the estimate.
+        nf.process(flatRow(100, -120.0f), 30, 0);
         nf.setFastAttack(true, 0);
         nf.setFastAttack(true, 5'000);
         QVERIFY(!nf.process(flatRow(100, -120.0f), 30, 5'500));
@@ -275,6 +304,8 @@ private slots:
     void fastAttackStaysOnForTheMinimumItWasGiven()
     {
         NoiseFloorFollower nf;
+        // The seeding frame, so the frames below run the estimate.
+        nf.process(flatRow(100, -120.0f), 30, 0);
         nf.setFastAttack(true, 0, 5000);
         // Converged at once, but the 5000 ms have not passed.
         QVERIFY(!nf.process(flatRow(100, -120.0f), 30, 1001));
@@ -290,6 +321,8 @@ private slots:
     void aShorterTriggerDoesNotCutALongerFastAttackShort()
     {
         NoiseFloorFollower nf;
+        // The seeding frame, so the frames below run the estimate.
+        nf.process(flatRow(100, -120.0f), 30, 0);
         nf.setFastAttack(true, 0, 5000);
         // A band change at 2 s asks for the default second: 5 s still holds.
         nf.setFastAttack(true, 2000);

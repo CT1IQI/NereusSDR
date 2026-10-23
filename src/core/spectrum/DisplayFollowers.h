@@ -175,18 +175,22 @@ public:
     /// Returns true when fast attack cleared itself on this frame
     /// (display.cs:5904-5908), so a caller that draws the flag repaints.
     /// Pixels at or below kInitialDbm, or not finite, are no measurement; a
-    /// frame with nothing else changes nothing. The first frame with data
-    /// seeds both estimates from its median.
+    /// frame with nothing else changes nothing, and the quiet pixels the
+    /// estimate needs are counted against the measured ones. The first
+    /// frame with data seeds both estimates from its median. A caller whose
+    /// trace is averaged passes the unaveraged row while its average warms
+    /// up (SpectrumReducer::reduce's measurementOut).
     bool process(const QVector<float>& pixels, int fps, qint64 nowMs);
 
     /// Thetis m_fFFTBinAverageRX1: this frame's estimate.
     float fftBinAverage() const { return m_fftBinAverage; }
     /// Thetis m_fLerpAverageRX1: the smoothed estimate the line is drawn at.
     float lerpAverage() const { return m_lerpAverage; }
-    /// Seeds the smoothed estimate (SpectrumWidget's 3D floor test seam).
-    /// A seeded follower takes no seed from its first frame.
+    /// Seeds both estimates (SpectrumWidget's 3D floor test seam). A
+    /// seeded follower takes no seed from its first frame.
     void setLerpAverage(float dbm)
     {
+        m_fftBinAverage = dbm;
         m_lerpAverage = dbm;
         m_seeded = true;
     }

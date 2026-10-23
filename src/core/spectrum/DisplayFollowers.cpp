@@ -183,7 +183,9 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     // data yet, or a stream that paused; it would pull the estimate down to
     // the bottom of the scale, so it is skipped.
     const auto isMeasured = [](float dB) { return std::isfinite(dB) && dB > kInitialDbm; };
-    if (std::none_of(src.cbegin(), src.cend(), isMeasured)) { return false; }
+    const int measuredCount = static_cast<int>(
+        std::count_if(src.cbegin(), src.cend(), isMeasured));
+    if (measuredCount == 0) { return false; }
 
     // NereusSDR, based on Thetis display.cs:4639-4642 [v2.10.3.15] (both
     // estimates start at -200): Thetis climbs from there, 1 dB a frame out
@@ -194,14 +196,15 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     // estimate below runs from the next frame.
     if (!m_seeded) {
         QVector<float> measured;
-        measured.reserve(width);
+        measured.reserve(measuredCount);
         std::copy_if(src.cbegin(), src.cend(), std::back_inserter(measured), isMeasured);
         const auto middle = measured.begin() + measured.size() / 2;
         std::nth_element(measured.begin(), middle, measured.end());
         m_fftBinAverage = qBound(kInitialDbm, *middle, 200.0f);
         m_lerpAverage = m_fftBinAverage;
         m_seeded = true;
-        // As the end of this function (Thetis display.cs:5400-5404).
+        // As at the end of this function (Thetis display.cs:5400-5404
+        // [v2.10.3.15]).
         if (!m_fastAttack) {
             m_good = true;
         }
@@ -229,8 +232,10 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
 
     // Thetis default _NFsensitivity=3, clamp [0,19] (display.cs:5775+5783).
     // Match the formula exactly: int truncation of (width * sens / 20).
+    // NereusSDR: the width is the measured pixels, since pixels with no
+    // data cannot be quiet ones.
     const int requireSamples = qMax(1,
-        (width * m_sensitivity) / 20);
+        (measuredCount * m_sensitivity) / 20);
 
     // Per-frame fftBinAverage update — display.cs:5883-5896.
     if (averageCount >= requireSamples) {

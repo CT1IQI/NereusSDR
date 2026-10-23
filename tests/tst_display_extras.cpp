@@ -37,7 +37,8 @@
 //                                    endpoint started before the other.
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  A started display reads the band from
-//                                    its first frame with data.
+//                                    its first frame with data, at Log
+//                                    Recursive and with placeholder wings.
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -802,6 +803,145 @@ private slots:
                      qPrintable(QString::number(*out.noiseFloorDbm)));
             QVERIFY2(std::abs(out.waterfallLevelsDbm->first + 111.0f) < 1.0f,
                      qPrintable(QString::number(out.waterfallLevelsDbm->first)));
+        }
+    }
+
+    // PR 628 review: the trace's Log Recursive average (both clients'
+    // default) starts at -160 dBm on a new endpoint, so its first frames
+    // read below the band. A real endpoint at Log Recursive, 30 ms and
+    // 650 ms, into the display's extras: the floor and the NF-AGC low level
+    // are within 3 dB of the band from the first frame.
+    void aStartedDisplayAtLogRecursiveReadsTheBandFromItsFirstFrame_data()
+    {
+        QTest::addColumn<int>("averageTimeMs");
+        QTest::newRow("30 ms") << 30;
+        QTest::newRow("650 ms") << 650;
+    }
+
+    void aStartedDisplayAtLogRecursiveReadsTheBandFromItsFirstFrame()
+    {
+        QFETCH(int, averageTimeMs);
+        constexpr int kFps = 30;
+        // 1e-12 W through a peak detector with no offset: -120 dBm.
+        constexpr float kBandDbm = -120.0f;
+        SpectrumEndpointSourceContext source;
+        source.source = {2, FftTier::Wide};
+        source.sourceGeneration = 11;
+        source.fftBins = 1024;
+        source.centreHz = 14'200'000.0;
+        source.sampleRateHz = 192'000.0;
+        source.contextGeneration = 4;
+        SpectrumEndpointRequest request;
+        request.endpointId = 91;
+        request.source = source.source;
+        request.centreHz = source.centreHz;
+        request.spanHz = 96'000.0;
+        request.pixels = 64;
+        request.targetFps = kFps;
+        request.framesPerLine = 1;
+        request.trace.detector = SpectrumDetectorMode::Peak;
+        request.trace.averageMode = 3;
+        request.trace.averageAlpha = averageAlphaForTimeMs(averageTimeMs, kFps);
+        request.waterfall.detector = SpectrumDetectorMode::Peak;
+        request.waterfall.averageMode = 0;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(request, source));
+
+        Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
+        for (int i = 0; i < 8 * kFps; ++i) {
+            // Half way, the source restarts (a rate or FFT size change): the
+            // endpoint's reducers start again from -160 dBm and the floor
+            // the display carries must not follow them down.
+            if (i == 4 * kFps) {
+                source.sourceGeneration = 12;
+                source.contextGeneration = 5;
+                QVERIFY(endpoint.configure(request, source));
+                QVERIFY(endpoint.tracePicture() == SpectrumPictureKind::New);
+            }
+            DaemonSpectrumFrame input;
+            input.source = source.source;
+            input.generation = source.sourceGeneration;
+            input.centreHz = source.centreHz;
+            input.sampleRateHz = source.sampleRateHz;
+            input.producedAtNs = (static_cast<qint64>(i) + 1) * 34'000'000;
+            input.windowEnb = 1.0;
+            input.dbmOffset = 0.0;
+            input.binsLinear.fill(1.0e-12f, source.fftBins);
+            input.binsLinear[300] = 1.0e-5f;
+            const std::optional<DisplayCodecFrame> reduced = endpoint.consume(input, 0.0);
+            QVERIFY(reduced.has_value());
+            run.nowMs = static_cast<qint64>(i) * 34;
+            run.inputs.nowMs = run.nowMs;
+            const DisplayExtrasFrame out = run.station.process(*reduced, run.inputs);
+            QVERIFY2(std::abs(*out.noiseFloorDbm - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 floor %2")
+                                    .arg(i).arg(*out.noiseFloorDbm)));
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 low %2")
+                                    .arg(i).arg(out.waterfallLevelsDbm->first)));
+        }
+    }
+
+    // PR 628 review: before the first wideband frame, an extended view
+    // fills its wings with the request's minimum. Those pixels are no data,
+    // so the floor is the island's, not the bottom of the scale.
+    void anExtendedViewsPlaceholderWingsAreNotTheFloor()
+    {
+        SpectrumEndpointSourceContext source;
+        source.source = {2, FftTier::Wide};
+        source.sourceGeneration = 11;
+        source.fftBins = 1024;
+        source.centreHz = 500'000.0;
+        source.sampleRateHz = 1'000'000.0;
+        source.contextGeneration = 4;
+        source.wideband.available = true;
+        source.wideband.active = true;
+        source.wideband.physicalAdcIndex = 0;
+        source.wideband.filterChainIndex = 0;
+        source.wideband.sourceGeneration = 31;
+        source.wideband.adcRateHz = 4'000'000.0;
+        SpectrumEndpointRequest request;
+        request.endpointId = 91;
+        request.source = source.source;
+        request.centreHz = 500'000.0;
+        request.spanHz = 2'000'000.0;
+        request.pixels = 100;
+        request.targetFps = 30;
+        request.framesPerLine = 1;
+        request.extendedView = true;
+        request.trace.detector = SpectrumDetectorMode::Peak;
+        request.trace.averageMode = 0;
+        request.waterfall.detector = SpectrumDetectorMode::Peak;
+        request.waterfall.averageMode = 0;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(request, source));
+
+        Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
+        for (int i = 0; i < 60; ++i) {
+            DaemonSpectrumFrame input;
+            input.source = source.source;
+            input.generation = source.sourceGeneration;
+            input.centreHz = source.centreHz;
+            input.sampleRateHz = source.sampleRateHz;
+            input.producedAtNs = (static_cast<qint64>(i) + 1) * 34'000'000;
+            input.windowEnb = 1.0;
+            input.dbmOffset = 0.0;
+            input.binsLinear.fill(1.0e-12f, source.fftBins);
+            const std::optional<DisplayCodecFrame> reduced = endpoint.consume(input, 0.0);
+            QVERIFY(reduced.has_value());
+            // More than half the row is wing at the request's minimum.
+            if (i == 0) {
+                const auto atMinimum = std::count(reduced->traceDbm.cbegin(),
+                                                  reduced->traceDbm.cend(), request.minDbm);
+                QVERIFY2(atMinimum > reduced->traceDbm.size() / 2,
+                         qPrintable(QString::number(atMinimum)));
+            }
+            run.nowMs = static_cast<qint64>(i) * 34;
+            run.inputs.nowMs = run.nowMs;
+            const DisplayExtrasFrame out = run.station.process(*reduced, run.inputs);
+            QVERIFY2(std::abs(*out.noiseFloorDbm + 120.0f) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 floor %2")
+                                    .arg(i).arg(*out.noiseFloorDbm)));
         }
     }
 
