@@ -27,6 +27,9 @@
 // Modification history (NereusSDR):
 //   2026-10-22: NSDC v2 golden vector regenerator. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-22: The rejects decided at the version dispatch (bad magic,
+//               unsupported version, oversized, truncated in the magic).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -473,10 +476,10 @@ QJsonArray buildSequences()
         counters(0, 0, 0, 0, 1));
 
     // ---- The malformed set, one message each, from a fresh decoder ----
-    // Every message here has version 2 at offset 4, so it is the v2 path's
-    // to reject and count. Messages the version dispatch rejects before the
-    // v2 path (no version byte, another version) are left to the decoder's
-    // own tests.
+    // A structural reject counts malformed (section 9.2), whether the v2
+    // path finds it or the version dispatch does before any path is chosen
+    // (oversized, cut inside the magic or the version, bad magic, another
+    // version).
     const QByteArray base = whole(a(1));        // 0x1A, trace 8, waterfall 6
     const QByteArray baseWide = whole(b(1));    // 0x1E, wide 4
     const int tracePlaneBytes =
@@ -562,6 +565,19 @@ QJsonArray buildSequences()
         QByteArray message = base;
         setU16(message, 6, DisplayCodecEncoder::kHeaderBytes + 1);
         oneMalformed(QStringLiteral("malformed-header-size"), message, "malformed");
+    }
+    {
+        // Decided at the version dispatch.
+        QByteArray message = base;
+        message[0] = 'X';
+        oneMalformed(QStringLiteral("bad-magic"), message, "badMagic");
+        message = base;
+        message[4] = static_cast<char>(3);
+        oneMalformed(QStringLiteral("unsupported-version"), message, "unsupportedVersion");
+        message = base;
+        message.append(QByteArray(DisplayCodecEncoder::kMaxEncodedBytes + 1 - message.size(), '\0'));
+        oneMalformed(QStringLiteral("oversized"), message, "oversized");
+        oneMalformed(QStringLiteral("truncated-in-the-magic"), base.left(2), "truncated");
     }
     return out;
 }

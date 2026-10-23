@@ -3,19 +3,28 @@
 // tests/tst_display_codec_v2.cpp  (NereusSDR)
 // =================================================================
 //
-// Display codec v2 Task 1: the NSDC v2 encoder
-// (docs/architecture/2026-10-22-display-codec-v2-intra-rows.md, sections
-// 4 to 6 and 8). Hand-checked planes as literal bytes, the encoder's
-// deterministic choices, the plane bound for every length, the frame
-// layout, the one-message-or-two rule, the scene sizes of section 6, and
-// the golden vector file, which every plane and frame entry must re-encode
-// to exactly.
+// Display codec v2 (docs/architecture/2026-10-22-display-codec-v2-intra-rows.md).
+//
+// Task 1, the encoder (sections 4 to 6 and 8): hand-checked planes as
+// literal bytes, the encoder's deterministic choices, the plane bound for
+// every length, the frame layout, the one-message-or-two rule, the scene
+// sizes of section 6, and the golden vector file, which every plane and
+// frame entry must re-encode to exactly.
+//
+// Task 2, the decoder (sections 4.1, 4.2, 9.1, 9.2 and 10): the version
+// dispatch, the malformed set as literal messages, truncation at every
+// byte, structure before state, every row of the pairing table with its
+// disposition, frame count and counters, the golden sequences, a loss and
+// reordering simulation, and encode and decode benchmarks.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-22: NSDC v2 encoder, bound, split rule, scene sizes and golden
 //               vector checks. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //               Code.
+//   2026-10-22: NSDC v2 decoder: dispatch, malformed set, pairing, golden
+//               sequences, loss simulation and benchmarks. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -24,6 +33,8 @@
 
 #include <cstring>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/DisplayCodec.h"
@@ -170,6 +181,366 @@ QByteArray planeWithPayload(int blockCode, const QByteArray& payload)
 constexpr quint32 v1Plane(quint32 n) { return displayCodecWorstCasePlaneBytes(n); }
 constexpr quint32 v2Plane(quint32 n) { return displayCodecV2WorstCasePlaneBytes(n); }
 
+// ---- Decoder helpers ----
+
+constexpr quint32 kEndpointA = 0x00000101U; // trace 8, waterfall 6, no wide
+constexpr quint32 kEndpointB = 0x00000202U; // trace 8, waterfall 6, wide 4
+constexpr int kTraceLength = 8;
+constexpr int kWaterfallLength = 6;
+constexpr int kWideLength = 4;
+
+/// A small frame whose planes differ by generation and sequence, so a plane
+/// from the wrong frame never matches.
+DisplayCodecFrame pairFrame(quint32 sequence, quint32 generation = 3, bool withWide = false)
+{
+    QVector<quint8> trace(kTraceLength);
+    QVector<quint8> waterfall(kWaterfallLength);
+    QVector<quint8> wide(withWide ? kWideLength : 0);
+    for (int i = 0; i < trace.size(); ++i) {
+        trace[i] = static_cast<quint8>(sequence * 41U + generation * 13U + i * 17U + 3U);
+    }
+    for (int i = 0; i < waterfall.size(); ++i) {
+        waterfall[i] = static_cast<quint8>(sequence * 59U + generation * 5U + i * 31U + 90U);
+    }
+    for (int i = 0; i < wide.size(); ++i) {
+        wide[i] = static_cast<quint8>(sequence * 23U + generation * 7U + i * 11U + 180U);
+    }
+    DisplayCodecFrame frame = frameOf(trace, waterfall, wide, true, sequence);
+    frame.context.endpointId = withWide ? kEndpointB : kEndpointA;
+    frame.context.contextGeneration = generation;
+    frame.producerTimestamp = 1'000'000ULL * sequence + generation;
+    return frame;
+}
+
+DisplayCodecFrame wideFrame(quint32 sequence, quint32 generation = 5)
+{
+    return pairFrame(sequence, generation, true);
+}
+
+QByteArray wholeMessage(const DisplayCodecFrame& frame)
+{
+    return Vectors::buildMessage(frame, frame.context.wideSamples != 0 ? quint8 {0x1E} : quint8 {0x1A});
+}
+QByteArray rowPartMessage(const DisplayCodecFrame& frame)
+{
+    return Vectors::buildMessage(frame, frame.context.wideSamples != 0 ? quint8 {0x36} : quint8 {0x32});
+}
+QByteArray tracePartMessage(const DisplayCodecFrame& frame)
+{
+    return Vectors::buildMessage(frame, quint8 {0x2A});
+}
+QByteArray traceOnlyMessage(const DisplayCodecFrame& frame)
+{
+    return Vectors::buildMessage(frame, quint8 {0x08});
+}
+
+QVector<float> zeroRow(int n)
+{
+    return Vectors::dequantizeRow(QVector<quint8>(n, 0));
+}
+
+/// The trace of `frame`, waterfall advance clear, its waterfall and wide the
+/// given fills (a trace part whose row was lost, or a 0x08 frame).
+DisplayCodecFrame traceOnlyRelease(const DisplayCodecFrame& frame, const QVector<float>& waterfall,
+                                   const QVector<float>& wide)
+{
+    DisplayCodecFrame out = frame;
+    out.waterfallAdvance = false;
+    out.traceCarried = false;
+    out.waterfallDbm = waterfall;
+    out.wideDbm = wide;
+    return out;
+}
+
+/// The row planes of `frame`, waterfall advance set, the trace carried.
+DisplayCodecFrame rowOnlyRelease(const DisplayCodecFrame& frame, const QVector<float>& trace)
+{
+    DisplayCodecFrame out = frame;
+    out.waterfallAdvance = true;
+    out.traceCarried = true;
+    out.traceDbm = trace;
+    return out;
+}
+
+QString dispositionName(DisplayCodecDisposition disposition)
+{
+    switch (disposition) {
+    case DisplayCodecDisposition::Accepted: return QStringLiteral("accepted");
+    case DisplayCodecDisposition::NeedKeyframe: return QStringLiteral("needKeyframe");
+    case DisplayCodecDisposition::Rejected: return QStringLiteral("rejected");
+    case DisplayCodecDisposition::Held: return QStringLiteral("held");
+    }
+    return QString();
+}
+
+QString reasonName(DisplayCodecReason reason)
+{
+    switch (reason) {
+    case DisplayCodecReason::None: return QStringLiteral("none");
+    case DisplayCodecReason::InvalidInput: return QStringLiteral("invalidInput");
+    case DisplayCodecReason::NoHistory: return QStringLiteral("noHistory");
+    case DisplayCodecReason::SequenceGap: return QStringLiteral("sequenceGap");
+    case DisplayCodecReason::StaleSequence: return QStringLiteral("staleSequence");
+    case DisplayCodecReason::OldContext: return QStringLiteral("oldContext");
+    case DisplayCodecReason::ContextMismatch: return QStringLiteral("contextMismatch");
+    case DisplayCodecReason::BadMagic: return QStringLiteral("badMagic");
+    case DisplayCodecReason::UnsupportedVersion: return QStringLiteral("unsupportedVersion");
+    case DisplayCodecReason::UnknownFlags: return QStringLiteral("unknownFlags");
+    case DisplayCodecReason::Truncated: return QStringLiteral("truncated");
+    case DisplayCodecReason::Oversized: return QStringLiteral("oversized");
+    case DisplayCodecReason::Malformed: return QStringLiteral("malformed");
+    }
+    return QString();
+}
+
+/// "accepted/none/1" and the like, for one QCOMPARE per result.
+QString outcome(const DisplayCodecDecodeResult& result)
+{
+    return QStringLiteral("%1/%2/%3")
+        .arg(dispositionName(result.disposition), reasonName(result.reason))
+        .arg(result.frameCount);
+}
+
+DisplayCodecDecoderCounters counterValues(quint64 framesLost, quint64 partsLost,
+                                          quint64 staleMessages, quint64 duplicateParts,
+                                          quint64 malformed)
+{
+    DisplayCodecDecoderCounters counters;
+    counters.framesLost = framesLost;
+    counters.partsLost = partsLost;
+    counters.staleMessages = staleMessages;
+    counters.duplicateParts = duplicateParts;
+    counters.malformed = malformed;
+    return counters;
+}
+
+QString counterText(const DisplayCodecDecoderCounters& c)
+{
+    return QStringLiteral("framesLost %1 partsLost %2 staleMessages %3 duplicateParts %4 malformed %5")
+        .arg(c.framesLost)
+        .arg(c.partsLost)
+        .arg(c.staleMessages)
+        .arg(c.duplicateParts)
+        .arg(c.malformed);
+}
+
+/// Empty when the two frames carry the same header fields, flags and
+/// quantized planes; otherwise both, as JSON.
+QString frameDifference(const DisplayCodecFrame& actual, const DisplayCodecFrame& expected)
+{
+    const QJsonObject a = Vectors::frameToJson(actual);
+    const QJsonObject e = Vectors::frameToJson(expected);
+    if (a == e) { return QString(); }
+    return QStringLiteral("actual %1\nexpected %2")
+        .arg(QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact)),
+             QString::fromUtf8(QJsonDocument(e).toJson(QJsonDocument::Compact)));
+}
+
+/// What every v2 result must satisfy: no NeedKeyframe or NoHistory, and a
+/// frame count of 1 or 2 exactly on Accepted.
+bool wellFormed(const DisplayCodecDecodeResult& result)
+{
+    if (result.disposition == DisplayCodecDisposition::NeedKeyframe
+        || result.reason == DisplayCodecReason::NoHistory) {
+        return false;
+    }
+    if (result.disposition == DisplayCodecDisposition::Accepted) {
+        return result.reason == DisplayCodecReason::None && result.frameCount >= 1
+            && result.frameCount <= 2;
+    }
+    if (result.disposition == DisplayCodecDisposition::Held) {
+        return result.reason == DisplayCodecReason::None && result.frameCount == 0;
+    }
+    return result.frameCount == 0;
+}
+
+// ---- Loss simulation ----
+
+/// One scene run encoded frame by frame: each frame's quantized planes and
+/// timestamp, and its messages.
+struct EncodedRun {
+    int pixels {0};
+    std::vector<QVector<quint8>> traces;
+    std::vector<QVector<quint8>> waterfalls;
+    std::vector<quint64> timestamps;
+    std::vector<std::vector<QByteArray>> messages;
+    int splitFrames {0};
+};
+
+DisplayCodecFrame sceneFrame(int pixels, quint32 sequence, const QVector<float>& trace,
+                             const QVector<float>& waterfall)
+{
+    DisplayCodecFrame frame;
+    frame.context.endpointId = 7;
+    frame.context.contextGeneration = 1;
+    frame.context.minDbm = Vectors::kMinDbm;
+    frame.context.maxDbm = Vectors::kMaxDbm;
+    frame.context.traceSamples = static_cast<quint16>(pixels);
+    frame.context.waterfallSamples = static_cast<quint16>(pixels);
+    frame.encoderSequence = sequence;
+    frame.producerTimestamp = 33'000'000ULL * sequence;
+    frame.waterfallAdvance = true;
+    frame.traceDbm = trace;
+    frame.waterfallDbm = waterfall;
+    return frame;
+}
+
+EncodedRun encodeRun(Vectors::Scene scene, int frames)
+{
+    EncodedRun run;
+    Vectors::SceneRun source(scene);
+    run.pixels = source.pixels();
+    const quint32 admitted = spectrumDisplayCost(run.pixels, 30, false)->maximumFrameBytes;
+    QVector<float> trace;
+    QVector<float> waterfall;
+    for (int f = 0; f < frames; ++f) {
+        source.next(trace, waterfall);
+        const DisplayCodecFrame frame =
+            sceneFrame(run.pixels, static_cast<quint32>(f + 1), trace, waterfall);
+        DisplayCodecV2Encoding encoding = encodeDisplayCodecV2(frame, admitted);
+        if (encoding.split()) { ++run.splitFrames; }
+        run.traces.push_back(Vectors::quantizeRow(trace));
+        run.waterfalls.push_back(Vectors::quantizeRow(waterfall));
+        run.timestamps.push_back(frame.producerTimestamp);
+        run.messages.push_back(std::move(encoding.messages));
+    }
+    return run;
+}
+
+enum class LossModel { GilbertElliott, Random };
+
+/// Drops whole messages by datagram (ceil(bytes / 876) datagrams each), then
+/// swaps adjacent delivered messages with probability 0.1, and checks every
+/// released frame against the section 9.2 rules (see lossSimulation()).
+void runLoss(const EncodedRun& run, LossModel model, quint64 seed)
+{
+    constexpr double kLossRate = 0.02;
+    constexpr double kGoodFromBad = 1.0 / 3.0;                              // r: mean burst 3
+    constexpr double kBadFromGood = kGoodFromBad * kLossRate / (1.0 - kLossRate); // p
+    constexpr double kSwapProbability = 0.1;
+    constexpr int kDatagramBytes = IMediaTransport::kSctpDataPayloadBytes;
+
+    const int frames = static_cast<int>(run.messages.size());
+    Vectors::SplitMix64 rng(seed);
+    bool bad = false;
+    std::vector<std::pair<QByteArray, int>> delivered;
+    std::vector<bool> touched(static_cast<size_t>(frames), false);
+    int droppedMessages = 0;
+    for (int f = 0; f < frames; ++f) {
+        for (const QByteArray& message : run.messages[static_cast<size_t>(f)]) {
+            const int datagrams = static_cast<int>((message.size() + kDatagramBytes - 1) / kDatagramBytes);
+            bool lost = false;
+            for (int d = 0; d < datagrams; ++d) {
+                if (model == LossModel::GilbertElliott) {
+                    bad = bad ? rng.uniform() >= kGoodFromBad : rng.uniform() < kBadFromGood;
+                    lost = lost || bad;
+                } else if (rng.uniform() < kLossRate) {
+                    lost = true;
+                }
+            }
+            if (lost) {
+                touched[static_cast<size_t>(f)] = true;
+                ++droppedMessages;
+            } else {
+                delivered.emplace_back(message, f);
+            }
+        }
+    }
+    for (size_t i = 0; i + 1 < delivered.size();) {
+        if (rng.uniform() < kSwapProbability) {
+            std::swap(delivered[i], delivered[i + 1]);
+            touched[static_cast<size_t>(delivered[i].second)] = true;
+            touched[static_cast<size_t>(delivered[i + 1].second)] = true;
+            i += 2;
+        } else {
+            ++i;
+        }
+    }
+    QVERIFY(droppedMessages > 0);
+
+    DisplayCodecDecoder decoder;
+    std::vector<bool> complete(static_cast<size_t>(frames), false);
+    QVector<quint8> lastTrace;
+    QVector<quint8> lastWaterfall;
+    qint64 first = -1;
+    qint64 last = -1;
+    quint64 released = 0;
+    quint64 partials = 0;
+    for (const auto& delivery : delivered) {
+        const DisplayCodecDecodeResult result = decoder.decode(delivery.first);
+        QVERIFY2(wellFormed(result), qPrintable(outcome(result)));
+        if (result.disposition == DisplayCodecDisposition::Rejected) {
+            // Only reordering can reject: a part or frame now older than L.
+            QCOMPARE(reasonName(result.reason), QStringLiteral("staleSequence"));
+            continue;
+        }
+        for (int k = 0; k < result.frameCount; ++k) {
+            const DisplayCodecFrame& frame = k == 0 ? result.frame : result.secondFrame;
+            const qint64 sequence = frame.encoderSequence;
+            QVERIFY2(sequence > last, qPrintable(QStringLiteral("%1 after %2").arg(sequence).arg(last)));
+            QVERIFY(sequence >= 1 && sequence <= frames);
+            const auto f = static_cast<size_t>(sequence - 1);
+            QCOMPARE(frame.producerTimestamp, run.timestamps[f]);
+            const QVector<quint8> trace = Vectors::quantizeRow(frame.traceDbm);
+            const QVector<quint8> waterfall = Vectors::quantizeRow(frame.waterfallDbm);
+            QVERIFY(frame.wideDbm.isEmpty());
+            const QVector<quint8> noRow(run.pixels, 0);
+            if (frame.waterfallAdvance && !frame.traceCarried) {
+                // Whole or merged: the encoder's quantized input.
+                QVERIFY2(trace == run.traces[f], qPrintable(QString::number(sequence)));
+                QVERIFY2(waterfall == run.waterfalls[f], qPrintable(QString::number(sequence)));
+                complete[f] = true;
+            } else if (frame.traceCarried) {
+                // Row only: its row, the last released trace (q 0 when none).
+                QVERIFY(frame.waterfallAdvance);
+                QVERIFY2(waterfall == run.waterfalls[f], qPrintable(QString::number(sequence)));
+                QVERIFY2(trace == (lastTrace.isEmpty() ? noRow : lastTrace),
+                         qPrintable(QString::number(sequence)));
+                ++partials;
+            } else {
+                // Trace only: its trace, the last released row (q 0 when none).
+                QVERIFY2(trace == run.traces[f], qPrintable(QString::number(sequence)));
+                QVERIFY2(waterfall == (lastWaterfall.isEmpty() ? noRow : lastWaterfall),
+                         qPrintable(QString::number(sequence)));
+                ++partials;
+            }
+            lastTrace = trace;
+            lastWaterfall = waterfall;
+            if (first < 0) { first = sequence; }
+            last = sequence;
+            ++released;
+        }
+    }
+
+    const DisplayCodecDecoderCounters& counters = decoder.counters();
+    QVERIFY(released > 0);
+    QCOMPARE(counters.framesLost + released, static_cast<quint64>(last - first + 1));
+    QCOMPARE(counters.partsLost, partials);
+    QCOMPARE(counters.malformed, quint64 {0});
+    QCOMPARE(counters.duplicateParts, quint64 {0});
+    int untouched = 0;
+    for (int f = 0; f < frames; ++f) {
+        if (touched[static_cast<size_t>(f)]) { continue; }
+        ++untouched;
+        QVERIFY2(complete[static_cast<size_t>(f)],
+                 qPrintable(QStringLiteral("frame %1 arrived intact but was not released whole")
+                                .arg(f + 1)));
+    }
+    QVERIFY(untouched > 0);
+    qInfo().noquote() << QStringLiteral(
+                             "%1 px %2: %3 frames, %4 split, %5 messages dropped, %6 released, "
+                             "%7 partial; %8")
+                             .arg(run.pixels)
+                             .arg(model == LossModel::GilbertElliott ? QStringLiteral("Gilbert-Elliott")
+                                                                     : QStringLiteral("random"))
+                             .arg(frames)
+                             .arg(run.splitFrames)
+                             .arg(droppedMessages)
+                             .arg(released)
+                             .arg(partials)
+                             .arg(counterText(counters));
+}
+
 } // namespace
 
 class TstDisplayCodecV2 : public QObject {
@@ -193,6 +564,25 @@ private slots:
     void sceneSizes();
     void sceneRowIsAPureFunction();
     void goldenVectorsReencode();
+
+    // Task 2: the decoder.
+    void versionDispatch();
+    void malformedSet();
+    void truncationAtEveryByte();
+    void structureBeforeState();
+    void pairingWholeFrames();
+    void pairingSplitParts();
+    void pairingAroundTheHeldPart();
+    void pairingPartialFramesAndFills();
+    void pairingGenerationChange();
+    void resetClearsStateButNotCounters();
+    void goldenSequencesDecode();
+    void lossSimulation783();
+    void lossSimulation4096();
+    void benchmarkEncode_data();
+    void benchmarkEncode();
+    void benchmarkDecode_data();
+    void benchmarkDecode();
 };
 
 void TstDisplayCodecV2::quantizeHelpersRoundTrip()
@@ -741,6 +1131,724 @@ void TstDisplayCodecV2::goldenVectorsReencode()
                  entry.value(QStringLiteral("results")).toArray().size());
         QVERIFY(entry.value(QStringLiteral("counters")).isObject());
     }
+}
+
+// ---- Task 2: the decoder ----
+
+void TstDisplayCodecV2::versionDispatch()
+{
+    // Version 1 takes today's path: one frame, no counter moves, even for its
+    // own rejects. Version 2 takes the v2 path. The two keep separate state.
+    DisplayCodecDecoder decoder;
+    DisplayCodecEncoder encoder;
+    DisplayCodecFrame v1Frame = frameOf(qRow({10, 20, 30, 40}), qRow({50, 60, 70, 80}), {}, true, 1);
+    const QByteArray keyframe = encoder.encode(v1Frame);
+    QVERIFY(!keyframe.isEmpty());
+    DisplayCodecDecodeResult result = decoder.decode(keyframe);
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    QVERIFY(result.secondFrame.traceDbm.isEmpty());
+    QCOMPARE(outcome(decoder.decode(keyframe)), QStringLiteral("rejected/staleSequence/0"));
+    QByteArray v1Malformed = keyframe;
+    v1Malformed.append('\0');
+    QCOMPARE(outcome(decoder.decode(v1Malformed)), QStringLiteral("rejected/malformed/0"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+
+    // A v2 message of another endpoint and generation between two v1 frames
+    // disturbs neither path.
+    result = decoder.decode(wholeMessage(pairFrame(100, 9)));
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    v1Frame.encoderSequence = 2;
+    v1Frame.traceDbm = Vectors::dequantizeRow(qRow({11, 21, 31, 41}));
+    const QByteArray delta = encoder.encode(v1Frame);
+    QVERIFY(!encoder.lastEncodedKeyframe());
+    result = decoder.decode(delta);
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    QCOMPARE(Vectors::quantizeRow(result.frame.traceDbm), qRow({11, 21, 31, 41}));
+    result = decoder.decode(wholeMessage(pairFrame(101, 9)));
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+
+    // reset() clears both paths: v1 needs a keyframe again, and the v2
+    // context is gone (an older generation is now a first message).
+    decoder.reset();
+    v1Frame.encoderSequence = 3;
+    QCOMPARE(outcome(decoder.decode(encoder.encode(v1Frame))),
+             QStringLiteral("needKeyframe/noHistory/0"));
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(1, 8)))), QStringLiteral("accepted/none/1"));
+
+    // Another version, before either path.
+    QByteArray other = wholeMessage(pairFrame(2, 8));
+    for (const int version : {0, 3, 255}) {
+        other[4] = static_cast<char>(version);
+        QCOMPARE(outcome(decoder.decode(other)), QStringLiteral("rejected/unsupportedVersion/0"));
+    }
+    QCOMPARE(decoder.counters().malformed, quint64 {3});
+}
+
+void TstDisplayCodecV2::malformedSet()
+{
+    // Each a literal message to a fresh decoder: rejected with its reason,
+    // no frame, and the malformed counter alone at 1.
+    struct Case {
+        QString name;
+        QByteArray message;
+        DisplayCodecReason reason;
+    };
+    QList<Case> cases;
+    const DisplayCodecFrame frame = pairFrame(1);
+    const QByteArray base = wholeMessage(frame);          // 0x1A, trace 8, waterfall 6
+    const QByteArray baseWide = wholeMessage(wideFrame(1)); // 0x1E, wide 4
+    const int tracePlaneBytes =
+        static_cast<int>(encodeDisplayCodecV2Plane(Vectors::quantizeRow(frame.traceDbm)).size());
+    const int waterfallPlane = static_cast<int>(kHeader) + tracePlaneBytes;
+    const auto withByte = [](QByteArray message, int offset, int value) {
+        message[offset] = static_cast<char>(value);
+        return message;
+    };
+    const auto withU16 = [](QByteArray message, int offset, int value) {
+        message[offset] = static_cast<char>((value >> 8) & 0xff);
+        message[offset + 1] = static_cast<char>(value & 0xff);
+        return message;
+    };
+
+    // The version dispatch.
+    cases.append({QStringLiteral("bad magic"), withByte(base, 0, 'X'), DisplayCodecReason::BadMagic});
+    cases.append({QStringLiteral("bad magic, last byte"), withByte(base, 3, 'D'),
+                  DisplayCodecReason::BadMagic});
+    for (const int version : {0, 3, 255}) {
+        cases.append({QStringLiteral("version %1").arg(version), withByte(base, 4, version),
+                      DisplayCodecReason::UnsupportedVersion});
+    }
+    QByteArray oversized = base;
+    oversized.append(QByteArray(DisplayCodecEncoder::kMaxEncodedBytes + 1 - oversized.size(), '\0'));
+    cases.append({QStringLiteral("oversized"), oversized, DisplayCodecReason::Oversized});
+    for (int cut = 0; cut <= 4; ++cut) {
+        cases.append({QStringLiteral("cut at %1").arg(cut), base.left(cut), DisplayCodecReason::Truncated});
+    }
+
+    // Flags.
+    for (const int flags : {0x01, 0x40, 0x80, 0x1B, 0x5A, 0x9A, 0xFF}) {
+        cases.append({QStringLiteral("flags %1").arg(flags, 2, 16, QLatin1Char('0')),
+                      withByte(base, 5, flags), DisplayCodecReason::UnknownFlags});
+    }
+    const QList<int> valid {0x08, 0x1A, 0x1E, 0x2A, 0x32, 0x36};
+    for (int flags = 0; flags <= 0x3E; flags += 2) {
+        if (valid.contains(flags)) { continue; }
+        cases.append({QStringLiteral("flags %1").arg(flags, 2, 16, QLatin1Char('0')),
+                      withByte(base, 5, flags), DisplayCodecReason::Malformed});
+    }
+    cases.append({QStringLiteral("0x1A with a wide length"), withU16(base, 40, kWideLength),
+                  DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("0x1E with no wide length"), withU16(baseWide, 40, 0),
+                  DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("0x32 with a wide length"),
+                  withU16(rowPartMessage(frame), 40, kWideLength), DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("0x36 with no wide length"),
+                  withU16(rowPartMessage(wideFrame(1)), 40, 0), DisplayCodecReason::Malformed});
+
+    // The header.
+    cases.append({QStringLiteral("header size 41"), withU16(base, 6, 41), DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("header size 43"), withU16(base, 6, 43), DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("trace length 0"), withU16(base, 36, 0), DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("waterfall length 0 on a trace-only message"),
+                  withU16(traceOnlyMessage(frame), 38, 0), DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("trace length 4097"), withU16(base, 36, 4097),
+                  DisplayCodecReason::Malformed});
+    {
+        DisplayCodecFrame inverted = frame;
+        std::swap(inverted.context.minDbm, inverted.context.maxDbm);
+        cases.append({QStringLiteral("interval inverted"), Vectors::buildMessage(inverted, 0x1A, {}),
+                      DisplayCodecReason::Malformed});
+        DisplayCodecFrame infinite = frame;
+        infinite.context.maxDbm = std::numeric_limits<float>::infinity();
+        cases.append({QStringLiteral("interval not finite"), Vectors::buildMessage(infinite, 0x1A, {}),
+                      DisplayCodecReason::Malformed});
+    }
+
+    // The planes.
+    for (const int coding : {0, 1, 3, 255}) {
+        cases.append({QStringLiteral("trace plane coding %1").arg(coding),
+                      withByte(base, static_cast<int>(kHeader), coding), DisplayCodecReason::Malformed});
+        cases.append({QStringLiteral("waterfall plane coding %1").arg(coding),
+                      withByte(base, waterfallPlane, coding), DisplayCodecReason::Malformed});
+    }
+    for (const int code : {3, 255}) {
+        cases.append({QStringLiteral("block code %1").arg(code),
+                      withByte(base, static_cast<int>(kHeader) + 1, code), DisplayCodecReason::Malformed});
+    }
+    const int lastPayload = u16At(base, waterfallPlane + 2);
+    cases.append({QStringLiteral("payload overrun"), withU16(base, waterfallPlane + 2, lastPayload + 1),
+                  DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("byte after the last plane"), base + QByteArray(1, '\0'),
+                  DisplayCodecReason::Malformed});
+    cases.append({QStringLiteral("payload bytes after the last sample"),
+                  withU16(base, waterfallPlane + 2, lastPayload + 1) + QByteArray(1, '\0'),
+                  DisplayCodecReason::Malformed});
+    {
+        const int wideTraceBytes = static_cast<int>(
+            encodeDisplayCodecV2Plane(Vectors::quantizeRow(wideFrame(1).traceDbm)).size());
+        const int wideWaterfallPlane = static_cast<int>(kHeader) + wideTraceBytes;
+        const int widePlane = wideWaterfallPlane + 4 + u16At(baseWide, wideWaterfallPlane + 2);
+        QVERIFY(widePlane < baseWide.size());
+        cases.append({QStringLiteral("missing wide plane"), baseWide.left(widePlane),
+                      DisplayCodecReason::Malformed});
+    }
+    {
+        const DisplayCodecFrame small = frameOf(qRow({0, 255}), qRow({0, 255}), {}, true, 1);
+        const QByteArray good = encodeDisplayCodecV2Plane(qRow({0, 255}));
+        QByteArray pad = good;
+        pad[5] = static_cast<char>(0x09);
+        cases.append({QStringLiteral("nonzero pad"), Vectors::buildMessage(small, 0x1A, {pad, good}),
+                      DisplayCodecReason::Malformed});
+        pad[5] = static_cast<char>(0x0C);
+        cases.append({QStringLiteral("nonzero pad, high"), Vectors::buildMessage(small, 0x1A, {good, pad}),
+                      DisplayCodecReason::Malformed});
+        const QString zBits = QStringLiteral("00000000") + QStringLiteral("000")
+            + QString(256, QLatin1Char('0')) + QStringLiteral("1");
+        cases.append({QStringLiteral("z above 255"),
+                      Vectors::buildMessage(small, 0x1A, {planeWithPayload(0, bitsToBytes(zBits)), good}),
+                      DisplayCodecReason::Malformed});
+        // The same with 255 zeros is z = 255, a valid plane: the message is
+        // accepted, which shows the case above fails only on z.
+        const QString maxBits = QStringLiteral("00000000") + QStringLiteral("000")
+            + QString(255, QLatin1Char('0')) + QStringLiteral("1");
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(Vectors::buildMessage(
+                     small, 0x1A, {planeWithPayload(0, bitsToBytes(maxBits)), good}))),
+                 QStringLiteral("accepted/none/1"));
+    }
+
+    for (const Case& c : cases) {
+        DisplayCodecDecoder decoder;
+        const DisplayCodecDecodeResult result = decoder.decode(c.message);
+        QVERIFY2(outcome(result) == QStringLiteral("rejected/%1/0").arg(reasonName(c.reason)),
+                 qPrintable(QStringLiteral("%1: %2").arg(c.name, outcome(result))));
+        QVERIFY2(counterText(decoder.counters()) == counterText(counterValues(0, 0, 0, 0, 1)),
+                 qPrintable(c.name));
+    }
+}
+
+void TstDisplayCodecV2::truncationAtEveryByte()
+{
+    // A cut at every byte of a whole frame and of each split part: Truncated
+    // in the header, Malformed in a plane, never an accept or a hold, and
+    // the decoder untouched (the whole message decodes after).
+    QList<std::pair<QString, QByteArray>> messages {
+        {QStringLiteral("whole"), wholeMessage(pairFrame(1))},
+        {QStringLiteral("whole with wide"), wholeMessage(wideFrame(1))},
+        {QStringLiteral("row part"), rowPartMessage(wideFrame(1))},
+        {QStringLiteral("trace part"), tracePartMessage(wideFrame(1))},
+        {QStringLiteral("trace only"), traceOnlyMessage(pairFrame(1))},
+    };
+    QVector<float> trace;
+    QVector<float> waterfall;
+    Vectors::SceneRun peak(Vectors::Scene::PeakBins167);
+    peak.next(trace, waterfall);
+    const DisplayCodecV2Encoding split = encodeDisplayCodecV2(
+        sceneFrame(783, 1, trace, waterfall), spectrumDisplayCost(783, 30, false)->maximumFrameBytes);
+    QVERIFY(split.split());
+    messages.append({QStringLiteral("peak row part"), split.messages[0]});
+    messages.append({QStringLiteral("peak trace part"), split.messages[1]});
+
+    for (const auto& [name, message] : messages) {
+        DisplayCodecDecoder decoder;
+        for (int cut = 0; cut < message.size(); ++cut) {
+            const DisplayCodecDecodeResult result = decoder.decode(message.left(cut));
+            const QString expected = cut < static_cast<int>(kHeader) ? QStringLiteral("rejected/truncated/0")
+                                                                     : QStringLiteral("rejected/malformed/0");
+            QVERIFY2(outcome(result) == expected,
+                     qPrintable(QStringLiteral("%1 cut at %2: %3").arg(name).arg(cut).arg(outcome(result))));
+        }
+        QCOMPARE(decoder.counters().malformed, static_cast<quint64>(message.size()));
+        const DisplayCodecDecodeResult whole = decoder.decode(message);
+        QVERIFY2(whole.disposition != DisplayCodecDisposition::Rejected, qPrintable(name));
+    }
+}
+
+void TstDisplayCodecV2::structureBeforeState()
+{
+    // A structurally bad message rejects as malformed whatever the state
+    // would have said: stale, old generation, another endpoint, another
+    // shape, or a duplicate of the held part. The held part stays.
+    DisplayCodecDecoder decoder;
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4, 4)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6, 4)))), QStringLiteral("held/none/0"));
+    const auto broken = [](QByteArray message) {
+        message.append('\0');
+        return message;
+    };
+    DisplayCodecFrame otherEndpoint = pairFrame(7, 4);
+    otherEndpoint.context.endpointId = 0x999U;
+    for (const QByteArray& message : {broken(wholeMessage(pairFrame(3, 4))),
+                                      broken(wholeMessage(pairFrame(9, 3))),
+                                      broken(wholeMessage(otherEndpoint)),
+                                      broken(wholeMessage(wideFrame(7, 4))),
+                                      broken(rowPartMessage(pairFrame(6, 4)))}) {
+        QCOMPARE(outcome(decoder.decode(message)), QStringLiteral("rejected/malformed/0"));
+    }
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 5)));
+    // The same messages whole: the state's own answers, counting nothing
+    // but the stale one.
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(3, 4)))),
+             QStringLiteral("rejected/staleSequence/0"));
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(9, 3)))), QStringLiteral("rejected/oldContext/0"));
+    QCOMPARE(outcome(decoder.decode(wholeMessage(otherEndpoint))),
+             QStringLiteral("rejected/contextMismatch/0"));
+    DisplayCodecFrame otherShape = wideFrame(7, 4);
+    otherShape.context.endpointId = kEndpointA;
+    QCOMPARE(outcome(decoder.decode(wholeMessage(otherShape))),
+             QStringLiteral("rejected/contextMismatch/0"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 1, 0, 5)));
+    const DisplayCodecDecodeResult merged = decoder.decode(tracePartMessage(pairFrame(6, 4)));
+    QCOMPARE(outcome(merged), QStringLiteral("accepted/none/1"));
+    QVERIFY(frameDifference(merged.frame, pairFrame(6, 4)).isEmpty());
+}
+
+void TstDisplayCodecV2::pairingWholeFrames()
+{
+    DisplayCodecDecoder decoder;
+    DisplayCodecDecodeResult result = decoder.decode(wholeMessage(pairFrame(1)));
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    QVERIFY2(frameDifference(result.frame, pairFrame(1)).isEmpty(),
+             qPrintable(frameDifference(result.frame, pairFrame(1))));
+    QCOMPARE(decoder.counters().framesLost, quint64 {0});
+    result = decoder.decode(wholeMessage(pairFrame(4)));
+    QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+    QCOMPARE(result.frame.encoderSequence, 4U);
+    QCOMPARE(decoder.counters().framesLost, quint64 {2});
+
+    // A stale whole and a stale part, each counted once.
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))), QStringLiteral("rejected/staleSequence/0"));
+    QCOMPARE(decoder.counters().staleMessages, quint64 {1});
+    QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(2)))),
+             QStringLiteral("rejected/staleSequence/0"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(2, 0, 2, 0, 0)));
+
+    // framesLost across the 2^32 sequence wrap.
+    DisplayCodecDecoder wrap;
+    QCOMPARE(outcome(wrap.decode(wholeMessage(pairFrame(0xFFFFFFFEU)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(outcome(wrap.decode(wholeMessage(pairFrame(1)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(wrap.counters().framesLost, quint64 {2});
+    // A fresh context: nothing is stale and nothing is lost.
+    DisplayCodecDecoder fresh;
+    QCOMPARE(outcome(fresh.decode(wholeMessage(pairFrame(0x80000000U)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(fresh.counters().framesLost, quint64 {0});
+}
+
+void TstDisplayCodecV2::pairingSplitParts()
+{
+    // Row part first, then the trace part: held, then merged.
+    for (const bool withWide : {false, true}) {
+        const DisplayCodecFrame five = pairFrame(5, 3, withWide);
+        DisplayCodecDecoder rowFirst;
+        QCOMPARE(outcome(rowFirst.decode(rowPartMessage(five))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult merged = rowFirst.decode(tracePartMessage(five));
+        QCOMPARE(outcome(merged), QStringLiteral("accepted/none/1"));
+        QVERIFY(merged.frame.waterfallAdvance);
+        QVERIFY(!merged.frame.traceCarried);
+        QVERIFY2(frameDifference(merged.frame, five).isEmpty(),
+                 qPrintable(frameDifference(merged.frame, five)));
+
+        // The trace part first gives the same frame.
+        DisplayCodecDecoder traceFirst;
+        QCOMPARE(outcome(traceFirst.decode(tracePartMessage(five))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult again = traceFirst.decode(rowPartMessage(five));
+        QCOMPARE(outcome(again), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(again.frame, merged.frame).isEmpty());
+        QCOMPARE(counterText(rowFirst.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+        QCOMPARE(counterText(traceFirst.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+    }
+
+    // A duplicate part: StaleSequence, duplicateParts, and H stays.
+    for (const bool rowHeld : {true, false}) {
+        const QByteArray part = rowHeld ? rowPartMessage(pairFrame(6)) : tracePartMessage(pairFrame(6));
+        const QByteArray partner = rowHeld ? tracePartMessage(pairFrame(6)) : rowPartMessage(pairFrame(6));
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(part)), QStringLiteral("held/none/0"));
+        QCOMPARE(outcome(decoder.decode(part)), QStringLiteral("rejected/staleSequence/0"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 1, 0)));
+        QCOMPARE(outcome(decoder.decode(partner)), QStringLiteral("accepted/none/1"));
+    }
+
+    // The other part with a different timestamp: Malformed, and H stays.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        DisplayCodecFrame otherTimestamp = pairFrame(6);
+        otherTimestamp.producerTimestamp += 1;
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(otherTimestamp))),
+                 QStringLiteral("rejected/malformed/0"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 1)));
+        const DisplayCodecDecodeResult merged = decoder.decode(tracePartMessage(pairFrame(6)));
+        QCOMPARE(outcome(merged), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(merged.frame, pairFrame(6)).isEmpty());
+    }
+
+    // A whole frame with the held sequence: Malformed, and H stays.
+    for (const bool traceOnly : {false, true}) {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        const QByteArray whole = traceOnly ? traceOnlyMessage(pairFrame(6)) : wholeMessage(pairFrame(6));
+        QCOMPARE(outcome(decoder.decode(whole)), QStringLiteral("rejected/malformed/0"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 1)));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(6)))), QStringLiteral("accepted/none/1"));
+    }
+}
+
+void TstDisplayCodecV2::pairingAroundTheHeldPart()
+{
+    // L = 4 and row part 6 held: whole 5 is released now and H stays.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult five = decoder.decode(wholeMessage(pairFrame(5)));
+        QCOMPARE(outcome(five), QStringLiteral("accepted/none/1"));
+        QCOMPARE(five.frame.encoderSequence, 5U);
+        QVERIFY(frameDifference(five.frame, pairFrame(5)).isEmpty());
+        const DisplayCodecDecodeResult six = decoder.decode(tracePartMessage(pairFrame(6)));
+        QCOMPARE(outcome(six), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(six.frame, pairFrame(6)).isEmpty());
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+    }
+    // A part older than the held one is released now as a partial frame.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult five = decoder.decode(tracePartMessage(pairFrame(5)));
+        QCOMPARE(outcome(five), QStringLiteral("accepted/none/1"));
+        const DisplayCodecFrame expected =
+            traceOnlyRelease(pairFrame(5), pairFrame(4).waterfallDbm, {});
+        QVERIFY2(frameDifference(five.frame, expected).isEmpty(),
+                 qPrintable(frameDifference(five.frame, expected)));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(6)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 1, 0, 0, 0)));
+    }
+    // L = 5 and row part 6 held, then whole 8: two frames, the partial 6
+    // (its trace carried from 5) then 8; 7 is lost.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(5)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult two = decoder.decode(wholeMessage(pairFrame(8)));
+        QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+        QVERIFY(two.frame.traceCarried);
+        QVERIFY(two.frame.waterfallAdvance);
+        const DisplayCodecFrame partial = rowOnlyRelease(pairFrame(6), pairFrame(5).traceDbm);
+        QVERIFY2(frameDifference(two.frame, partial).isEmpty(),
+                 qPrintable(frameDifference(two.frame, partial)));
+        QVERIFY(frameDifference(two.secondFrame, pairFrame(8)).isEmpty());
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(1, 1, 0, 0, 0)));
+    }
+    // Row part 6 held, then trace part 7: the partial 6, and 7 is held.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(5)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult six = decoder.decode(tracePartMessage(pairFrame(7)));
+        QCOMPARE(outcome(six), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(six.frame, rowOnlyRelease(pairFrame(6), pairFrame(5).traceDbm)).isEmpty());
+        const DisplayCodecDecodeResult seven = decoder.decode(rowPartMessage(pairFrame(7)));
+        QCOMPARE(outcome(seven), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(seven.frame, pairFrame(7)).isEmpty());
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 1, 0, 0, 0)));
+    }
+    // A part older than L while H is held: stale, and H stays.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(5)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(7)))), QStringLiteral("held/none/0"));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(5)))),
+                 QStringLiteral("rejected/staleSequence/0"));
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))),
+                 QStringLiteral("rejected/staleSequence/0"));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(7)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(1, 0, 2, 0, 0)));
+    }
+}
+
+void TstDisplayCodecV2::pairingPartialFramesAndFills()
+{
+    const QVector<float> noTrace = zeroRow(kTraceLength);
+    const QVector<float> noWaterfall = zeroRow(kWaterfallLength);
+    const QVector<float> noWide = zeroRow(kWideLength);
+
+    // Row only from a fresh decoder: the trace is minimum dBm (q 0).
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(wideFrame(6)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult two = decoder.decode(wholeMessage(wideFrame(8)));
+        QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+        QVERIFY(frameDifference(two.frame, rowOnlyRelease(wideFrame(6), noTrace)).isEmpty());
+        QVERIFY(frameDifference(two.secondFrame, wideFrame(8)).isEmpty());
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(1, 1, 0, 0, 0)));
+    }
+    // Trace only (its row lost), released by a later message: waterfall
+    // advance clear, the row planes the last decoded ones (q 0 when none).
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(wideFrame(3)))), QStringLiteral("held/none/0"));
+        DisplayCodecDecodeResult two = decoder.decode(wholeMessage(wideFrame(4)));
+        QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+        QVERIFY(!two.frame.waterfallAdvance);
+        QVERIFY(!two.frame.traceCarried);
+        DisplayCodecFrame expected = traceOnlyRelease(wideFrame(3), noWaterfall, noWide);
+        QVERIFY2(frameDifference(two.frame, expected).isEmpty(),
+                 qPrintable(frameDifference(two.frame, expected)));
+
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(wideFrame(5)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult one = decoder.decode(rowPartMessage(wideFrame(6)));
+        QCOMPARE(outcome(one), QStringLiteral("accepted/none/1"));
+        // The fills are the last released planes (4), not the row part just
+        // held (6).
+        expected = traceOnlyRelease(wideFrame(5), wideFrame(4).waterfallDbm, wideFrame(4).wideDbm);
+        QVERIFY2(frameDifference(one.frame, expected).isEmpty(),
+                 qPrintable(frameDifference(one.frame, expected)));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 2, 0, 0, 0)));
+    }
+    // A 0x08 whole frame: its trace, waterfall advance clear, the fills.
+    {
+        DisplayCodecDecoder decoder;
+        DisplayCodecDecodeResult result = decoder.decode(traceOnlyMessage(wideFrame(1)));
+        QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(result.frame, traceOnlyRelease(wideFrame(1), noWaterfall, noWide)).isEmpty());
+        QCOMPARE(outcome(decoder.decode(wholeMessage(wideFrame(2)))), QStringLiteral("accepted/none/1"));
+        result = decoder.decode(traceOnlyMessage(wideFrame(3)));
+        QCOMPARE(outcome(result), QStringLiteral("accepted/none/1"));
+        const DisplayCodecFrame expected =
+            traceOnlyRelease(wideFrame(3), wideFrame(2).waterfallDbm, wideFrame(2).wideDbm);
+        QVERIFY2(frameDifference(result.frame, expected).isEmpty(),
+                 qPrintable(frameDifference(result.frame, expected)));
+        // A 0x08 frame is whole: no part lost.
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+        // And a later row-only frame carries the 0x08 frame's trace.
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(wideFrame(4)))), QStringLiteral("held/none/0"));
+        result = decoder.decode(wholeMessage(wideFrame(5)));
+        QCOMPARE(outcome(result), QStringLiteral("accepted/none/2"));
+        QVERIFY(frameDifference(result.frame, rowOnlyRelease(wideFrame(4), wideFrame(3).traceDbm)).isEmpty());
+    }
+}
+
+void TstDisplayCodecV2::pairingGenerationChange()
+{
+    // A newer generation while a part is held: H goes as a partial frame
+    // under the old context, then the new message is a first message.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4, 3)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(6, 3)))), QStringLiteral("held/none/0"));
+        const DisplayCodecDecodeResult two = decoder.decode(wholeMessage(pairFrame(1, 4)));
+        QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+        QVERIFY(frameDifference(two.frame, rowOnlyRelease(pairFrame(6, 3), pairFrame(4, 3).traceDbm)).isEmpty());
+        QCOMPARE(two.frame.context.contextGeneration, 3U);
+        QVERIFY(frameDifference(two.secondFrame, pairFrame(1, 4)).isEmpty());
+        // framesLost 1 (5, against the old L); none across the change.
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(1, 1, 0, 0, 0)));
+    }
+    // The new context's fills start empty, even after the held part was
+    // released under the old one, and it has no L.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4, 3)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(6, 3)))), QStringLiteral("held/none/0"));
+        DisplayCodecDecodeResult one = decoder.decode(rowPartMessage(pairFrame(2, 4)));
+        QCOMPARE(outcome(one), QStringLiteral("accepted/none/1"));
+        QVERIFY(frameDifference(one.frame, traceOnlyRelease(pairFrame(6, 3), pairFrame(4, 3).waterfallDbm, {}))
+                    .isEmpty());
+        const DisplayCodecDecodeResult two = decoder.decode(wholeMessage(pairFrame(5, 4)));
+        QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+        const DisplayCodecFrame expected = rowOnlyRelease(pairFrame(2, 4), zeroRow(kTraceLength));
+        QVERIFY2(frameDifference(two.frame, expected).isEmpty(),
+                 qPrintable(frameDifference(two.frame, expected)));
+        // 1 (frame 5 of generation 3), then 2 (3 and 4 of generation 4).
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(3, 2, 0, 0, 0)));
+    }
+    // An older generation: OldContext, no counter, and H stays.
+    {
+        DisplayCodecDecoder decoder;
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(1, 4)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(2, 4)))), QStringLiteral("held/none/0"));
+        QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(9, 3)))), QStringLiteral("rejected/oldContext/0"));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(9, 3)))),
+                 QStringLiteral("rejected/oldContext/0"));
+        QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(2, 4)))), QStringLiteral("accepted/none/1"));
+        QCOMPARE(counterText(decoder.counters()), counterText(counterValues(0, 0, 0, 0, 0)));
+    }
+}
+
+void TstDisplayCodecV2::resetClearsStateButNotCounters()
+{
+    DisplayCodecDecoder decoder;
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(1)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))), QStringLiteral("accepted/none/1"));
+    QCOMPARE(outcome(decoder.decode(wholeMessage(pairFrame(4)))), QStringLiteral("rejected/staleSequence/0"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(2, 0, 1, 0, 0)));
+
+    // After reset() the first row-only partial carries a trace of q 0, not
+    // the trace of 4, and there is no L (2 is not stale).
+    decoder.reset();
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(2, 0, 1, 0, 0)));
+    QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(2)))), QStringLiteral("held/none/0"));
+    const DisplayCodecDecodeResult two = decoder.decode(wholeMessage(pairFrame(3)));
+    QCOMPARE(outcome(two), QStringLiteral("accepted/none/2"));
+    const DisplayCodecFrame expected = rowOnlyRelease(pairFrame(2), zeroRow(kTraceLength));
+    QVERIFY2(frameDifference(two.frame, expected).isEmpty(), qPrintable(frameDifference(two.frame, expected)));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(2, 1, 1, 0, 0)));
+
+    // reset() discards a held part rather than releasing it.
+    QCOMPARE(outcome(decoder.decode(rowPartMessage(pairFrame(10)))), QStringLiteral("held/none/0"));
+    decoder.reset();
+    QCOMPARE(outcome(decoder.decode(tracePartMessage(pairFrame(10)))), QStringLiteral("held/none/0"));
+    QCOMPARE(counterText(decoder.counters()), counterText(counterValues(2, 1, 1, 0, 0)));
+}
+
+void TstDisplayCodecV2::goldenSequencesDecode()
+{
+    QJsonObject document;
+    QString error;
+    QVERIFY2(Vectors::readVectors(Vectors::vectorsPath(), document, error), qPrintable(error));
+    const QJsonArray sequences = document.value(QStringLiteral("sequences")).toArray();
+    QVERIFY(!sequences.isEmpty());
+
+    // Every disagreement is listed before failing, so a wrong expectation
+    // and a wrong decoder can be told apart from one run.
+    QStringList disagreements;
+    QSet<QString> reasonsSeen;
+    for (const QJsonValue& value : sequences) {
+        const QJsonObject entry = value.toObject();
+        const QString name = entry.value(QStringLiteral("name")).toString();
+        const QJsonArray messages = entry.value(QStringLiteral("messages")).toArray();
+        const QJsonArray results = entry.value(QStringLiteral("results")).toArray();
+        QCOMPARE(messages.size(), results.size());
+        DisplayCodecDecoder decoder;
+        for (int i = 0; i < messages.size(); ++i) {
+            const DisplayCodecDecodeResult result = decoder.decode(Vectors::fromHex(messages.at(i).toString()));
+            if (!wellFormed(result)) {
+                disagreements.append(QStringLiteral("%1 [%2]: not well formed: %3").arg(name).arg(i).arg(outcome(result)));
+            }
+            const QJsonObject expected = results.at(i).toObject();
+            const QString wantDisposition = expected.value(QStringLiteral("disposition")).toString();
+            const QString wantReason = expected.value(QStringLiteral("reason")).toString();
+            reasonsSeen.insert(wantReason);
+            const QJsonArray frames = expected.value(QStringLiteral("frames")).toArray();
+            if (dispositionName(result.disposition) != wantDisposition
+                || reasonName(result.reason) != wantReason || result.frameCount != frames.size()) {
+                disagreements.append(QStringLiteral("%1 [%2]: got %3, expected %4/%5/%6")
+                                         .arg(name).arg(i).arg(outcome(result), wantDisposition, wantReason)
+                                         .arg(frames.size()));
+                continue;
+            }
+            for (int k = 0; k < frames.size(); ++k) {
+                const QJsonObject actual =
+                    Vectors::frameToJson(k == 0 ? result.frame : result.secondFrame);
+                if (actual != frames.at(k).toObject()) {
+                    disagreements.append(
+                        QStringLiteral("%1 [%2] frame %3: got %4, expected %5")
+                            .arg(name).arg(i).arg(k)
+                            .arg(QString::fromUtf8(QJsonDocument(actual).toJson(QJsonDocument::Compact)),
+                                 QString::fromUtf8(QJsonDocument(frames.at(k).toObject())
+                                                       .toJson(QJsonDocument::Compact))));
+                }
+            }
+        }
+        const QJsonObject want = entry.value(QStringLiteral("counters")).toObject();
+        const DisplayCodecDecoderCounters wanted = counterValues(
+            static_cast<quint64>(want.value(QStringLiteral("framesLost")).toInteger()),
+            static_cast<quint64>(want.value(QStringLiteral("partsLost")).toInteger()),
+            static_cast<quint64>(want.value(QStringLiteral("staleMessages")).toInteger()),
+            static_cast<quint64>(want.value(QStringLiteral("duplicateParts")).toInteger()),
+            static_cast<quint64>(want.value(QStringLiteral("malformed")).toInteger()));
+        if (counterText(decoder.counters()) != counterText(wanted)) {
+            disagreements.append(QStringLiteral("%1 counters: got %2, expected %3")
+                                     .arg(name, counterText(decoder.counters()), counterText(wanted)));
+        }
+    }
+    QVERIFY2(disagreements.isEmpty(), qPrintable(disagreements.join(QLatin1Char('\n'))));
+    // The file covers each dispatch reject as well as the v2 path's.
+    for (const char* reason : {"badMagic", "unsupportedVersion", "oversized", "truncated", "unknownFlags",
+                               "malformed", "staleSequence", "oldContext", "none"}) {
+        QVERIFY2(reasonsSeen.contains(QLatin1String(reason)), reason);
+    }
+}
+
+void TstDisplayCodecV2::lossSimulation783()
+{
+    // 3,000 frames of the peak scene at 783 px, Gilbert-Elliott bursts and
+    // random drops, each with adjacent reordering. Checks, for each run:
+    // every released frame is the encoder's quantized input (whole or
+    // merged) or follows the partial and fill rules plane for plane;
+    // released sequences strictly increase and framesLost + released spans
+    // the first to the last; partsLost is the number of partial frames; and
+    // every frame none of whose messages was dropped or moved is released
+    // whole or merged.
+    const EncodedRun run = encodeRun(Vectors::Scene::PeakBins167, 3000);
+    QVERIFY(run.splitFrames > 0);
+    runLoss(run, LossModel::GilbertElliott, 0x5EED0783ULL);
+    if (QTest::currentTestFailed()) { return; }
+    runLoss(run, LossModel::Random, 0x5EED1783ULL);
+}
+
+void TstDisplayCodecV2::lossSimulation4096()
+{
+    const EncodedRun run = encodeRun(Vectors::Scene::Peak4096, 1000);
+    QCOMPARE(run.splitFrames, 1000);
+    runLoss(run, LossModel::GilbertElliott, 0x5EED4096ULL);
+    if (QTest::currentTestFailed()) { return; }
+    runLoss(run, LossModel::Random, 0x5EED5096ULL);
+}
+
+void TstDisplayCodecV2::benchmarkEncode_data()
+{
+    QTest::addColumn<int>("scene");
+    QTest::newRow("783 px peak") << static_cast<int>(Vectors::Scene::PeakBins167);
+    QTest::newRow("4096 px peak") << static_cast<int>(Vectors::Scene::Peak4096);
+}
+
+void TstDisplayCodecV2::benchmarkEncode()
+{
+    // Recorded, not asserted (section 10).
+    QFETCH(int, scene);
+    Vectors::SceneRun run(static_cast<Vectors::Scene>(scene));
+    QVector<float> trace;
+    QVector<float> waterfall;
+    run.next(trace, waterfall);
+    const DisplayCodecFrame frame = sceneFrame(run.pixels(), 1, trace, waterfall);
+    const quint32 admitted = spectrumDisplayCost(run.pixels(), 30, false)->maximumFrameBytes;
+    qsizetype bytes = 0;
+    QBENCHMARK {
+        bytes = encodeDisplayCodecV2(frame, admitted).totalBytes();
+    }
+    QVERIFY(bytes > 0);
+}
+
+void TstDisplayCodecV2::benchmarkDecode_data()
+{
+    benchmarkEncode_data();
+}
+
+void TstDisplayCodecV2::benchmarkDecode()
+{
+    // Recorded, not asserted (section 10): every message of one frame
+    // through a decoder reset before each pass.
+    QFETCH(int, scene);
+    Vectors::SceneRun run(static_cast<Vectors::Scene>(scene));
+    QVector<float> trace;
+    QVector<float> waterfall;
+    run.next(trace, waterfall);
+    const DisplayCodecFrame frame = sceneFrame(run.pixels(), 1, trace, waterfall);
+    const DisplayCodecV2Encoding encoding =
+        encodeDisplayCodecV2(frame, spectrumDisplayCost(run.pixels(), 30, false)->maximumFrameBytes);
+    QVERIFY(!encoding.messages.empty());
+    DisplayCodecDecoder decoder;
+    int frames = 0;
+    QBENCHMARK {
+        decoder.reset();
+        for (const QByteArray& message : encoding.messages) {
+            frames += decoder.decode(message).frameCount;
+        }
+    }
+    QVERIFY(frames > 0);
 }
 
 QTEST_APPLESS_MAIN(TstDisplayCodecV2)

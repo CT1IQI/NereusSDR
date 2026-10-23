@@ -12,6 +12,9 @@
 //   2026-10-22: NSDC v2 encoder: previous-bin Rice planes, the whole or
 //               split frame, and public quantize helpers.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-22: NSDC v2 decoder: version dispatch, part pairing, fills and
+//               the loss counters. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayCodec.h"
@@ -364,6 +367,10 @@ constexpr quint8 kV2FlagsWhole = kV2FlagTrace | kV2FlagWaterfall | kV2FlagWaterf
 constexpr quint8 kV2FlagsRowPart = kV2FlagSplit | kV2FlagWaterfall | kV2FlagWaterfallAdvance; // 0x32
 constexpr quint8 kV2FlagsTracePart = kV2FlagSplit | kV2FlagTrace | kV2FlagWaterfallAdvance;  // 0x2A
 static_assert(kV2FlagsWhole == 0x1A && kV2FlagsRowPart == 0x32 && kV2FlagsTracePart == 0x2A);
+// 0x01, 0x40 and 0x80 reject as UnknownFlags; every other byte outside the
+// six valid combinations is Malformed (section 4.1).
+constexpr quint8 kV2KnownFlags =
+    kV2FlagWaterfallAdvance | kV2FlagWide | kV2FlagTrace | kV2FlagWaterfall | kV2FlagSplit;
 constexpr quint8 kV2PlaneCoding = 2;
 constexpr int kV2PlanePrefixBytes = 4;
 constexpr int kV2BlockSizes[] = {16, 32, 64};
@@ -866,9 +873,41 @@ void DisplayCodecDecoder::reset()
     m_trace.clear();
     m_waterfall.clear();
     m_wide.clear();
+
+    // v2: the held part is discarded, not released (section 9.2).
+    m_v2HasContext = false;
+    m_v2HasLast = false;
+    m_v2HasHeld = false;
+    m_v2Held = V2Message();
+    m_v2FillTrace.clear();
+    m_v2FillWaterfall.clear();
+    m_v2FillWide.clear();
 }
 
 DisplayCodecDecodeResult DisplayCodecDecoder::decode(const QByteArray& packet)
+{
+    // The rejects decided before the version byte is known, in the v1 path's
+    // own order, so a v1 packet gets exactly the result it got before v2.
+    // They are structural, so they count as malformed (section 9.2).
+    const auto structural = [this](DisplayCodecReason reason) {
+        ++m_counters.malformed;
+        return result(DisplayCodecDisposition::Rejected, reason);
+    };
+    if (packet.size() > DisplayCodecEncoder::kMaxEncodedBytes) {
+        return structural(DisplayCodecReason::Oversized);
+    }
+    Reader reader(packet);
+    quint32 magic = 0;
+    quint8 version = 0;
+    if (!reader.u32(magic)) { return structural(DisplayCodecReason::Truncated); }
+    if (magic != kMagic) { return structural(DisplayCodecReason::BadMagic); }
+    if (!reader.u8(version)) { return structural(DisplayCodecReason::Truncated); }
+    if (version == kVersion) { return decodeV1(packet); }
+    if (version == kVersion2) { return decodeV2(packet); }
+    return structural(DisplayCodecReason::UnsupportedVersion);
+}
+
+DisplayCodecDecodeResult DisplayCodecDecoder::decodeV1(const QByteArray& packet)
 {
     if (packet.size() > DisplayCodecEncoder::kMaxEncodedBytes) {
         return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::Oversized);
@@ -969,6 +1008,7 @@ DisplayCodecDecodeResult DisplayCodecDecoder::decode(const QByteArray& packet)
     DisplayCodecDecodeResult decoded;
     decoded.disposition = DisplayCodecDisposition::Accepted;
     decoded.reason = DisplayCodecReason::None;
+    decoded.frameCount = 1;
     decoded.frame.context = context;
     decoded.frame.encoderSequence = sequence;
     decoded.frame.producerTimestamp = timestamp;
@@ -987,6 +1027,241 @@ DisplayCodecDecodeResult DisplayCodecDecoder::decode(const QByteArray& packet)
     m_trace = std::move(trace);
     m_waterfall = std::move(waterfall);
     m_wide = std::move(wide);
+    return decoded;
+}
+
+// ---- NSDC v2 decoder (v2 document, sections 4.1, 4.2, 9.1 and 9.2) ----
+
+DisplayCodecReason DisplayCodecDecoder::parseV2(const QByteArray& packet, V2Message& message)
+{
+    // The whole message's structure: header, flag combination and every
+    // plane. Nothing here reads decoder state.
+    Reader reader(packet);
+    quint32 magic = 0;
+    quint8 version = 0;
+    quint8 flags = 0;
+    quint16 headerBytes = 0;
+    if (!reader.u32(magic) || !reader.u8(version)) { return DisplayCodecReason::Truncated; }
+    if (magic != kMagic) { return DisplayCodecReason::BadMagic; }
+    if (version != kVersion2) { return DisplayCodecReason::UnsupportedVersion; }
+    if (!reader.u8(flags) || !reader.u16(headerBytes)) { return DisplayCodecReason::Truncated; }
+    if ((flags & ~kV2KnownFlags) != 0) { return DisplayCodecReason::UnknownFlags; }
+    if (headerBytes != kHeaderBytes) { return DisplayCodecReason::Malformed; }
+    DisplayCodecContext& context = message.context;
+    if (!reader.u32(context.endpointId) || !reader.u32(context.contextGeneration)
+        || !reader.u32(message.sequence) || !reader.u64(message.timestamp)
+        || !reader.f32(context.minDbm) || !reader.f32(context.maxDbm)
+        || !reader.u16(context.traceSamples) || !reader.u16(context.waterfallSamples)
+        || !reader.u16(context.wideSamples)) {
+        return DisplayCodecReason::Truncated;
+    }
+    if (!validContext(context)) { return DisplayCodecReason::Malformed; }
+
+    switch (flags & ~kV2FlagWide) {
+    case kV2FlagsTraceOnly: message.kind = V2Kind::TraceOnly; break;
+    case kV2FlagsWhole: message.kind = V2Kind::Whole; break;
+    case kV2FlagsTracePart: message.kind = V2Kind::TracePart; break;
+    case kV2FlagsRowPart: message.kind = V2Kind::RowPart; break;
+    default: return DisplayCodecReason::Malformed;
+    }
+    // 0x04 is set exactly when the waterfall plane is present and the wide
+    // length is not zero.
+    const bool hasWaterfall = (flags & kV2FlagWaterfall) != 0;
+    const bool hasWide = (flags & kV2FlagWide) != 0;
+    if (hasWide != (hasWaterfall && context.wideSamples != 0)) {
+        return DisplayCodecReason::Malformed;
+    }
+
+    // Planes in trace, waterfall, wide order, those present only; the
+    // message ends exactly at the end of the last one.
+    int offset = reader.position();
+    if ((flags & kV2FlagTrace) != 0
+        && !decodeDisplayCodecV2Plane(packet, offset, context.traceSamples, message.trace)) {
+        return DisplayCodecReason::Malformed;
+    }
+    if (hasWaterfall
+        && !decodeDisplayCodecV2Plane(packet, offset, context.waterfallSamples, message.waterfall)) {
+        return DisplayCodecReason::Malformed;
+    }
+    if (hasWide && !decodeDisplayCodecV2Plane(packet, offset, context.wideSamples, message.wide)) {
+        return DisplayCodecReason::Malformed;
+    }
+    if (offset != packet.size()) { return DisplayCodecReason::Malformed; }
+    return DisplayCodecReason::None;
+}
+
+void DisplayCodecDecoder::startV2Context(const DisplayCodecContext& context)
+{
+    // A new context: no last sequence, nothing held and no fill planes, so a
+    // fill never carries a row or trace across contexts.
+    m_v2HasContext = true;
+    m_v2Context = context;
+    m_v2HasLast = false;
+    m_v2HasHeld = false;
+    m_v2Held = V2Message();
+    m_v2FillTrace.clear();
+    m_v2FillWaterfall.clear();
+    m_v2FillWide.clear();
+}
+
+void DisplayCodecDecoder::releaseV2(const V2Message& header, const QVector<quint8>* trace,
+                                    const QVector<quint8>* waterfall, const QVector<quint8>* wide,
+                                    bool partial, DisplayCodecDecodeResult& decoded)
+{
+    const DisplayCodecContext& context = header.context;
+    // The release rule: frames lost since L, in 32-bit unsigned arithmetic
+    // (a released frame is always newer than L), then L moves on.
+    if (m_v2HasLast) { m_counters.framesLost += static_cast<quint32>(header.sequence - m_v2Last - 1U); }
+    m_v2HasLast = true;
+    m_v2Last = header.sequence;
+    if (partial) { ++m_counters.partsLost; }
+
+    // An absent plane is the last released one of the context, or minimum
+    // dBm (q 0) when there is none yet.
+    const auto planeOrFill = [](const QVector<quint8>* plane, const QVector<quint8>& fill,
+                                quint16 length) {
+        if (plane) { return *plane; }
+        if (fill.size() == length) { return fill; }
+        return QVector<quint8>(length, 0);
+    };
+    const QVector<quint8> traceQ = planeOrFill(trace, m_v2FillTrace, context.traceSamples);
+    const QVector<quint8> waterfallQ =
+        planeOrFill(waterfall, m_v2FillWaterfall, context.waterfallSamples);
+    const QVector<quint8> wideQ = planeOrFill(wide, m_v2FillWide, context.wideSamples);
+    if (trace) { m_v2FillTrace = *trace; }
+    if (waterfall) { m_v2FillWaterfall = *waterfall; }
+    if (wide) { m_v2FillWide = *wide; }
+
+    DisplayCodecFrame& frame = decoded.frameCount == 0 ? decoded.frame : decoded.secondFrame;
+    ++decoded.frameCount;
+    frame = DisplayCodecFrame();
+    frame.context = context;
+    frame.encoderSequence = header.sequence;
+    frame.producerTimestamp = header.timestamp;
+    // A frame with its row advances the waterfall; a frame without its own
+    // trace carries the last one.
+    frame.waterfallAdvance = waterfall != nullptr;
+    frame.traceCarried = trace == nullptr;
+    frame.traceDbm.reserve(traceQ.size());
+    frame.waterfallDbm.reserve(waterfallQ.size());
+    frame.wideDbm.reserve(wideQ.size());
+    for (quint8 value : traceQ) { frame.traceDbm.append(dequantize(value, context)); }
+    for (quint8 value : waterfallQ) { frame.waterfallDbm.append(dequantize(value, context)); }
+    for (quint8 value : wideQ) { frame.wideDbm.append(dequantize(value, context)); }
+}
+
+void DisplayCodecDecoder::releaseV2Message(const V2Message& message,
+                                           DisplayCodecDecodeResult& decoded)
+{
+    switch (message.kind) {
+    case V2Kind::Whole:
+        releaseV2(message, &message.trace, &message.waterfall, &message.wide, false, decoded);
+        return;
+    case V2Kind::TraceOnly:
+        releaseV2(message, &message.trace, nullptr, nullptr, false, decoded);
+        return;
+    case V2Kind::TracePart:
+        // Its row was lost: a partial frame.
+        releaseV2(message, &message.trace, nullptr, nullptr, true, decoded);
+        return;
+    case V2Kind::RowPart:
+        // Its trace was lost: a partial frame.
+        releaseV2(message, nullptr, &message.waterfall, &message.wide, true, decoded);
+        return;
+    }
+}
+
+DisplayCodecDecodeResult DisplayCodecDecoder::decodeV2(const QByteArray& packet)
+{
+    V2Message message;
+    const DisplayCodecReason structural = parseV2(packet, message);
+    if (structural != DisplayCodecReason::None) {
+        ++m_counters.malformed;
+        return result(DisplayCodecDisposition::Rejected, structural);
+    }
+
+    // Then endpoint, context and generation. A context reject counts nothing.
+    DisplayCodecDecodeResult decoded = result(DisplayCodecDisposition::Accepted,
+                                              DisplayCodecReason::None);
+    const DisplayCodecContext& context = message.context;
+    if (!m_v2HasContext) {
+        startV2Context(context);
+    } else if (context.endpointId != m_v2Context.endpointId) {
+        return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::ContextMismatch);
+    } else if (context.contextGeneration != m_v2Context.contextGeneration) {
+        if (staleOrEqual(context.contextGeneration, m_v2Context.contextGeneration)) {
+            return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::OldContext);
+        }
+        // A newer generation: the held part is released as a partial frame
+        // under the old context, then the new context starts empty. Frames
+        // lost across the change are not counted.
+        if (m_v2HasHeld) {
+            const V2Message held = std::move(m_v2Held);
+            m_v2HasHeld = false;
+            releaseV2Message(held, decoded);
+        }
+        startV2Context(context);
+    } else if (!sameContext(context, m_v2Context)) {
+        return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::ContextMismatch);
+    }
+
+    // Then the sequence (section 9.2's table). Every reject below happens
+    // before anything is released or held, so a reject changes no state.
+    const quint32 sequence = message.sequence;
+    const bool whole = message.kind == V2Kind::Whole || message.kind == V2Kind::TraceOnly;
+    if (m_v2HasLast && staleOrEqual(sequence, m_v2Last)) {
+        ++m_counters.staleMessages;
+        return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::StaleSequence);
+    }
+
+    if (!m_v2HasHeld) {
+        if (whole) {
+            releaseV2Message(message, decoded);
+        } else {
+            m_v2Held = std::move(message);
+            m_v2HasHeld = true;
+        }
+    } else if (sequence == m_v2Held.sequence) {
+        if (whole) {
+            // A sequence is whole or split, never both.
+            ++m_counters.malformed;
+            return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::Malformed);
+        }
+        if (message.kind == m_v2Held.kind) {
+            ++m_counters.duplicateParts;
+            return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::StaleSequence);
+        }
+        // Headers agree: every field except the flags (magic, version and
+        // header size are fixed by the parse).
+        if (!sameContext(context, m_v2Held.context) || message.timestamp != m_v2Held.timestamp) {
+            ++m_counters.malformed;
+            return result(DisplayCodecDisposition::Rejected, DisplayCodecReason::Malformed);
+        }
+        const V2Message held = std::move(m_v2Held);
+        m_v2HasHeld = false;
+        const V2Message& tracePart = message.kind == V2Kind::TracePart ? message : held;
+        const V2Message& rowPart = message.kind == V2Kind::RowPart ? message : held;
+        releaseV2(message, &tracePart.trace, &rowPart.waterfall, &rowPart.wide, false, decoded);
+    } else if (staleOrEqual(sequence, m_v2Held.sequence)) {
+        // Newer than L and older than h: released now; the held part stays.
+        releaseV2Message(message, decoded);
+    } else {
+        // Newer than h: the held part goes as a partial frame, then this
+        // message is released (whole) or held (a part).
+        const V2Message held = std::move(m_v2Held);
+        m_v2HasHeld = false;
+        releaseV2Message(held, decoded);
+        if (whole) {
+            releaseV2Message(message, decoded);
+        } else {
+            m_v2Held = std::move(message);
+            m_v2HasHeld = true;
+        }
+    }
+
+    if (decoded.frameCount == 0) {
+        return result(DisplayCodecDisposition::Held, DisplayCodecReason::None);
+    }
     return decoded;
 }
 

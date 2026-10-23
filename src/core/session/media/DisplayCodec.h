@@ -16,6 +16,9 @@
 //   2026-10-22: NSDC v2 encoder: previous-bin Rice planes, the whole or
 //               split frame, and public quantize helpers.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-22: NSDC v2 decoder: version dispatch, part pairing, the Held
+//               disposition, up to two frames a result, and the loss
+//               counters. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -53,6 +56,9 @@ enum class DisplayCodecDisposition {
     Accepted,
     NeedKeyframe,
     Rejected,
+    /// NSDC v2 only: a valid part of a split frame, held for its partner.
+    /// Nothing is released and the reason is None.
+    Held,
 };
 
 enum class DisplayCodecReason {
@@ -74,7 +80,24 @@ enum class DisplayCodecReason {
 struct DisplayCodecDecodeResult {
     DisplayCodecDisposition disposition {DisplayCodecDisposition::Rejected};
     DisplayCodecReason reason {DisplayCodecReason::InvalidInput};
+    /// The first released frame (the oldest), when frameCount >= 1.
     DisplayCodecFrame frame;
+    /// Frames released, oldest first: 1 or 2 on Accepted, 0 otherwise. The
+    /// v1 path releases at most one.
+    int frameCount {0};
+    /// The second released frame, when frameCount == 2 (v2 only).
+    DisplayCodecFrame secondFrame;
+};
+
+/// The v2 decoder's loss and reject totals (display codec v2 document,
+/// section 9.2). Only the v2 path and the rejects decided before the version
+/// dispatch move them; they survive reset().
+struct DisplayCodecDecoderCounters {
+    quint64 framesLost {0};
+    quint64 partsLost {0};
+    quint64 staleMessages {0};
+    quint64 duplicateParts {0};
+    quint64 malformed {0};
 };
 
 /// The codec's quantizer, both versions: round((dbm - minDbm) * 255 /
@@ -170,12 +193,42 @@ private:
 
 /// Stateful receiver. A rejected or keyframe-needed packet never changes the
 /// last accepted context, frame, sequence, or reconstructed rows.
+///
+/// decode() chooses by the version byte (offset 4): 1 is the v1 path, 2 the
+/// v2 path (display codec v2 document, section 9), anything else is
+/// UnsupportedVersion. The two paths keep separate state. A v2 message never
+/// depends on history: the v2 path keeps its context, the last released
+/// sequence, at most one held part, and the last released planes, which only
+/// fill a released frame's absent planes.
 class DisplayCodecDecoder {
 public:
     DisplayCodecDecodeResult decode(const QByteArray& packet);
+    /// Clears both paths' state (v2: context, last sequence, the held part
+    /// and the fill planes). The counters keep their values.
     void reset();
+    const DisplayCodecDecoderCounters& counters() const { return m_counters; }
 
 private:
+    enum class V2Kind { TraceOnly, Whole, TracePart, RowPart };
+    struct V2Message {
+        V2Kind kind {V2Kind::Whole};
+        DisplayCodecContext context;
+        quint32 sequence {0};
+        quint64 timestamp {0};
+        QVector<quint8> trace;
+        QVector<quint8> waterfall;
+        QVector<quint8> wide;
+    };
+
+    DisplayCodecDecodeResult decodeV1(const QByteArray& packet);
+    DisplayCodecDecodeResult decodeV2(const QByteArray& packet);
+    static DisplayCodecReason parseV2(const QByteArray& packet, V2Message& message);
+    void startV2Context(const DisplayCodecContext& context);
+    void releaseV2Message(const V2Message& message, DisplayCodecDecodeResult& decoded);
+    void releaseV2(const V2Message& header, const QVector<quint8>* trace,
+                   const QVector<quint8>* waterfall, const QVector<quint8>* wide,
+                   bool partial, DisplayCodecDecodeResult& decoded);
+
     bool m_hasHistory {false};
     bool m_needsKeyframe {false};
     DisplayCodecContext m_context;
@@ -183,6 +236,19 @@ private:
     QVector<quint8> m_trace;
     QVector<quint8> m_waterfall;
     QVector<quint8> m_wide;
+
+    // v2 path.
+    bool m_v2HasContext {false};
+    DisplayCodecContext m_v2Context;
+    bool m_v2HasLast {false};
+    quint32 m_v2Last {0};
+    bool m_v2HasHeld {false};
+    V2Message m_v2Held;
+    QVector<quint8> m_v2FillTrace;
+    QVector<quint8> m_v2FillWaterfall;
+    QVector<quint8> m_v2FillWide;
+
+    DisplayCodecDecoderCounters m_counters;
 };
 
 } // namespace NereusSDR
