@@ -568,6 +568,9 @@ if(TARGET wdsp_static)
     # saved in the shared DSP folder.
     nereus_add_test(tst_wdsp_impulse_cache_profiles EXTRA_LABELS core)
     nereus_add_test(tst_nnr_model_assets EXTRA_LABELS core)
+    # 2026-10-22: dsplock.c counts noise-reduction calls over 50 ms per
+    # channel for the Core log (RadioModel::reportSlowNrCalls).
+    nereus_add_test(tst_wdsp_slow_nr_calls EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
         # linking it again here made the linker warn about a duplicate library.
@@ -672,6 +675,9 @@ endif()
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
 nereus_add_test(tst_receiver_manager_reconnect)
 
+# ── 2026-10-22: I/Q level log per hardware DDC (IqLevelMonitor) ──────────
+nereus_add_test(tst_iq_level_monitor EXTRA_LABELS core)
+
 # ── HL2 connect-init parity: spectrum DDC center push (Bug 1) ─────────────
 # Pins the contract that RadioModel::loadSliceState() emits
 # sliceStateRestored(idx) at completion, mirroring Thetis
@@ -726,11 +732,13 @@ nereus_add_test(tst_workspace_popout_return)
 # A drag never resizes a floating container's window, and a window is never larger than its screen (offscreen).
 nereus_add_test(tst_container_drag_keeps_size)
 nereus_add_test(tst_workspace_live_input)
-# Each case builds a MainWindow; 43 cases ran past the 120 s limit under
-# load. Four entries of the same binary (the limit is not raised; groups in
-# the test's main()).
+# Each case builds a MainWindow (5 to 10 s a case under load); the four
+# earlier entries each ran past the 120 s limit under CI load. Eleven entries
+# of the same binary, each about 45 s or less at load 14 to 20 on a Mac (the
+# limit is not raised; groups in the test's main()).
 nereus_split_test(tst_workspace_live_input
-    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
+    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP
+    GROUPS hidden hiddenmenu previewoff duplicate duplicatelook menus popout strip profiles profileswitch)
 nereus_add_test(tst_workspace_profiles)
 # The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0": the rule
 # on its own, with no process environment (offscreen).
@@ -4128,6 +4136,13 @@ target_link_libraries(tst_radio_discovery_probe PRIVATE Qt6::Network)
 nereus_add_test(tst_pinned_radio_wait)
 target_link_libraries(tst_pinned_radio_wait PRIVATE Qt6::Network)
 
+# Review of PR 600, Important 2: a walk running when a local connection
+# starts sends nothing until it is Connected (or failed) plus the quiet
+# period, then finishes (RadioDiscovery connect hold, RadioModel).
+nereus_add_test(tst_discovery_connect_hold fakes/P1FakeRadio.cpp)
+target_link_libraries(tst_discovery_connect_hold PRIVATE Qt6::Network)
+target_compile_definitions(tst_discovery_connect_hold PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3Q Task 4: AddCustomRadioDialog — SKU model picker + action buttons ──
 # 4 tests: Auto-detect at index 0, all 16 SKUs present in modelCombo,
 # saveOfflineButton + probeButton objectNames accessible via findChild.
@@ -4401,6 +4416,12 @@ target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_
 #   Channel ID: WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 with single-RX layout.
 nereus_add_test(tst_wdsp_engine_tx_channel)
 
+# -- MaxBin hold above 0 dBm: the detector's hold falls again after a very
+#    strong signal instead of creeping toward 0 dBm for good (Thetis
+#    #2681). Ported from Longpath PR 215 (tests/tst_maxbin_hold_decay.cpp
+#    [@383f058]), 2026-10-22 --
+nereus_add_test(tst_maxbin_hold_decay)
+
 # ── Phase 3M-3a-iii Task 20: WdspEngine DEXP DSP-instance lifecycle ──────────
 # The bench-failing fix: before Task 20, pdexp[1] was permanently nullptr
 # after createTxChannel because create_dexp had never been ported into
@@ -4481,9 +4502,18 @@ if(TEST tst_slice_model_rade_swap)
     set_property(TEST tst_slice_model_rade_swap APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
 endif()
 
-nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+# The second entry runs the same binary, so it carries the first entry's
+# labels: the tests_<label> aggregates build only the labels
+# nereus_add_test() recorded. The second entry used to add "models" by hand,
+# so `ctest -L models` ran it while `tests_models` never built (or rebuilt)
+# the binary: Not Run on a clean tree, and on a used one a stale binary
+# against the rebuilt libNereusCore, reading SliceModel's filter edge where
+# its mode now is (dspMode 3000 and 2350, 2026-10-22). It uses the models,
+# so the first entry now names "models" too.
+nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 if(TEST tst_rade_v2_link_gate)
     get_test_property(tst_rade_v2_link_gate ENVIRONMENT _rade_link_env)
+    get_test_property(tst_rade_v2_link_gate LABELS _rade_link_labels)
     set_property(TEST tst_rade_v2_link_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
     string(REPLACE "test-home/tst_rade_v2_link_gate" "test-home/tst_rade_v2_link_gate_1" _rade_link_on_env "${_rade_link_env}")
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_link_gate_1")
@@ -4491,7 +4521,7 @@ if(TEST tst_rade_v2_link_gate)
     set_tests_properties(tst_rade_v2_link_gate_1 PROPERTIES
         ENVIRONMENT "${_rade_link_on_env};NEREUS_ENABLE_RADE_V2=1"
         ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
-        TIMEOUT 120 LABELS "core;models;gui;session")
+        TIMEOUT 120 LABELS "${_rade_link_labels}")
 endif()
 
 # The immutable process switch is exercised in separate processes.
@@ -7015,7 +7045,7 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
-# + band + modeGroup). Five tests:
+# + band + modeGroup). Six tests:
 #   parsesSampleAdif (10 QSO bundled fixture, first/last callsigns
 #   resolve, SSB -> PHONE / CW -> CW group normalisation),
 #   emitsFinishedSignal (QSignalSpy waits parseFileAsync ->
@@ -7023,6 +7053,8 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 #   skipsHeaderSection (no <adif_ver> / <programid> leakage),
 #   handlesCaseInsensitiveTags (mixed-case <CALL> / <Call> /
 #   <call> + <EOR> / <eor> / <Eor> all parse),
+#   handlesTypeIndicatorTags (<CALL:6:S> / <FREQ:6:N> typed tags
+#   parse like plain ones; Longpath tests/tst_adif_parser.cpp [@383f058]),
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
@@ -11039,6 +11071,10 @@ endif()
 # document, section 12.8): the Core's relay-leg runner over the relay
 # fixtures in rendezvous/conformance/v1/relay/, and the leg's own rules.
 # Loopback only.
+# 2026-10-22: Happy Eyeballs (RFC 8305) for WebSockets to a host name: a
+# silent IPv6 address (a full accept queue on ::1) and an answering IPv4 one,
+# the in-process CONNECT tunnel, and the cases left as before. Loopback only.
+nereus_add_test(tst_happy_eyeballs EXTRA_LABELS session)
 nereus_add_test(tst_relay_leg EXTRA_LABELS session)
 target_compile_definitions(tst_relay_leg PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

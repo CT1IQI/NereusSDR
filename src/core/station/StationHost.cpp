@@ -245,6 +245,19 @@ bool StationHost::start()
                                             ? QStringLiteral("fullband (sound up to 20 kHz)")
                                             : QStringLiteral("wideband (sound up to 8 kHz)"));
     m_mediaHub->setAudioLosslessAllowed(cfg.audioLosslessAllowed);
+    // Bench setting (JJ approved 2026-10-22, option C of the waterfall
+    // loss study): every display frame a keyframe. Read here, once, as the
+    // Core starts; default off, and said in the log only when on.
+    const bool keyframeEveryFrame =
+        cfg.settings->value(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey),
+                            QStringLiteral("False")).toString()
+        == QLatin1String("True");
+    m_mediaHub->setDisplayKeyframeEveryFrame(keyframeEveryFrame);
+    if (keyframeEveryFrame) {
+        qCInfo(lcApp).noquote()
+            << QStringLiteral("DaemonApp: %1 is on: every display frame goes as a keyframe")
+                   .arg(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey));
+    }
     // Install every source before advertising the capability. A client can
     // authenticate immediately after listen(), so there must be no window in
     // which telemetry is negotiated without a collector to publish it: each
