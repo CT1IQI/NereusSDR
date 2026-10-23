@@ -6,6 +6,10 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23: NSDC v2 sender: a split frame of a pan with a wide row
+//               shorter than 768 samples carries the wide plane in its row
+//               part. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-22: the over-cost test's comment names the wide plane, not the
 //               extras. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -854,6 +858,7 @@ private slots:
     void keyframeEveryFrameSendsRowsThatDecodeAlone();
     void displayCodecV2SplitFrameSendsBothPartsInOneTurn_data();
     void displayCodecV2SplitFrameSendsBothPartsInOneTurn();
+    void displayCodecV2SplitFrameCarriesAWideRowShorterThan768();
     void displayCodecV2MessagesDecodeToTheFramesTheCoreReduced_data();
     void displayCodecV2MessagesDecodeToTheFramesTheCoreReduced();
     void displayCodecV2FrameOverItsAdmittedCostIsDroppedWithAWarning();
@@ -2630,6 +2635,73 @@ void TstDaemonMediaController::displayCodecV2SplitFrameSendsBothPartsInOneTurn()
     QCOMPARE(whole.disposition, DisplayCodecDisposition::Accepted);
     QCOMPARE(whole.frameCount, 1);
     QCOMPARE(whole.frame.waterfallDbm.size(), 4096);
+    harness.finish();
+}
+
+// NSDC v2 (display codec v2 document, section 5): a pan with a wide row
+// (wideSpanFactor 2) whose wide length is below SpectrumEndpoint's 768
+// cap splits like any other: the row part carries the waterfall and the
+// wide planes with 0x04 set (0x36), the trace part follows in the same
+// turn, and a fresh decoder releases the whole frame with its wide row at
+// the context's length.
+void TstDaemonMediaController::displayCodecV2SplitFrameCarriesAWideRowShorterThan768()
+{
+    Harness harness;
+    harness.useManualDisplayTicks();
+    harness.establishSession();
+    QSignalSpy controls(&harness.client, &StationClient::mediaControlReceived);
+    harness.startReadyPeer(/*iq=*/false, /*waveform=*/false, /*displayCodecV2=*/true);
+    QCOMPARE(harness.controller.displayCodecVersion(), quint32{2});
+    // A 12 kHz view of the 192 kHz stream at FFT size 4096 (the Core
+    // narrows the 4096 pixels asked for to the view's bins): the wide row
+    // covers twice the view, 512 bins.
+    constexpr quint32 kEndpoint = 82;
+    QJsonObject request = subscription(
+        kEndpoint, 1, harness.sliceId, harness.radio.streamCentreHz(harness.streamIndex));
+    request.insert(QStringLiteral("pixels"), 4096);
+    request.insert(QStringLiteral("spanHz"), 12000.0);
+    request.insert(QStringLiteral("fftSize"), 4096);
+    request.insert(QStringLiteral("wideSpanFactor"), 2.0);
+    QVERIFY(harness.client.sendMediaControl(request, harness.client.sessionEpoch()));
+    QJsonObject context;
+    QTRY_VERIFY(([&] {
+        harness.feedRadio();
+        context = messageFor(controls, QStringLiteral("context"), kEndpoint);
+        return !context.isEmpty();
+    })());
+    const int wideSamples = context.value(QStringLiteral("wideSamples")).toInt();
+    QVERIFY2(wideSamples > 0 && wideSamples < 768, qPrintable(QString::number(wideSamples)));
+
+    FakeTransport& transport = *harness.mediaTransport;
+    int cycle = 0;
+    QTRY_VERIFY(([&] {
+        harness.feedRadio(0.125 + 0.0078125 * (++cycle % 16));
+        harness.sendDisplayTick();
+        return transport.displays.size() >= 2;
+    })());
+    QCOMPARE(transport.displays.size(), 2);
+    const QByteArray& row = transport.displays.at(0);
+    QVERIFY(isV2RowPart(row));
+    QCOMPARE(static_cast<quint8>(row.at(5)), quint8{0x36});
+    QVERIFY(isV2TracePart(transport.displays.at(1)));
+    const DaemonDisplayDiagnostics diagnostics = harness.controller.displayDiagnostics();
+    QCOMPARE(diagnostics.displaySplitFrames, quint64(1));
+    QCOMPARE(diagnostics.displayFramesSent, quint64(1));
+    QCOMPARE(diagnostics.displaySecondPartRefusals, quint64(0));
+
+    DisplayCodecDecoder decoder;
+    QCOMPARE(decoder.decode(row).disposition, DisplayCodecDisposition::Held);
+    const DisplayCodecDecodeResult whole = decoder.decode(transport.displays.at(1));
+    QCOMPARE(whole.disposition, DisplayCodecDisposition::Accepted);
+    QCOMPARE(whole.frameCount, 1);
+    QVERIFY(whole.frame.waterfallAdvance);
+    QVERIFY(!whole.frame.traceCarried);
+    QCOMPARE(whole.frame.context.wideSamples, static_cast<quint16>(wideSamples));
+    QCOMPARE(whole.frame.wideDbm.size(), wideSamples);
+    QCOMPARE(whole.frame.context.waterfallSamples,
+             static_cast<quint16>(context.value(QStringLiteral("waterfallSamples")).toInt()));
+    QCOMPARE(whole.frame.waterfallDbm.size(), int(whole.frame.context.waterfallSamples));
+    QCOMPARE(whole.frame.traceDbm.size(), int(whole.frame.context.traceSamples));
     harness.finish();
 }
 

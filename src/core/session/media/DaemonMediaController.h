@@ -8,6 +8,8 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-23: American spelling in the keyframe every frame comment.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
 //               setEncodedFrameObserverForTest and the observer) build only
 //               with NEREUS_BUILD_TESTS. J.J. Boyd (KG4VCF), AI-assisted
@@ -520,7 +522,7 @@ public:
     /// Bench setting kDisplayKeyframeEveryFrameSettingsKey: every display
     /// frame (receive and transmit) is encoded as a keyframe. Takes effect
     /// on the next frame encoded. A keyframe request from the window is
-    /// still counted and honoured; it never sends a second frame. An NSDC
+    /// still counted and honored; it never sends a second frame. An NSDC
     /// v2 connection has no keyframes, so it changes nothing there.
     void setDisplayKeyframeEveryFrame(bool on);
     bool displayKeyframeEveryFrame() const noexcept { return m_displayKeyframeEveryFrame.load(); }
