@@ -1,6 +1,11 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
 //   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the run level starts at the seed's
+//                                    target, -155.5 and -154.3, and the
+//                                    local pan runs on the rows' clock.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
 //                                    the seed starts the floor's fast
 //                                    attack, so NF-AGC's low is the AGC's
 //                                    run level, -152.2 and -152.32.
@@ -9413,14 +9418,14 @@ private slots:
         // row seeds the floor where the estimate settles on it, the pixel
         // with 3 in 20 of the 128 below it: pixel 19 of -160 + 0.5 i,
         // -150.5, and starts its fast attack (as Thetis starts a display,
-        // display.cs:3698-3700 [v2.10.3.15]). The run level, primed at the
-        // restart floor of -150, moves 0.4 of the way to -155.5: -152.2.
-        // The second row is 20 dB up, with no pixel under -150.5, so in
-        // fast attack the estimate climbs 3 dB and the line follows at once,
-        // and the run level moves 0.4 of the way from -152.2 to -147.5 - 5:
-        // -152.32.
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -152.2f << 0.0f << -152.32f << 0.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -152.2f << 0.0f << -152.32f << 0.0f;
+        // display.cs:3698-3700 [v2.10.3.15]). The run level starts at the
+        // seed's target, -155.5, not at Thetis's restart floor of -150
+        // (PR 628). The second row is 20 dB up, with no pixel under -150.5,
+        // so in fast attack the estimate climbs 3 dB and the line follows at
+        // once, and the run level moves 0.4 of the way from -155.5 to
+        // -147.5 - 5: -154.3.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }
@@ -9576,6 +9581,10 @@ private slots:
         localContext.exactCentreHz = 14225023.4375;
         localContext.exactSpanHz = 24046.875;
         local.setDisplayFps(20);
+        // The local pan's display clock is the Core's: the noise floor's
+        // fast attack, which the first row starts, runs on the same time.
+        qint64 localNowMs = 1000;
+        local.setDisplayClockForTest([&localNowMs] { return localNowMs; });
         // These rows are the Core's trace as sent, and nothing averages them
         // here: the pan asks for no averaging, so it takes no starting value
         // out of them (at Log Recursive it would, as for a new picture).
@@ -9590,10 +9599,11 @@ private slots:
             frame.waterfallAdvance = true;
             frame.traceDbm = row;
             frame.waterfallDbm = row;
+            inputs.nowMs = 1000 + rowIndex * 50;
+            localNowMs = inputs.nowMs;
             QVERIFY(local.updateRemoteSpectrum(frame));
             local.composeWaterfallActiveThresholds(row);
             localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
-            inputs.nowMs = 1000 + rowIndex * 50;
             computed.append(processor.process(frame, inputs));
             qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
                     << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second

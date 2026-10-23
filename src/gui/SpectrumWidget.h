@@ -3614,6 +3614,8 @@ private:
     // Whether the last row the noise floor took had no measured pixel (a
     // hold), so the fast attack runs its time again when data comes back.
     bool m_noiseFloorHeldLastFrame {false};
+    // When that hold began, on the display clock.
+    qint64 m_noiseFloorHoldStartMs {0};
     // A remote pan's view of the Core's trace average: the share of it the
     // Core's starting value held when the current context started (1 for a
     // new picture, 0 once warm or when the mode has no starting value), the

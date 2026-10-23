@@ -254,6 +254,39 @@ private slots:
         QVERIFY(keyed.process(flatRow(100, -120.0f), 30, 5001));
     }
 
+    // PR 628 round four: a hold (frames with no measured pixel) that ends
+    // with fast attack on resumes it for what its minimum had left when the
+    // hold began, all of it for one set inside the hold.
+    void aHoldResumesFastAttackForWhatItsMinimumHadLeft()
+    {
+        NoiseFloorFollower nf;
+        QVERIFY(!nf.resumeFastAttackAfterHold(0, 100));
+        nf.process(flatRow(100, -120.0f), 30, 0);
+        // A MOX un-key's 3 s minimum, 1 s of it run before the hold.
+        nf.setFastAttack(true, 1000, 3000);
+        nf.process(flatRow(100, -120.0f), 30, 1500);
+        QVERIFY(nf.resumeFastAttackAfterHold(2000, 10000));
+        QVERIFY(nf.fastAttack());
+        QVERIFY(!nf.settled());
+        QVERIFY(!nf.process(flatRow(100, -120.0f), 30, 11999));
+        QVERIFY(nf.fastAttack());
+        QVERIFY(nf.process(flatRow(100, -120.0f), 30, 12001));
+        QVERIFY(nf.settled());
+        // Set inside the hold: all of it from the hold's end.
+        NoiseFloorFollower inside;
+        inside.process(flatRow(100, -120.0f), 30, 0);
+        inside.setFastAttack(true, 5000, 3000);
+        QVERIFY(inside.resumeFastAttackAfterHold(4000, 9000));
+        QVERIFY(!inside.process(flatRow(100, -120.0f), 30, 11999));
+        QVERIFY(inside.process(flatRow(100, -120.0f), 30, 12001));
+        // Run out before the hold: it ends on the first converged frame.
+        NoiseFloorFollower spent;
+        spent.process(flatRow(100, -120.0f), 30, 0);
+        spent.setFastAttack(true, 0, 1000);
+        QVERIFY(spent.resumeFastAttackAfterHold(5000, 9000));
+        QVERIFY(spent.process(flatRow(100, -120.0f), 30, 9001));
+    }
+
     // A window whose stream stops or reconnects keeps drawing frames with
     // no data; the floor it had stays until the band comes back.
     void framesWithNoDataLeaveAFloorAlone()
@@ -534,29 +567,63 @@ private slots:
         settings.agc = true;
         settings.noiseFloorAgc = true;
         settings.noiseFloorAgcOffsetDb = -3.0f;
-        settings.noiseFloorDbm = -115.0f;
-        settings.noiseFloorSettled = false;
         settings.highDbm = -58.0f;
         follower.restoreAgcRunLevel(std::nullopt);
         QCOMPARE(*follower.agcRunLevel(), -150.0f);
         float low = 0.0f;
         float high = 0.0f;
-        // -150 * 0.6 + -118 * 0.4 = -137.2, then -129.52, whatever the row.
+        // Before the floor has an estimate it reads -200 dBm: the run level
+        // takes nothing from those rows (PR 628).
+        settings.noiseFloorDbm = -200.0f;
+        settings.noiseFloorSettled = false;
+        settings.noiseFloorSeeded = false;
+        for (int i = 0; i < 5; ++i) {
+            follower.compose(flatRow(10, -90.0f), settings, low, high, 0);
+            QCOMPARE(low, -150.0f);
+        }
+        // The seed: the run level starts at the floor's target, -115 - 3.
+        settings.noiseFloorDbm = -115.0f;
+        settings.noiseFloorSeeded = true;
         follower.compose(flatRow(10, -90.0f), settings, low, high, 0);
-        QVERIFY2(std::abs(low - -137.2f) < 1.0e-3f, qPrintable(QString::number(low)));
+        QCOMPARE(low, -118.0f);
         QCOMPARE(*follower.agcRunLevel(), low);
         QCOMPARE(high, -58.0f);
+        // Then Thetis's blend: -118 * 0.6 + -113 * 0.4 = -116, whatever the row.
+        settings.noiseFloorDbm = -110.0f;
         follower.compose(flatRow(10, -90.0f), settings, low, high, 0);
-        QVERIFY2(std::abs(low - -129.52f) < 1.0e-3f, qPrintable(QString::number(low)));
+        QVERIFY2(std::abs(low - -116.0f) < 1.0e-3f, qPrintable(QString::number(low)));
+        follower.compose(flatRow(10, -90.0f), settings, low, high, 0);
+        QVERIFY2(std::abs(low - -114.8f) < 1.0e-3f, qPrintable(QString::number(low)));
         // Settled: the target itself, and the run level keeps closing on it.
         settings.noiseFloorSettled = true;
         follower.compose(flatRow(10, -90.0f), settings, low, high, 0);
-        QCOMPARE(low, -118.0f);
-        QVERIFY(std::abs(*follower.agcRunLevel() - -124.912f) < 1.0e-3f);
-        // A follower that was never primed starts at the restart floor too.
+        QCOMPARE(low, -113.0f);
+        QVERIFY(std::abs(*follower.agcRunLevel() - -114.08f) < 1.0e-3f);
+        // A follower that was never primed starts at the target of a floor
+        // with an estimate, and stays at the restart floor without one.
         WaterfallLevelFollower fresh;
+        settings.noiseFloorSettled = false;
         fresh.compose(flatRow(10, -90.0f), settings, low, high, 0);
-        QVERIFY(std::abs(*fresh.agcRunLevel() - -137.2f) < 1.0e-3f);
+        QCOMPARE(*fresh.agcRunLevel(), -113.0f);
+        QCOMPARE(low, -113.0f);
+        WaterfallLevelFollower unseeded;
+        settings.noiseFloorDbm = -200.0f;
+        settings.noiseFloorSeeded = false;
+        unseeded.compose(flatRow(10, -90.0f), settings, low, high, 0);
+        QCOMPARE(*unseeded.agcRunLevel(), -150.0f);
+        // A floor that loses its estimate (a new pan) starts again at the
+        // target when it has one; a saved band level is kept by a floor
+        // that never lost it, and resetAgc starts again too.
+        settings.noiseFloorDbm = -120.0f;
+        settings.noiseFloorSeeded = true;
+        unseeded.compose(flatRow(10, -90.0f), settings, low, high, 0);
+        QCOMPARE(low, -123.0f);
+        unseeded.restoreAgcRunLevel(-130.0f);
+        unseeded.compose(flatRow(10, -90.0f), settings, low, high, 0);
+        QVERIFY2(std::abs(low - -127.2f) < 1.0e-3f, qPrintable(QString::number(low)));
+        unseeded.resetAgc();
+        unseeded.compose(flatRow(10, -90.0f), settings, low, high, 0);
+        QCOMPARE(low, -123.0f);
     }
 
     void noiseFloorAgcDoesNothingWithAgcOff()

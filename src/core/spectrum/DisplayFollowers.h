@@ -165,6 +165,12 @@ public:
     /// short.
     bool setFastAttack(bool on, qint64 nowMs, qint64 minMs = kFastAttackMinMs);
     bool fastAttack() const { return m_fastAttack; }
+    /// NereusSDR, not in Thetis: a display that held the follower (frames
+    /// with no measured pixel, which change nothing) from holdStartMs until
+    /// nowMs. A fast attack still on runs again from nowMs for what its
+    /// minimum had left at holdStartMs, all of it for one set inside the
+    /// hold. Returns whether one was on.
+    bool resumeFastAttackAfterHold(qint64 holdStartMs, qint64 nowMs);
     /// Whether the smoothed estimate can be used as the noise floor: out of
     /// fast attack, and a frame has been taken since the fast attack was
     /// last set. Thetis's test for NF-AGC,
@@ -260,6 +266,10 @@ struct WaterfallLevelSettings {
     /// (NoiseFloorFollower::settled). Read only with noiseFloorAgc.
     float noiseFloorDbm {-200.0f};
     bool noiseFloorSettled {false};
+    /// Whether the follower has an estimate yet (NoiseFloorFollower::seeded).
+    /// NF-AGC's run level takes nothing from a row without one, and starts
+    /// at the floor's target on the first row with one.
+    bool noiseFloorSeeded {true};
     /// Clarity writes the levels itself between rows; nothing here moves
     /// them while it does.
     bool clarityActive {false};
@@ -300,6 +310,8 @@ public:
     {
         m_agcPrimed = false;
         m_hasAgcLow = false;
+        // NF-AGC turned on starts at the floor's target, as at the seed.
+        m_floorSeenSeeded = false;
     }
     bool agcPrimed() const { return m_agcPrimed; }
 
@@ -341,6 +353,8 @@ public:
 private:
     float m_agcRunMin {0.0f};
     bool m_agcPrimed {false};
+    // Whether the last NF-AGC (or AGC) row had a floor with an estimate.
+    bool m_floorSeenSeeded {false};
     // The AGC low level last produced, for the rows of a key.
     float m_agcLow {0.0f};
     bool m_hasAgcLow {false};

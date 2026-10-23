@@ -53,6 +53,11 @@
 //                 creates the display (display.cs:3698-3700). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-23 - NF-AGC's run level takes nothing from rows before the
+//                 floor has an estimate and starts at the floor's target on
+//                 the row it first has one; a fast attack resumes after a
+//                 hold for what its minimum had left. J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -166,6 +171,16 @@ bool NoiseFloorFollower::setFastAttack(bool on, qint64 nowMs, qint64 minMs)
     }
     if (m_fastAttack == on) { return false; }
     m_fastAttack = on;
+    return true;
+}
+
+bool NoiseFloorFollower::resumeFastAttackAfterHold(qint64 holdStartMs, qint64 nowMs)
+{
+    if (!m_fastAttack) { return false; }
+    const qint64 ranBeforeHold = std::max<qint64>(0, holdStartMs - m_lastFastAttackMs);
+    m_fastAttackMinMs = std::max<qint64>(0, m_fastAttackMinMs - ranBeforeHold);
+    m_lastFastAttackMs = nowMs;
+    m_good = false;
     return true;
 }
 
@@ -437,6 +452,15 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
             m_agcRunMin = kAgcRestartFloorDbm;
             m_agcPrimed = true;
         }
+        // NereusSDR, not in Thetis (PR 628): a floor with no estimate yet
+        // reads -200 dBm, and the fixed restart floor ignores the band.
+        // The seed's fast attack keeps the floor unsettled for a second, so
+        // the run level is the low level for those rows. The run level
+        // takes nothing from a row before the floor has an estimate, and
+        // starts at the floor's target on the row it first has one.
+        if (settings.noiseFloorSeeded && !m_floorSeenSeeded) {
+            m_agcRunMin = noiseFloorTarget;
+        }
         // From Thetis display.cs:7653-7667 [v2.10.3.15]:
         //   //if (rx == 1)
         //   //    _RX1waterfallPreviousMinValue = (((_RX1waterfallPreviousMinValue * 8) + (waterfall_minimum * 2)) / 10) + 1; //wfagc
@@ -447,8 +471,11 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
         //   {
         //       _RX1waterfallPreviousMinValue = (_RX1waterfallPreviousMinValue * 0.6f) + (noiseFloorCompensationTarget * 0.4f);
         //   }
-        m_agcRunMin = m_agcRunMin * kNoiseFloorAgcKeepWeight
-            + noiseFloorTarget * kNoiseFloorAgcTargetWeight;
+        if (settings.noiseFloorSeeded) {
+            m_agcRunMin = m_agcRunMin * kNoiseFloorAgcKeepWeight
+                + noiseFloorTarget * kNoiseFloorAgcTargetWeight;
+        }
+        m_floorSeenSeeded = settings.noiseFloorSeeded;
     } else {
         // AGC without NF-AGC keeps NereusSDR's own follower on the row's
         // minimum (Phase 3G-9c). NereusSDR, based on Thetis display.cs:7666
@@ -467,6 +494,8 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
         } else {
             m_agcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_agcRunMin;
         }
+        // A run level from the rows: NF-AGC turned on later carries on from it.
+        m_floorSeenSeeded = settings.noiseFloorSeeded;
     }
 
     if (settings.noiseFloorAgc) {

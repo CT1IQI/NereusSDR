@@ -25,6 +25,10 @@
 //                                    fast attack; the remote pans run on
 //                                    a display clock of the Core's frames.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  NF-AGC's low on an older Core's new
+//                                    pan, and a MOX un-key's fast attack
+//                                    across a hold. AI-assisted via
+//                                    Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -539,6 +543,116 @@ private slots:
                      qPrintable(QStringLiteral("frame %1: %2, new band %3")
                                     .arg(frame).arg(floors.at(frame)).arg(settled)));
         }
+    }
+
+    // PR 628 round three: a new pan on an older Core (no picture word) at
+    // 2000 ms holds while the Core's average warms, and its floor reads
+    // -200 dBm until then. NF-AGC's run level takes nothing from those rows
+    // and starts at the seed's target, so the waterfall's low level is
+    // within 3 dB of where it settles from the pan's first floor (it was
+    // 44 to 48 dB under, dragged toward -205 by the held rows).
+    void nfAgcOnAnOlderCoresNewPanStartsAtTheBand()
+    {
+        constexpr int kAverageTimeMs = 2000;
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        w.setWfAgcEnabled(true);
+        w.setWaterfallNFAGCEnabled(true);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        // NF-AGC's low level does not read the row.
+        const QVector<float> row(128, -120.0f);
+        QVector<float> floors;
+        QVector<float> lows;
+        for (int frame = 0; frame < 10 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            w.composeWaterfallActiveThresholds(row);
+            floors.append(w.nfLerpAverageForTest());
+            lows.append(w.wfActiveLowThreshold());
+        }
+        const double settledLow = settledOf(lows);
+        int first = 0;
+        while (first < floors.size() && floors.at(first) <= -199.0f) { ++first; }
+        double worst = 0.0;
+        int over = 0;
+        for (int frame = first; frame < lows.size(); ++frame) {
+            const double off = std::abs(lows.at(frame) - settledLow);
+            worst = std::max(worst, off);
+            if (off >= 3.0) { ++over; }
+        }
+        qInfo("settled low %.2f dBm; held %d frames; first low %+.2f dB; worst %.2f dB;"
+              " %d frames 3 dB or more off", settledLow, first,
+              double(lows.value(first)) - settledLow, worst, over);
+        // The held rows this is about.
+        QVERIFY2(first > 5 && first < kFps, qPrintable(QString::number(first)));
+        for (int frame = first; frame < lows.size(); ++frame) {
+            QVERIFY2(std::abs(lows.at(frame) - settledLow) < 3.0,
+                     qPrintable(QStringLiteral("frame %1: low %2, settled %3")
+                                    .arg(frame).arg(lows.at(frame)).arg(settledLow)));
+        }
+    }
+
+    // PR 628 round three: a MOX edge's fast attack runs for the pan's hold
+    // length (3 s here). A new picture straight after it holds the pan while
+    // the Core's average warms; from the end of that hold the fast attack
+    // runs for what it had left, not a flat second.
+    void aMoxEdgesFastAttackOutlastsAHoldAfterIt()
+    {
+        constexpr int kAverageTimeMs = 650;
+        constexpr qint64 kHoldLengthMs = 3000;
+        RemoteCore core(kAverageTimeMs);
+        SpectrumWidget w;
+        configureRemote(w, kAverageTimeMs);
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        for (int frame = 0; frame < 10 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+        }
+        QVERIFY(!w.noiseFloorFastAttack());
+
+        w.setDisplayKeyed(true, kHoldLengthMs, 0);
+        w.setDisplayKeyed(false, kHoldLengthMs, 0);
+        QVERIFY(w.noiseFloorFastAttack());
+        // A new picture: a new endpoint on another centre, with no picture
+        // word (the band's noise is the same).
+        core.source.centreHz += 1'000'000.0;
+        core.request.centreHz = core.source.centreHz;
+        core.source.sourceGeneration = 12;
+        core.source.contextGeneration = 5;
+        core.start();
+        core.decoder.reset();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        QVERIFY(!w.remoteContextKeptPicture());
+
+        const float held = w.nfLerpAverageForTest();
+        QVector<float> floors;
+        QVector<bool> fastAttacks;
+        for (int frame = 0; frame < 8 * kFps; ++frame) {
+            core.deliver(w);
+            QVERIFY(!QTest::currentTestFailed());
+            floors.append(w.nfLerpAverageForTest());
+            fastAttacks.append(w.noiseFloorFastAttack());
+        }
+        int holdEnd = 0;
+        while (holdEnd < floors.size() && floors.at(holdEnd) == held) { ++holdEnd; }
+        int fastAttackEnd = holdEnd;
+        while (fastAttackEnd < fastAttacks.size() && fastAttacks.at(fastAttackEnd)) {
+            ++fastAttackEnd;
+        }
+        qInfo("hold of %d frames; fast attack for %d frames (%lld ms) after it",
+              holdEnd, fastAttackEnd - holdEnd,
+              static_cast<long long>(fastAttackEnd - holdEnd) * 34);
+        QVERIFY2(holdEnd > 10 && holdEnd < 4 * kFps, qPrintable(QString::number(holdEnd)));
+        // It began one frame before the hold: all but 34 ms of it is left.
+        QVERIFY2((fastAttackEnd - holdEnd) * 34 >= kHoldLengthMs - 2 * 34,
+                 qPrintable(QString::number(fastAttackEnd - holdEnd)));
+        QVERIFY2(fastAttackEnd < fastAttacks.size(), qPrintable(QString::number(fastAttackEnd)));
     }
 
     void offDoesNothing()

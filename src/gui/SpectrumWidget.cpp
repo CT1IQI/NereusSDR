@@ -18,8 +18,10 @@
 //                 is warm (noteRemoteTraceWarmUp). A same or moved picture
 //                 during that warm-up holds rather than takes the start out;
 //                 the grid follow and the 3D floor wait for an estimate; and
-//                 the noise floor's fast attack runs its full time again
-//                 from the end of a hold.
+//                 the noise floor's fast attack runs again from the end of
+//                 a hold for what its minimum had left when it began.
+//                 NF-AGC's run level takes nothing from rows before the
+//                 floor has an estimate (noiseFloorSeeded).
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -5119,12 +5121,20 @@ void SpectrumWidget::processNoiseFloor()
     // NereusSDR, not in Thetis: a row with no measured pixel (a remote pan
     // holding while the Core's average warms) changes nothing in the
     // follower, so fast attack's time would pass while it measures nothing
-    // and it would leave fast attack on the first frame after the hold. The
-    // fast attack runs its time again from the end of a hold.
+    // and it would leave fast attack on the first frame after the hold. From
+    // the end of a hold the fast attack runs for what its minimum had left
+    // when the hold began (all of it for a trigger inside the hold), so a
+    // MOX edge's keeps the hold length it was given.
     const bool held = useMeasurement
         && std::none_of(src.cbegin(), src.cend(), [](float dB) { return std::isfinite(dB); });
-    if (m_noiseFloorHeldLastFrame && !held && m_noiseFloor.fastAttack()) {
-        applyNoiseFloorFastAttack(true, NoiseFloorFollower::kFastAttackMinMs);
+    if (held && !m_noiseFloorHeldLastFrame) {
+        m_noiseFloorHoldStartMs = displayNowMs();
+    }
+    if (m_noiseFloorHeldLastFrame && !held
+        && m_noiseFloor.resumeFastAttackAfterHold(m_noiseFloorHoldStartMs, displayNowMs())) {
+        // As applyNoiseFloorFastAttack: the grid's reading is not good.
+        m_gridFollowNfGood = false;
+        if (m_showNoiseFloor) { markOverlayDirty(); }
     }
     m_noiseFloorHeldLastFrame = held;
     const int fps = overlayFrameRate();
@@ -10039,6 +10049,7 @@ void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPi
     // (core/session/media/DisplayExtras.cpp).
     settings.noiseFloorDbm = m_noiseFloor.lerpAverage() + displayCalOffsetDb();
     settings.noiseFloorSettled = m_noiseFloor.settled();
+    settings.noiseFloorSeeded = m_noiseFloor.seeded();
     settings.clarityActive = m_clarityActive;
     m_wfLevels.compose(wfPixelsDbm, settings,
                        m_wfActiveLowThreshold, m_wfActiveHighThreshold,

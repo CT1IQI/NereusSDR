@@ -45,6 +45,9 @@
 //                                    out while it warms up, wings with no
 //                                    data marked).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  NF-AGC is told whether the floor has
+//                                    an estimate yet (noiseFloorSeeded).
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayExtras.h"
@@ -901,6 +904,7 @@ DisplayExtrasFrame DisplayExtrasProcessor::process(const DisplayCodecFrame& fram
             settings.noiseFloorAgcOffsetDb = static_cast<float>(levels.offsetDb);
             settings.noiseFloorDbm = m_noiseFloor.lerpAverage();
             settings.noiseFloorSettled = m_noiseFloor.settled();
+            settings.noiseFloorSeeded = m_noiseFloor.seeded();
             settings.clarityActive = levels.mode == WaterfallLevelMode::Clarity;
             m_levels.compose(frame.waterfallDbm, settings, m_activeLow, m_activeHigh,
                              inputs.nowMs);

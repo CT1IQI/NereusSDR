@@ -46,6 +46,10 @@
 //                                    noisy band at 1, 2 and 4 bins to a
 //                                    pixel and 30, 650 and 2000 ms.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  The NF-AGC low level from the first
+//                                    frame again; 30 ms at 1 and 2 bins to
+//                                    a pixel. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -807,8 +811,8 @@ private slots:
     // display that has nothing yet) change nothing. From that frame the
     // floor is in fast attack, as Thetis starts a display: within its 3 dB
     // step of the band, and within 1 dB once the fast attack ends. NF-AGC's
-    // low level runs from the AGC's level until then: from half a second on
-    // it is as near the band as the floor is.
+    // low level is the AGC's run level until then, which starts at the
+    // seed's target: as near the band as the floor is from the first frame.
     void aStartedDisplayReadsTheBandFromItsFirstFrameWithData()
     {
         Run run(levelsRequest(WaterfallLevelMode::NoiseFloorAgc));
@@ -819,6 +823,8 @@ private slots:
         QVERIFY2(std::abs(*first.noiseFloorDbm + 111.0f) < 0.05f,
                  qPrintable(QString::number(*first.noiseFloorDbm)));
         QVERIFY(*first.noiseFloorFastAttack);
+        QVERIFY2(std::abs(first.waterfallLevelsDbm->first + 111.0f) < 0.05f,
+                 qPrintable(QString::number(first.waterfallLevelsDbm->first)));
         bool sawFastAttackEnd = false;
         for (int i = 1; i <= 300; ++i) {
             const DisplayExtrasFrame out = run.frames(1, -111.0f);
@@ -829,12 +835,10 @@ private slots:
             QVERIFY2(std::abs(*out.noiseFloorDbm + 111.0f) < (fastAttack ? 3.05f : 1.0f),
                      qPrintable(QStringLiteral("frame %1 floor %2")
                                     .arg(i).arg(*out.noiseFloorDbm)));
-            if (i >= 15) {
-                QVERIFY2(std::abs(out.waterfallLevelsDbm->first + 111.0f)
-                             < (fastAttack ? 3.05f : 1.0f),
-                         qPrintable(QStringLiteral("frame %1 low %2")
-                                        .arg(i).arg(out.waterfallLevelsDbm->first)));
-            }
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first + 111.0f)
+                         < (fastAttack ? 3.05f : 1.0f),
+                     qPrintable(QStringLiteral("frame %1 low %2")
+                                    .arg(i).arg(out.waterfallLevelsDbm->first)));
         }
         QVERIFY(sawFastAttackEnd);
     }
@@ -842,9 +846,10 @@ private slots:
     // PR 628 review: the trace's Log Recursive average (both clients'
     // default) starts at -160 dBm on a new endpoint, so its first frames
     // read below the band. A real endpoint at Log Recursive, 30 ms and
-    // 650 ms, into the display's extras: the floor is within 3 dB of the
-    // band from the first frame (fast attack's 3 dB step on this flat band
-    // reaches it), and the NF-AGC low level from half a second on.
+    // 650 ms, into the display's extras: the floor and the NF-AGC low level
+    // are within 3 dB of the band from the first frame (fast attack's 3 dB
+    // step on this flat band reaches it; the run level starts at the
+    // seed's target).
     void aStartedDisplayAtLogRecursiveReadsTheBandFromItsFirstFrame_data()
     {
         QTest::addColumn<int>("averageTimeMs");
@@ -910,11 +915,9 @@ private slots:
             QVERIFY2(std::abs(*out.noiseFloorDbm - kBandDbm) < 3.05f,
                      qPrintable(QStringLiteral("frame %1 floor %2")
                                     .arg(i).arg(*out.noiseFloorDbm)));
-            if (i >= 15) {
-                QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
-                         qPrintable(QStringLiteral("frame %1 low %2")
-                                        .arg(i).arg(out.waterfallLevelsDbm->first)));
-            }
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 low %2")
+                                    .arg(i).arg(out.waterfallLevelsDbm->first)));
         }
     }
 
@@ -985,26 +988,30 @@ private slots:
     // PR 628 re-review: the warm-up on a noisy band. The FFT's bins are
     // exponentially distributed power, so the trace's own spread narrows as
     // its average fills, and the peak detector's spread narrows with more
-    // bins to a pixel. The floor is within 3 dB of where it settles from the
-    // fourth frame (the seed's fast attack, as Thetis starts a display,
-    // carries it there) and across a restart of the source, and the NF-AGC
-    // low level from the ninth (it runs from the AGC's restart floor until
-    // the fast attack ends). Rows: a Peak detector at 1 and 2 FFT bins to a
-    // pixel, 650 ms and 2000 ms, and at 4, 30 ms to 2000 ms. (At 30 ms with
-    // 1 or 2 bins to a pixel the trace is all but unaveraged, and the
-    // floor, which fast attack does not smooth, swings just past 3 dB
-    // during the fast attack's second.)
+    // bins to a pixel. The floor and the NF-AGC low level (whose run level
+    // starts at the seed's target) are within 3 dB of where they settle
+    // from the first frame at 4 FFT bins to a pixel, and from the fourth
+    // (the seed's fast attack, as Thetis starts a display, carries them
+    // there) at 1 and 2, and across a restart of the source. Rows: a Peak
+    // detector at 1, 2 and 4 bins to a pixel, 30, 650 and 2000 ms. At 30 ms
+    // with 1 or 2 bins to a pixel the trace is all but unaveraged and the
+    // floor, which fast attack does not smooth, swings past 3 dB: under
+    // 3.5 dB there while the fast attack runs, under 3 dB after it.
     void aNoisyBandStaysWithinThreeDbOfItsSettledFloor_data()
     {
         QTest::addColumn<int>("binsPerPixel");
         QTest::addColumn<int>("averageTimeMs");
+        // The first frame checked, and the bound while the fast attack runs.
+        QTest::addColumn<int>("firstFrame");
+        QTest::addColumn<double>("fastAttackBoundDb");
         for (const int bins : {1, 2}) {
+            QTest::addRow("%d bins a pixel, 30 ms", bins) << bins << 30 << 3 << 3.5;
             for (const int ms : {650, 2000}) {
-                QTest::addRow("%d bins a pixel, %d ms", bins, ms) << bins << ms;
+                QTest::addRow("%d bins a pixel, %d ms", bins, ms) << bins << ms << 3 << 3.0;
             }
         }
         for (const int ms : {30, 650, 2000}) {
-            QTest::addRow("4 bins a pixel, %d ms", ms) << 4 << ms;
+            QTest::addRow("4 bins a pixel, %d ms", ms) << 4 << ms << 0 << 3.0;
         }
     }
 
@@ -1012,15 +1019,16 @@ private slots:
     {
         QFETCH(int, binsPerPixel);
         QFETCH(int, averageTimeMs);
+        QFETCH(int, firstFrame);
+        QFETCH(double, fastAttackBoundDb);
         constexpr int kFps = 30;
-        // The frames the floor and the low level have to come within 3 dB.
-        constexpr int kFloorFrames = 3;
-        constexpr int kLowFrames = 8;
-        // The floor and low level of each frame, from a new endpoint whose
-        // source restarts at frame `restartAt` (none if negative).
+        // The floor, low level and fast attack of each frame, from a new
+        // endpoint whose source restarts at frame `restartAt` (none if
+        // negative).
         const auto runBand = [binsPerPixel, averageTimeMs](int frames, int restartAt,
                                                            QVector<float>& floors,
-                                                           QVector<float>& lows) {
+                                                           QVector<float>& lows,
+                                                           QVector<bool>& fastAttacks) {
             SpectrumEndpointSourceContext source;
             source.source = {2, FftTier::Wide};
             source.sourceGeneration = 11;
@@ -1073,11 +1081,13 @@ private slots:
                 QVERIFY(out.noiseFloorDbm.has_value() && out.waterfallLevelsDbm.has_value());
                 floors.append(*out.noiseFloorDbm);
                 lows.append(out.waterfallLevelsDbm->first);
+                fastAttacks.append(out.noiseFloorFastAttack.value_or(false));
             }
         };
         QVector<float> referenceFloors;
         QVector<float> referenceLows;
-        runBand(20 * kFps, -1, referenceFloors, referenceLows);
+        QVector<bool> referenceFastAttacks;
+        runBand(20 * kFps, -1, referenceFloors, referenceLows, referenceFastAttacks);
         QVERIFY(!QTest::currentTestFailed());
         double settledFloor = 0.0;
         double settledLow = 0.0;
@@ -1090,34 +1100,41 @@ private slots:
 
         QVector<float> floors;
         QVector<float> lows;
-        runBand(10 * kFps, 5 * kFps, floors, lows);
+        QVector<bool> fastAttacks;
+        runBand(10 * kFps, 5 * kFps, floors, lows, fastAttacks);
         QVERIFY(!QTest::currentTestFailed());
         double worstFloor = 0.0;
         double worstLow = 0.0;
+        double worstInFastAttack = 0.0;
         int worstFrame = 0;
-        for (int i = kFloorFrames; i < floors.size(); ++i) {
-            if (std::abs(floors.at(i) - settledFloor) > worstFloor) {
-                worstFloor = std::abs(floors.at(i) - settledFloor);
+        int fastAttackFrames = 0;
+        for (int i = firstFrame; i < floors.size(); ++i) {
+            const double floorOff = std::abs(floors.at(i) - settledFloor);
+            const double lowOff = std::abs(lows.at(i) - settledLow);
+            if (floorOff > worstFloor) {
+                worstFloor = floorOff;
                 worstFrame = i;
             }
+            worstLow = std::max(worstLow, lowOff);
+            if (fastAttacks.at(i)) {
+                ++fastAttackFrames;
+                worstInFastAttack = std::max({worstInFastAttack, floorOff, lowOff});
+            }
         }
-        for (int i = kLowFrames; i < lows.size(); ++i) {
-            worstLow = std::max(worstLow, std::abs(lows.at(i) - settledLow));
-        }
-        qInfo("%d bins a pixel, %d ms: settled floor %.2f dBm; frames 0 to 2 %+.2f %+.2f %+.2f dB;"
-              " worst from frame %d %.2f dB (frame %d); low from frame %d %.2f dB off"
-              " (frame 0 %+.2f dB)",
+        qInfo("%d bins a pixel, %d ms: settled floor %.2f dBm; frames 0 to 2 %+.2f %+.2f %+.2f dB,"
+              " low %+.2f %+.2f %+.2f dB; from frame %d worst floor %.2f dB (frame %d), low %.2f"
+              " dB, %.2f dB in %d fast attack frames",
               binsPerPixel, averageTimeMs, settledFloor,
               floors.at(0) - settledFloor, floors.at(1) - settledFloor,
-              floors.at(2) - settledFloor, kFloorFrames, worstFloor, worstFrame,
-              kLowFrames, worstLow, lows.at(0) - settledLow);
-        for (int i = kFloorFrames; i < floors.size(); ++i) {
-            QVERIFY2(std::abs(floors.at(i) - settledFloor) < 3.0,
+              floors.at(2) - settledFloor, lows.at(0) - settledLow, lows.at(1) - settledLow,
+              lows.at(2) - settledLow, firstFrame, worstFloor, worstFrame, worstLow,
+              worstInFastAttack, fastAttackFrames);
+        for (int i = firstFrame; i < floors.size(); ++i) {
+            const double bound = fastAttacks.at(i) ? fastAttackBoundDb : 3.0;
+            QVERIFY2(std::abs(floors.at(i) - settledFloor) < bound,
                      qPrintable(QStringLiteral("frame %1 floor %2, settled %3")
                                     .arg(i).arg(floors.at(i)).arg(settledFloor)));
-        }
-        for (int i = kLowFrames; i < lows.size(); ++i) {
-            QVERIFY2(std::abs(lows.at(i) - settledLow) < 3.0,
+            QVERIFY2(std::abs(lows.at(i) - settledLow) < bound,
                      qPrintable(QStringLiteral("frame %1 low %2, settled %3")
                                     .arg(i).arg(lows.at(i)).arg(settledLow)));
         }
@@ -1199,11 +1216,9 @@ private slots:
             QVERIFY2(std::abs(*out.noiseFloorDbm - kBandDbm) < 3.05f,
                      qPrintable(QStringLiteral("frame %1 floor %2")
                                     .arg(i).arg(*out.noiseFloorDbm)));
-            if (i >= 15) {
-                QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
-                         qPrintable(QStringLiteral("frame %1 low %2")
-                                        .arg(i).arg(out.waterfallLevelsDbm->first)));
-            }
+            QVERIFY2(std::abs(out.waterfallLevelsDbm->first - kBandDbm) < 3.0f,
+                     qPrintable(QStringLiteral("frame %1 low %2")
+                                    .arg(i).arg(out.waterfallLevelsDbm->first)));
         }
     }
 
