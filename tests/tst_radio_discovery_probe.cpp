@@ -33,6 +33,11 @@
 //                 a scan and a probe started during the hold wait too, and
 //                 the hold is keyed by owner. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Review of PR 621: the connect-hold walk case counts
+//                 attempts from the moment the hold begins, reads every
+//                 100 ms over a span measured on the clock, and polls for
+//                 the walk's end, so a loaded runner cannot fail it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -77,6 +82,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QEventLoop>
 #include <QObject>
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QThread>
 #include <QTimer>
@@ -675,23 +681,37 @@ private slots:
     // lengths that is, then waits the quiet period endConnectHold() arms,
     // then finishes every NIC. Two NICs, two attempts each: four probes.
     void aConnectHoldStopsAWalkUntilItEndsAndTheQuietPeriodPasses() {
+        constexpr int kQuiet = 3;
+        constexpr int kPollMs = 100;
         WalkFakeRadio radio(WalkFakeRadio::Answer::Now);
         RadioDiscovery disc;
         disc.setScanNicsForTest(radio.nics() + radio.nics());
-        disc.setTimingForTest({2, 3, 40});   // one attempt's quiet budget: 120 ms
+        disc.setTimingForTest({2, kQuiet, kPollMs});
         QSignalSpy finished(&disc, &RadioDiscovery::discoveryFinished);
         int owner = 0;
 
         disc.startDiscovery();
-        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(radio.p1Probes() >= 1, 5000);
+        // The hold may begin after any attempt short of the last: a loaded
+        // runner can be slow to get here. Counted where the walk sends
+        // (scanStatsForTest), so a probe still in flight cannot blur it.
         RadioDiscovery::beginConnectHold(&owner);
+        const int attemptsAtHold = disc.scanStatsForTest().attempts;
+        QVERIFY2(disc.isScanRunning() && attemptsAtHold < 4,
+                 "the walk ended before the hold began; nothing tested");
         QVERIFY(RadioDiscovery::connectHoldActive());
         QVERIFY(disc.holdOffRemainingMs() > 0);
 
-        // Many attempt lengths pass; the walk neither sends nor ends.
-        for (int i = 0; i < 60; ++i) {
-            QTest::qWait(10);
-            QCOMPARE(radio.p1Probes(), 1);
+        // Longer than three attempts at their hard deadline pass, measured
+        // on the clock and read every 100 ms; the walk neither sends nor
+        // ends. A slow runner only makes the wait longer.
+        const qint64 kSpanMs = 3LL * RadioDiscovery::attemptDeadlineFactorForTest()
+                               * kQuiet * kPollMs;
+        QElapsedTimer held;
+        held.start();
+        while (held.elapsed() < kSpanMs) {
+            QTest::qWait(100);
+            QCOMPARE(disc.scanStatsForTest().attempts, attemptsAtHold);
             QCOMPARE(finished.count(), 0);
         }
         QVERIFY(disc.isScanRunning());
@@ -699,21 +719,22 @@ private slots:
         // The connection is up: the quiet period starts now, and the walk
         // still waits it out (a count, not a time: see
         // aHoldOffArmedDuringAWalkDelaysItsNextProbes).
-        RadioDiscovery::endConnectHold(&owner, std::chrono::milliseconds(300));
+        RadioDiscovery::endConnectHold(&owner, std::chrono::milliseconds(1000));
         QVERIFY(!RadioDiscovery::connectHoldActive());
         QVERIFY(disc.holdOffRemainingMs() > 0);
         while (disc.holdOffRemainingMs() > 0) {
-            QCOMPARE(radio.p1Probes(), 1);
+            QCOMPARE(disc.scanStatsForTest().attempts, attemptsAtHold);
             QCOMPARE(finished.count(), 0);
             QTest::qWait(10);
         }
 
         // Then the same walk resumes and walks both NICs.
-        QVERIFY(finished.wait(5000));
+        // Polled, not waited on: a slow runner may see it end first.
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
         QTest::qWait(200);
         QCOMPARE(finished.count(), 1);
-        QCOMPARE(radio.p1Probes(), 4);
         QCOMPARE(disc.scanStatsForTest().attempts, 4);
+        QTRY_COMPARE_WITH_TIMEOUT(radio.p1Probes(), 4, 2000);
     }
 
     // A scan and a unicast probe asked for during a connect hold wait for

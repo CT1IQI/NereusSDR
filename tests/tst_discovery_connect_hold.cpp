@@ -14,8 +14,12 @@
 //                 against P1FakeRadio, in the startup order (the walk, then
 //                 the connect on the next turn). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Review of PR 621: the quiet-period checks hold on a
+//                 loaded runner (no step is assumed to take under 3 s).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QObject>
 #include <QSignalSpy>
@@ -108,23 +112,39 @@ RadioInfo infoFor(const P1FakeRadio& fake)
     return info;
 }
 
+// The post-disconnect quiet period RadioModel arms when the hold ends
+// (RadioModel::kPostDisconnectScanQuietMs, private there).
+constexpr qint64 kQuietMs = 3000;
+
 // What the walk and the hold looked like when the model first left
 // Disconnected (the connection exists and is starting) and when it next
 // reached `end`. Attempts are counted where the walk sends them
 // (scanStatsForTest), so a probe still in flight cannot blur the count.
+//
+// The quiet period is read by a queued slot, which runs once
+// onConnectionStateChanged() has ended the hold. It records the quiet time
+// left plus the time since `end`: an armed period makes that sum at least
+// the full period however late the slot runs (a slot later than the period
+// itself reads 0 left and the elapsed time), and an unarmed one leaves it
+// near zero. No assumption about how fast the runner is.
 struct ConnectRecord {
     int  attemptsAtStart {-1};
     bool holdAtStart {false};
     bool walkRunningAtStart {false};
     int  attemptsAtEnd {-1};
+    int  finishedAtEnd {-1};
     bool ended {false};
+    QElapsedTimer sinceEnd;
+    bool afterEndSeen {false};
+    bool holdAfterEnd {true};
+    qint64 quietPlusElapsedMs {-1};
 };
 
 void watchConnect(RadioModel& model, const RadioDiscovery& disc, ConnectionState end,
-                  ConnectRecord& rec, QObject* context)
+                  ConnectRecord& rec, QSignalSpy& finished, QObject* context)
 {
     QObject::connect(&model, &RadioModel::connectionStateChanged, context,
-                     [&disc, end, &rec](ConnectionState s) {
+                     [&disc, end, &rec, &finished](ConnectionState s) {
         if (rec.attemptsAtStart < 0 && s != ConnectionState::Disconnected) {
             rec.attemptsAtStart = disc.scanStatsForTest().attempts;
             rec.holdAtStart = RadioDiscovery::connectHoldActive();
@@ -132,9 +152,19 @@ void watchConnect(RadioModel& model, const RadioDiscovery& disc, ConnectionState
         }
         if (rec.attemptsAtStart >= 0 && !rec.ended && s == end) {
             rec.attemptsAtEnd = disc.scanStatsForTest().attempts;
+            rec.finishedAtEnd = int(finished.count());
+            rec.sinceEnd.start();
             rec.ended = true;
         }
     });
+    QObject::connect(&model, &RadioModel::connectionStateChanged, context,
+                     [&disc, &rec]() {
+        if (rec.ended && !rec.afterEndSeen) {
+            rec.afterEndSeen = true;
+            rec.holdAfterEnd = RadioDiscovery::connectHoldActive();
+            rec.quietPlusElapsedMs = disc.holdOffRemainingMs() + rec.sinceEnd.elapsed();
+        }
+    }, Qt::QueuedConnection);
 }
 
 } // namespace
@@ -176,7 +206,7 @@ private slots:
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;
-        watchConnect(model, disc, ConnectionState::Connected, rec, this);
+        watchConnect(model, disc, ConnectionState::Connected, rec, finished, this);
 
         disc.startDiscovery();
         const RadioInfo info = infoFor(fake);
@@ -188,8 +218,10 @@ private slots:
         QVERIFY(rec.attemptsAtStart >= 1);
         QVERIFY2(rec.holdAtStart, "discovery was not held while the connection started");
         QCOMPARE(rec.attemptsAtEnd, rec.attemptsAtStart);
-        QVERIFY(!RadioDiscovery::connectHoldActive());
-        QVERIFY2(disc.holdOffRemainingMs() > 0, "no quiet period after Connected");
+        QCOMPARE(rec.finishedAtEnd, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.afterEndSeen, 15000);
+        QVERIFY2(!rec.holdAfterEnd, "Connected left discovery held");
+        QVERIFY2(rec.quietPlusElapsedMs >= kQuietMs - 10, "no quiet period after Connected");
 
         // The quiet period only falls: an attempt counted here was sent
         // after a read that saw time left, which is the case asserted
@@ -200,7 +232,8 @@ private slots:
             QTest::qWait(10);
         }
 
-        QVERIFY(finished.wait(5000));
+        // Polled, not waited on: a slow runner may see it end first.
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
         QTest::qWait(200);
         QCOMPARE(finished.count(), 1);
         QCOMPARE(disc.scanStatsForTest().attempts, 4);
@@ -225,7 +258,7 @@ private slots:
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;
-        watchConnect(model, disc, ConnectionState::Disconnected, rec, this);
+        watchConnect(model, disc, ConnectionState::Disconnected, rec, finished, this);
 
         disc.startDiscovery();
         const RadioInfo info = infoFor(fake);
@@ -235,16 +268,16 @@ private slots:
         QVERIFY2(rec.walkRunningAtStart, "the walk had ended before the connect; nothing tested");
         QVERIFY2(rec.holdAtStart, "discovery was not held while the connection started");
         QCOMPARE(rec.attemptsAtEnd, rec.attemptsAtStart);
-        QCOMPARE(finished.count(), 0);
-        QVERIFY2(!RadioDiscovery::connectHoldActive(), "the failed connect left discovery held");
-        QVERIFY(disc.holdOffRemainingMs() > 0);
+        QCOMPARE(rec.finishedAtEnd, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.afterEndSeen, 15000);
+        QVERIFY2(!rec.holdAfterEnd, "the failed connect left discovery held");
+        QVERIFY2(rec.quietPlusElapsedMs >= kQuietMs - 10, "no quiet period after the failed connect");
 
         while (disc.holdOffRemainingMs() > 0) {
             QCOMPARE(disc.scanStatsForTest().attempts, rec.attemptsAtStart);
             QTest::qWait(10);
         }
-        QVERIFY(finished.wait(5000));
-        QCOMPARE(finished.count(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
         QCOMPARE(disc.scanStatsForTest().attempts, 4);
         QVERIFY(!RadioDiscovery::connectHoldActive());
     }
