@@ -6,6 +6,11 @@
 // 2026-10-22 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a
 // saved paired Core's race also dials the addresses it announces on this
 // network (aSavedPairedCoreAlsoDialsWhereItAnnouncesItself).
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/session/RemoteStationOptions.h"
 #include "gui/GuiConnectionController.h"
@@ -195,10 +200,9 @@ private slots:
         QTemporaryDir keyDir;
         const auto key = std::make_shared<const ClientDeviceIdentity>(ClientDeviceIdentity::loadOrCreate(keyDir.path()));
         QVERIFY(core.pairComputer(*key));
-        QTcpServer closed;
-        QVERIFY(closed.listen(QHostAddress::LocalHost, 0));
-        const QUrl stale(QStringLiteral("wss://127.0.0.1:%1").arg(closed.serverPort()));
-        closed.close();
+        const quint16 closedPort = unusedLoopbackPort();
+        QVERIFY(closedPort != 0);
+        const QUrl stale(QStringLiteral("wss://127.0.0.1:%1").arg(closedPort));
         StationClient client(nullptr, nullptr);
         client.setDeviceIdentity(key, QStringLiteral("Test computer"));
         client.setReconnectBackoffUnitMs(50);
