@@ -76,6 +76,13 @@
 //                 last whole one and warns once.
 //                 NereusSDR-original, by J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22 - takeSlowNrCalls: the channel's noise-reduction calls over
+//                 50 ms since the previous take (dsplock.c), with the stages
+//                 that ran; processIq times DFNR and MNR (WdspNoteNrCall) and
+//                 counts non-finite samples in fexchange2's output
+//                 (takeOutputNonFiniteSamples). For the Core log. Measures
+//                 only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -372,6 +379,15 @@ namespace {
 // the channel still exchanges; WDSP never produces this exact pattern. It is
 // compared as bits, so no floating-point mode can change the test.
 constexpr quint32 kStopSentinelBits = 0x7fc0beefu;
+
+// 2026-10-22: nanoseconds since start on the monotonic clock, for timing a
+// post-WDSP NR stage (WdspNoteNrCall). Lock-free.
+[[maybe_unused]] long long elapsedNsSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now() - start)
+        .count();
+}
 } // namespace
 #endif
 
@@ -3035,6 +3051,20 @@ void RxChannel::processIq(float* inI, float* inQ,
                          << m_channelId << ":" << error;
     }
 
+    // 2026-10-22: non-finite samples in WDSP's output (a NaN in WDSP or NR
+    // state shows here), for the Core log. Counting only; the samples are
+    // not touched.
+    {
+        qint64 nonFinite = 0;
+        for (int i = 0; i < postCount; ++i) {
+            nonFinite += std::isfinite(outI[i]) ? 0 : 1;
+            nonFinite += std::isfinite(outQ[i]) ? 0 : 1;
+        }
+        if (nonFinite != 0) {
+            m_outputNonFinite.fetch_add(nonFinite, std::memory_order_relaxed);
+        }
+    }
+
 #ifdef HAVE_DFNR
     // Sub-epic C-1 Task 9 — post-fexchange2 DeepFilterNet3 noise reduction.
     // Runs only when m_dfnrActive is set via setActiveNr(NrSlot::DFNR).
@@ -3045,7 +3075,10 @@ void RxChannel::processIq(float* inI, float* inQ,
     if (m_dfnrActive.load(std::memory_order_acquire)) {
         if (NereusSDR::DeepFilterFilter* dfnr =
                 m_dfnrInstance.load(std::memory_order_acquire)) {
+            // 2026-10-22: timed for the slow NR call log (lock-free).
+            const auto nrStart = std::chrono::steady_clock::now();
             dfnr->process(outI, outQ, postCount);
+            WdspNoteNrCall(m_channelId, elapsedNsSince(nrStart), WDSP_NR_STAGE_DFNR);
         }
     }
 #endif
@@ -3057,7 +3090,10 @@ void RxChannel::processIq(float* inI, float* inQ,
     // Ported from AetherSDR src/core/MacNRFilter.{h,cpp} [@0cd4559]; retuned
     // for 48 kHz (LOG2N 9→10, FFT 512→1024, hop 256→512).
     if (m_mnr && m_mnrActive.load(std::memory_order_acquire)) {
+        // 2026-10-22: timed for the slow NR call log (lock-free).
+        const auto nrStart = std::chrono::steady_clock::now();
         m_mnr->process(outI, outQ, postCount);
+        WdspNoteNrCall(m_channelId, elapsedNsSince(nrStart), WDSP_NR_STAGE_MNR);
     }
 #endif
 
@@ -3251,6 +3287,32 @@ qint64 RxChannel::takeDspIntervalMaxBlockUs() const
 #else
     return 0;
 #endif
+}
+
+bool RxChannel::takeSlowNrCalls(SlowNrCalls& out) const
+{
+    out = SlowNrCalls{};
+#ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return false;
+    }
+    WdspSlowNrCalls calls{};
+    if (TakeChannelSlowNrCalls(m_channelId, &calls) != 0) {
+        return false;
+    }
+    out.count = calls.count;
+    out.longestUs = calls.longestUs;
+    out.longestStages = calls.longestStages;
+    out.stages = calls.stages;
+    return true;
+#else
+    return false;
+#endif
+}
+
+qint64 RxChannel::takeOutputNonFiniteSamples() const
+{
+    return m_outputNonFinite.exchange(0, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
