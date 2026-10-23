@@ -126,7 +126,8 @@ signals:
 private:
     void onResolved(const QList<QHostAddress>& addresses);
     void startNextAttempt();
-    void onAttemptFailed(QTcpSocket* socket, QAbstractSocket::SocketError error);
+    void onAttemptFailed(QTcpSocket* socket, const QHostAddress& address,
+                         QAbstractSocket::SocketError error);
     void onAttemptConnected(QTcpSocket* socket);
     void finishFailed(QAbstractSocket::SocketError error);
     void dropAttempts(QTcpSocket* keep);

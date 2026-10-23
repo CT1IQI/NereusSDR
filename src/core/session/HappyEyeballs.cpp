@@ -200,7 +200,9 @@ void HappyEyeballsConnector::startNextAttempt()
     m_attempts.append(socket);
     connect(socket, &QTcpSocket::connected, this, [this, socket] { onAttemptConnected(socket); });
     connect(socket, &QTcpSocket::errorOccurred, this,
-            [this, socket](QAbstractSocket::SocketError error) { onAttemptFailed(socket, error); });
+            [this, socket, address](QAbstractSocket::SocketError error) {
+                onAttemptFailed(socket, address, error);
+            });
     qCDebug(lcHappyEyeballs).noquote() << "Trying" << addressText(address, m_port);
     // The next address after the attempt delay, or as soon as this one
     // fails (onAttemptFailed), whichever comes first.
@@ -226,14 +228,16 @@ void HappyEyeballsConnector::onAttemptConnected(QTcpSocket* socket)
     emit connected(socket);
 }
 
-void HappyEyeballsConnector::onAttemptFailed(QTcpSocket* socket,
+void HappyEyeballsConnector::onAttemptFailed(QTcpSocket* socket, const QHostAddress& address,
                                              QAbstractSocket::SocketError error)
 {
     if (m_done || !m_attempts.contains(socket)) {
         return;
     }
     qCDebug(lcHappyEyeballs).noquote()
-        << "Attempt to" << addressText(socket->peerAddress(), m_port) << "failed:"
+        // The address this attempt was given: a failed socket's
+        // peerAddress() is already cleared.
+        << "Attempt to" << addressText(address, m_port) << "failed:"
         << socket->errorString();
     m_lastError = error;
     m_attempts.removeAll(socket);
