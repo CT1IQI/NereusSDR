@@ -22,6 +22,10 @@
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 75 (R-IOS-30), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-23: a device's antenna pick on its slice lands in the Core's
+//               per-band antenna table for the slice's band, as a desktop
+//               pick does (Setup's table is the only antenna store).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -329,6 +333,44 @@ private slots:
         QCOMPARE(core.model->sliceById(0)->rxAntenna(), QStringLiteral("ANT3"));
         QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
         QCOMPARE(countOfType(appA->received(), 0, QStringLiteral("notice")), 1);
+    }
+
+    // Remote parity with the desktop: a device's antenna pick on its slice
+    // goes through the same slice setters and RadioModel handlers, so it
+    // lands in Setup's antenna table, in the row for the slice's band, and
+    // leaves the other bands' rows alone.
+    void aDevicesAntennaPickLandsInTheTableRowForItsBand()
+    {
+        Core core;
+        core.model->setBoardForTest(HPSDRHW::OrionMKII);  // Alex ANT1 to ANT3
+        core.model->setCapsForTest(true);
+        // A Core with a radio: the slice's handlers are wired at connect.
+        auto connection = std::make_unique<RoutingConnection>();
+        core.model->injectConnectionForTest(connection.get());
+        const auto unplug = qScopeGuard([&core] { core.model->injectConnectionForTest(nullptr); });
+        core.model->wireSliceSignalsForTest();
+        AlexController& alex = core.model->alexControllerMutable();
+        alex.setRxAnt(Band::Band40m, 2);
+        alex.setTxAnt(Band::Band40m, 2);
+        core.model->sliceById(0)->setFrequency(14074000.0);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a);
+        QVERIFY(admitted(appA));
+
+        appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "slice:0", {utf8("rxAntenna", QStringLiteral("ANT3")),
+                        utf8("txAntenna", QStringLiteral("ANT3"))}, 51)));
+        QTRY_VERIFY(!propertyResult(appA, 51).isEmpty());
+        for (const QJsonValue& result :
+             propertyResult(appA, 51).value(QStringLiteral("results")).toArray()) {
+            QVERIFY2(result.toObject().value(QStringLiteral("accepted")).toBool(false),
+                     qPrintable(result.toObject().value(QStringLiteral("reason")).toString()));
+        }
+        QTRY_COMPARE(alex.rxAnt(Band::Band20m), 3);
+        QTRY_COMPARE(alex.txAnt(Band::Band20m), 3);
+        QCOMPARE(alex.rxAnt(Band::Band40m), 2);
+        QCOMPARE(alex.txAnt(Band::Band40m), 2);
     }
 };
 

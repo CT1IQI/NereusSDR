@@ -18,7 +18,7 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-23 - refreshSliceAntennasFromAlex: a slice names its antennas
-//                from Setup's per-band antenna table after a restore and on
+//                from Setup's per-band antenna table when it is made and on
 //                every connect, now that it saves no antenna of its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -15974,10 +15974,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             restoredSavedState = true;
         }
     }
-    // A restored slice names its antennas from Setup's antenna table for
-    // the band it came back on; it keeps none of its own. Not wired yet,
-    // so this sets the labels and writes nothing.
-    if (m_role == Role::Local && (restoreSeed || restoredSavedState)) {
+    // Every slice names its antennas from Setup's antenna table for the band
+    // it starts on; it keeps none of its own. Before it is appended, so the
+    // label the transmit binding writes back (applyTxAntennaFromBoundSlice)
+    // is the table's own. Not wired yet, so this sets the labels and writes
+    // nothing.
+    if (m_role == Role::Local) {
         refreshSliceAntennasFromAlex(slice);
         if (!self || !added) { return -1; }
     }
