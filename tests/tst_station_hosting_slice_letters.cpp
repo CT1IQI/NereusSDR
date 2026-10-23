@@ -7,8 +7,9 @@
 // same experience." A paired device that comes back after a Core restart
 // gets the same slice letter, with that slice's saved settings, whether the
 // Core restarted headless or inside a desktop window, in either direction.
-// Inside a window, the window's own slice takes a free letter and never
-// the returning device's.
+// Inside a window, the Core keeps the device's letter and settings for it
+// and makes its slice only when it signs in; the window's own slice takes
+// a letter nobody's device has, binds a receiver and carries transmit.
 //
 // The logs this follows (Zephyrus G2E Core, 2026-10-22/23): at 22:25 the
 // headless Core had JJ's window on slice A and saved its step and AGC-T
@@ -16,140 +17,244 @@
 // inside the desktop window, the window took A, and the device was given
 // a new slice B, so its A settings never came back to it.
 //
-// Each restart here drops the Core's model and server without a
-// session.leave, keeping its settings and security directory, as a
-// process restart does. "Headless" is DaemonApp's start (receive layout
-// prepared before the slices exist); "inside the window" is the desktop's
-// (StationHost with the window as the hosting device, then the connect's
-// starting slices).
+// Every start here is the production one: a StationHost (with the window
+// as its hosting device inside the window, as GuiDesktopStationRuntime
+// starts it; without one headless, as DaemonApp does, after the receive
+// layout is prepared) and then RadioModel::connectToRadio against the
+// P1FakeRadio (ConnectableRadioModel), which sizes the stream pool, binds
+// the slices and loads the window slice's state. Every stop is the
+// production one, with the devices still on the Core (no session.leave):
+// inside the window, GuiDesktopStationRuntime::prepareForRetirement's
+// steps (stopAllTx, the host's stop, saveForStationHandover); headless,
+// DaemonApp's release (saveForStationHandover, then the host's stop).
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-23: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-23: PR 627 fix wave: driven through StationHost and the real
+//               connect and shutdown; the window keeps letters instead of
+//               holding slices. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 
+#include "UnusedLoopbackPort.h"
 #include "core/ReceiveLayoutStore.h"
-#include "core/station/StationSliceOwnershipPolicy.h"
+#include "core/station/StationHost.h"
+#include "fakes/ConnectableRadioModel.h"
+
+#include <QSslSocket>
+
+#include <functional>
+#include <vector>
+
+using NereusSDR::Test::ConnectableRadioModel;
 
 namespace {
 
-const QString kMac = QStringLiteral("AA:BB:CC:DD:EE:01");
+// ConnectableRadioModel's radio.
+const QString kMac = QStringLiteral("aa:bb:cc:11:22:33");
 const QString kWindowName = QStringLiteral("Zephyrus");
 constexpr int kDeviceStepHz = 1000;
 constexpr double kDeviceFrequencyHz = 7074000.0;
 
-RadioInfo benchRadio()
-{
-    RadioInfo info;
-    info.macAddress = kMac;
-    info.name = QStringLiteral("Bench HL2");
-    info.boardType = HPSDRHW::HermesLite;
-    return info;
-}
+enum class Hosting { Headless, Window, WindowRunCoreOff };
 
-void makeServer(Core& core)
-{
-    core.server = std::make_unique<StationServer>(
-        core.model.get(), *core.settings,
-        NereusSDR::Test::withSharedTlsIdentity(
-            NereusSDR::Test::seedCoreIdentity(core.securityDir.path())));
-    core.server->setHeartbeatIntervalMs(0);
-    core.server->deviceSessions()->setClock([&core]() { return core.now; });
-}
+// One Core run: its host is stopped before its radio model goes.
+struct Station {
+    std::unique_ptr<ConnectableRadioModel> radio;
+    std::unique_ptr<StationHost> host;
+    std::vector<std::unique_ptr<LoopbackTransport>> apps;
+    Hosting hosting = Hosting::Headless;
+    // Set before the connect, while `radio` is still being made.
+    RadioModel* radioModel = nullptr;
 
-// The Core stops with its devices still on it (no session.leave): what it
-// last saved is what the next start reads.
-void stopWithoutLeave(Core& core)
-{
-    if (core.model) {
-        for (SliceModel* slice : core.model->slices()) {
-            slice->saveToSettings(slice->band());
+    RadioModel& model() { return *radioModel; }
+    StationServer* server() const { return host ? host->server() : nullptr; }
+
+    ~Station()
+    {
+        host.reset();
+        radio.reset();
+    }
+};
+
+class Sandbox {
+public:
+    Sandbox()
+        : m_security(NereusSDR::Test::withSharedTlsIdentity(
+              NereusSDR::Test::seedCoreIdentity(m_securityDir.path())))
+    {
+    }
+
+    StationHostOptions options(Hosting hosting)
+    {
+        StationHostOptions options;
+        options.settings = &AppSettings::instance();
+        options.securityDirectory = m_security;
+        options.remoteBind = QStringLiteral("127.0.0.1");
+        options.remotePort = unusedLoopbackPort();
+        options.statusPage = false;
+        options.rendezvousServers.clear();
+        if (hosting == Hosting::Window) {
+            options.hostingDevice = StationHostOptions::HostingDevice{kWindowName, kWindowName};
         }
-        core.model->requestSettingsSave();
-        core.model->flushPendingSettingsSave();
+        return options;
     }
-    core.server.reset();
-    core.model.reset();
-}
 
-// DaemonApp's start: the receive layout first, then the configured slice
-// when the layout made none, then admission.
-void startHeadless(Core& core, int sliceLimit = 5)
-{
-    core.model = std::make_unique<RadioModel>();
-    RadioModel& model = *core.model;
-    model.setBoardForTest(HPSDRHW::HermesLite);
-    model.prepareReceiveLayout(kMac);
-    model.configureStreamPool(sliceLimit, sliceLimit, 192000);
-    if (model.slices().isEmpty()) {
-        model.addSlice(QStringLiteral("pan-0"));
+    // `beforeConnect` runs once the host is up and before the radio connects.
+    std::unique_ptr<Station> start(Hosting hosting, HPSDRHW board = HPSDRHW::HermesLite,
+                                   const std::function<void(Station&)>& beforeConnect = {})
+    {
+        auto station = std::make_unique<Station>();
+        Station* const raw = station.get();
+        raw->hosting = hosting;
+        raw->radio = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local,
+            [this, raw, hosting, &beforeConnect](RadioModel& model) {
+                raw->radioModel = &model;
+                if (hosting == Hosting::Headless) {
+                    // DaemonApp::start: the layout first, then the
+                    // configured slice when the layout made none.
+                    model.prepareReceiveLayout(kMac);
+                    if (model.slices().isEmpty()) {
+                        model.addSlice(QStringLiteral("pan-0"));
+                    }
+                }
+                if (hosting != Hosting::WindowRunCoreOff) {
+                    raw->host = std::make_unique<StationHost>(&model, options(hosting));
+                    raw->host->start();
+                }
+                if (beforeConnect) {
+                    beforeConnect(*raw);
+                }
+            },
+            board);
+        if (!raw->radio) {
+            return nullptr;
+        }
+        if (hosting == Hosting::Headless) {
+            // DaemonApp::onRadioStateForRecovery on Connected.
+            raw->model().completeReceiveLayoutStartup();
+        }
+        QCoreApplication::processEvents();
+        return station;
     }
-    model.bindUnboundSlices();
-    model.setLastRadioInfoForTest(benchRadio());
-    model.setConnectionStateForTest(ConnectionState::Connected);
-    model.completeReceiveLayoutStartup();
-    makeServer(core);
-}
 
-// The desktop's start with Run Core on: StationHost makes the server with
-// the window as the hosting device before the radio connects, then the
-// connect makes the starting slices and selects the window's. Returns the
-// window's slice id.
-int startInWindow(Core& core, int sliceLimit = 5)
-{
-    core.model = std::make_unique<RadioModel>();
-    RadioModel& model = *core.model;
-    model.setBoardForTest(HPSDRHW::HermesLite);
-    model.setLastRadioInfoForTest(benchRadio());
-    model.configureStreamPool(sliceLimit, sliceLimit, 192000);
-    makeServer(core);
-    const QByteArray& station = SliceOwnership::stationDevice();
-    core.server->deviceSessions()->registerHostingDevice(station, kWindowName, kWindowName);
-    core.server->setStationDeviceWords(kWindowName, kWindowName);
-    model.setHostsStationDevice(true);
-    StationSliceOwnershipPolicy::activate(&model, core.server.get(), [] { return true; });
-    const int windowSlice = model.addStartingSlices(kMac);
-    if (SliceModel* slice = model.sliceById(windowSlice)) {
-        model.setActiveSlice(static_cast<int>(model.slices().indexOf(slice)));
+    // Run Core turned on in a window whose radio is already connected.
+    void turnOnRunCore(Station& station)
+    {
+        station.hosting = Hosting::Window;
+        station.host = std::make_unique<StationHost>(&station.model(), options(Hosting::Window));
+        station.host->start();
     }
-    model.setConnectionStateForTest(ConnectionState::Connected);
-    return windowSlice;
-}
 
-QList<int> ownedBy(const Core& core, const Device& device)
+    // The Core stops with its devices still on it.
+    static void stop(std::unique_ptr<Station>& station)
+    {
+        RadioModel& model = station->model();
+        QString error;
+        if (station->hosting == Hosting::Headless) {
+            QVERIFY2(model.saveForStationHandover(&error), qPrintable(error));
+            station->host->stop();
+        } else {
+            model.stopAllTx(QStringLiteral("The desktop Core is closing."));
+            if (station->host) {
+                station->host->stop();
+            }
+            QVERIFY2(model.saveForStationHandover(&error), qPrintable(error));
+        }
+        station.reset();
+        RadioDiscovery::clearHoldOffForTest();
+    }
+
+    void pair(Station& station, const Device& device)
+    {
+        QVERIFY(station.server());
+        // The store is the security directory's: kept across restarts.
+        if (!station.server()->deviceStore()->find(device.key.fingerprint())) {
+            QVERIFY(station.server()->deviceStore()->add(device.record()));
+        }
+    }
+
+    static LoopbackTransport* signIn(Station& station, const Device& device)
+    {
+        StationServer* server = station.server();
+        auto app = std::make_unique<LoopbackTransport>(QStringLiteral("app"));
+        auto* peer = new LoopbackTransport(QStringLiteral("station"));
+        peer->setPeerAddress(QStringLiteral("192.0.2.7"));
+        peer->linkTo(app.get());
+        LoopbackTransport* const client = app.get();
+        station.apps.push_back(std::move(app));
+        server->acceptTransport(peer);
+        QTest::qWaitFor([client]() { return !client->received().isEmpty(); }, 5000);
+        const QJsonObject hello = firstOfType(client->received(), QStringLiteral("hello"));
+        const QByteArray challenge =
+            StationIdentity::fromBase64Url(hello.value(QStringLiteral("challenge")).toString());
+        QString pin = server->certificateFingerprint();
+        pin.remove(QLatin1Char(':'));
+        const SessionMessage auth = SessionMessages::authRequest(
+            QString(), device.block(challenge, QByteArray::fromHex(pin.toLatin1()),
+                                    server->stationIdentity().publicKeySpki()));
+        Core::send(client, auth, kSessionProtocolMinor, kHolder);
+        return client;
+    }
+
+private:
+    QTemporaryDir m_securityDir;
+    QString m_security;
+};
+
+QList<int> ownedBy(Station& station, const Device& device)
 {
-    return core.model->sliceOwnership()->ownedBy(device.key.fingerprint());
+    return station.model().sliceOwnership()->ownedBy(device.key.fingerprint());
 }
 
 // The device's settings on its slice, as JJ set them.
-void setDeviceSettings(Core& core, int sliceId, int stepHz = kDeviceStepHz)
+void setDeviceSettings(Station& station, int sliceId, int stepHz = kDeviceStepHz)
 {
-    SliceModel* slice = core.model->sliceById(sliceId);
+    SliceModel* slice = station.model().sliceById(sliceId);
     QVERIFY(slice);
     slice->setFrequency(kDeviceFrequencyHz);
     slice->setStepHz(stepHz);
     slice->setAutoAgcEnabled(true);
 }
 
-void verifyDeviceSettings(const Core& core, int sliceId, int stepHz = kDeviceStepHz)
+void verifyDeviceSettings(Station& station, int sliceId, int stepHz = kDeviceStepHz)
 {
-    const SliceModel* slice = core.model->sliceById(sliceId);
+    const SliceModel* slice = station.model().sliceById(sliceId);
     QVERIFY(slice);
     QCOMPARE(slice->frequency(), kDeviceFrequencyHz);
     QCOMPARE(slice->stepHz(), stepHz);
     QVERIFY(slice->autoAgcEnabled());
 }
 
-// The slice is the window's own: the station device owns it and holds it
-// for nobody.
-bool windowOwns(const Core& core, int sliceId)
+// The window's own slice: the station device owns it for nobody, it has a
+// receiver, it carries transmit, and it is the window's active slice.
+void verifyWindowSlice(Station& station, int sliceId)
 {
-    const SliceOwnership::Mark mark = core.model->sliceOwnership()->mark(sliceId);
-    return mark.owner == SliceOwnership::stationDevice() && mark.heldFor.isEmpty();
+    RadioModel& model = station.model();
+    SliceModel* slice = model.sliceById(sliceId);
+    QVERIFY(slice);
+    const SliceOwnership::Mark mark = model.sliceOwnership()->mark(sliceId);
+    QCOMPARE(mark.owner, SliceOwnership::stationDevice());
+    QVERIFY(mark.heldFor.isEmpty());
+    QVERIFY(slice->streamIndex() >= 0);
+    QCOMPARE(model.txBoundSlice(), slice);
+    QCOMPARE(model.activeSlice(), slice);
+}
+
+QList<int> sliceIds(Station& station)
+{
+    QList<int> ids;
+    for (const SliceModel* slice : station.model().slices()) {
+        ids.append(slice->sliceIndex());
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 } // namespace
@@ -158,60 +263,67 @@ class TestStationHostingSliceLetters : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend.");
+        }
+    }
     void init() { AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().clear(); }
 
     // 22:25 headless, 23:37 inside the window: the device keeps A with its
-    // step and AUTO, and the window takes B.
+    // step and AUTO, and the window takes B. Nothing of A runs until the
+    // device signs in.
     void headlessThenInsideTheWindowKeepsTheDevicesLetter()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
 
-        startHeadless(core);
-        core.pair(phone);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        setDeviceSettings(core, 0);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
 
-        const int windowSlice = startInWindow(core);
-        QCOMPARE(windowSlice, 1);
-        QVERIFY(windowOwns(core, 1));
-        QCOMPARE(core.model->activeSlice(), core.model->sliceById(1));
-        const SliceOwnership::Mark held = core.model->sliceOwnership()->mark(0);
-        QCOMPARE(held.owner, SliceOwnership::stationDevice());
-        QCOMPARE(held.heldFor, phone.key.fingerprint());
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        QCOMPARE(sliceIds(*core), QList<int>{1});
+        verifyWindowSlice(*core, 1);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
 
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        verifyDeviceSettings(core, 0);
-        QVERIFY(windowOwns(core, 1));
-        QCOMPARE(core.model->slices().size(), 2);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        verifyDeviceSettings(*core, 0);
+        QCOMPARE(sliceIds(*core), (QList<int>{0, 1}));
+        QVERIFY(core->model().reservedSliceLetters().isEmpty());
+        verifyWindowSlice(*core, 1);
     }
 
     // Inside the window the device is given B; after a headless restart B
     // is still its letter, with its settings.
     void insideTheWindowThenHeadlessKeepsTheDevicesLetter()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
 
-        QCOMPARE(startInWindow(core), 0);
-        core.pair(phone);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{1});
-        QVERIFY(windowOwns(core, 0));
-        setDeviceSettings(core, 1);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 0);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{1});
+        setDeviceSettings(*core, 1);
+        Sandbox::stop(core);
 
-        startHeadless(core);
-        QVERIFY(core.model->sliceById(1));
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{1});
-        verifyDeviceSettings(core, 1);
+        core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        QVERIFY(core->model().sliceById(1));
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{1});
+        verifyDeviceSettings(*core, 1);
     }
 
     // The whole run from the logs: headless (22:25), inside the window
@@ -219,126 +331,248 @@ private slots:
     // headless again (07:57). The device is on A throughout.
     void theSequenceFromTheLogsKeepsADeviceOnItsLetterThroughEveryRestart()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
 
-        startHeadless(core);
-        core.pair(phone);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        setDeviceSettings(core, 0);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
 
-        QCOMPARE(startInWindow(core), 1);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        verifyDeviceSettings(core, 0);
-        setDeviceSettings(core, 0, 500);
-        stopWithoutLeave(core);
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 1);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        verifyDeviceSettings(*core, 0);
+        setDeviceSettings(*core, 0, 500);
+        Sandbox::stop(core);
 
-        QCOMPARE(startInWindow(core), 1);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        verifyDeviceSettings(core, 0, 500);
-        setDeviceSettings(core, 0, 250);
-        stopWithoutLeave(core);
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 1);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        verifyDeviceSettings(*core, 0, 500);
+        setDeviceSettings(*core, 0, 250);
+        Sandbox::stop(core);
 
-        startHeadless(core);
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        verifyDeviceSettings(core, 0, 250);
+        core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        verifyDeviceSettings(*core, 0, 250);
     }
 
     // Headless to headless, as before: the letter and settings come back.
     void headlessThenHeadlessKeepsTheDevicesLetter()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
         Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
 
-        startHeadless(core);
-        core.pair(phone);
-        core.pair(iphone);
-        QVERIFY(admitted(core.signIn(phone)));
-        QVERIFY(admitted(core.signIn(iphone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        QCOMPARE(ownedBy(core, iphone), QList<int>{1});
-        setDeviceSettings(core, 1);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{1});
+        setDeviceSettings(*core, 1);
+        Sandbox::stop(core);
 
-        startHeadless(core);
-        QVERIFY(admitted(core.signIn(iphone)));
-        QCOMPARE(ownedBy(core, iphone), QList<int>{1});
-        verifyDeviceSettings(core, 1);
+        core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{1});
+        verifyDeviceSettings(*core, 1);
     }
 
-    // The saved layout fills every letter the radio has: the window still
-    // takes one (the last), and the device whose letter it took keeps that
-    // slice in its saved slices, with its settings, for when a letter is
-    // free.
-    void aFullLayoutLeavesTheWindowTheLastLetter()
+    // A device that signs in to the window's Core before its radio has
+    // connected waits for the radio, then gets its own letter; the window
+    // still gets a letter of its own and the other device's stays kept.
+    void aDeviceAdmittedBeforeTheRadioConnectsGetsItsLetter()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
         Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
 
-        startHeadless(core, 2);
-        core.pair(phone);
-        core.pair(iphone);
-        QVERIFY(admitted(core.signIn(phone)));
-        QVERIFY(admitted(core.signIn(iphone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
-        QCOMPARE(ownedBy(core, iphone), QList<int>{1});
-        setDeviceSettings(core, 1);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{1});
+        setDeviceSettings(*core, 1);
+        Sandbox::stop(core);
 
-        QCOMPARE(startInWindow(core, 2), 1);
-        QVERIFY(windowOwns(core, 1));
+        bool admittedEarly = false;
+        core = sandbox.start(Hosting::Window, HPSDRHW::HermesLite, [&](Station& station) {
+            QVERIFY(!station.model().isConnected());
+            admittedEarly = admitted(Sandbox::signIn(station, iphone));
+            QVERIFY(ownedBy(station, iphone).isEmpty());
+        });
+        QVERIFY(core);
+        QVERIFY(admittedEarly);
+        verifyWindowSlice(*core, 2);
+        QTRY_COMPARE(ownedBy(*core, iphone), QList<int>{1});
+        verifyDeviceSettings(*core, 1);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        verifyWindowSlice(*core, 2);
+    }
+
+    // The saved layout keeps every letter the radio has (HermesII, two):
+    // the window still takes one, the last, and the device whose letter it
+    // took gets no slice while none is free; its slice and settings go to
+    // its saved slices.
+    void aFullLayoutLeavesTheWindowTheLastLetter()
+    {
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Device iphone(QStringLiteral("iPhone"), QStringLiteral("phone"));
+
+        auto core = sandbox.start(Hosting::Headless, HPSDRHW::HermesII);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        sandbox.pair(*core, iphone);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        QCOMPARE(ownedBy(*core, iphone), QList<int>{1});
+        setDeviceSettings(*core, 1);
+        Sandbox::stop(core);
+
+        core = sandbox.start(Hosting::Window, HPSDRHW::HermesII);
+        QVERIFY(core);
+        QCOMPARE(sliceIds(*core), QList<int>{1});
+        verifyWindowSlice(*core, 1);
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        QVERIFY(admitted(Sandbox::signIn(*core, iphone)));
+        QVERIFY(ownedBy(*core, iphone).isEmpty());
         const QList<SavedSlice> kept =
             DeviceLayoutStore::load(AppSettings::instance(), kMac, iphone.key.fingerprint());
         QCOMPARE(kept.size(), 1);
         QCOMPARE(kept.first().id, 1);
         QCOMPARE(kept.first().frequencyHz, kDeviceFrequencyHz);
-
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{0});
+        QVERIFY(!kept.first().settings.isEmpty());
     }
 
-    // Run Core turned on after the radio connected: the window already has
-    // A, so the device's saved A goes to its saved slices and comes back,
-    // with its settings, on the lowest free letter.
-    void runCoreTurnedOnLaterKeepsTheDevicesSettings()
+    // Run Core turned on after the radio connected, as in real use: the
+    // window has had A all along and saved its own settings under A. The
+    // device's A is not given to it (the window has it); it gets B, at its
+    // layout's frequency, with the settings A holds now, the window's.
+    void runCoreTurnedOnLaterGivesTheDeviceAFreeLetter()
     {
-        Core core;
-        stopWithoutLeave(core);
-        Device phone(QStringLiteral("Mac window"), QStringLiteral("computer"));
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
 
-        startHeadless(core);
-        core.pair(phone);
-        QVERIFY(admitted(core.signIn(phone)));
-        setDeviceSettings(core, 0);
-        stopWithoutLeave(core);
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
 
-        core.model = std::make_unique<RadioModel>();
-        RadioModel& model = *core.model;
-        model.setBoardForTest(HPSDRHW::HermesLite);
-        model.setLastRadioInfoForTest(benchRadio());
-        model.configureStreamPool(5, 5, 192000);
-        QCOMPARE(model.addStartingSlices(kMac), 0);
-        model.setConnectionStateForTest(ConnectionState::Connected);
-        makeServer(core);
-        core.server->deviceSessions()->registerHostingDevice(
-            SliceOwnership::stationDevice(), kWindowName, kWindowName);
-        model.setHostsStationDevice(true);
-        StationSliceOwnershipPolicy::activate(&model, core.server.get(), [] { return true; });
-        QCOMPARE(model.slices().size(), 1);
+        core = sandbox.start(Hosting::WindowRunCoreOff);
+        QVERIFY(core);
+        QCOMPARE(sliceIds(*core), QList<int>{0});
+        SliceModel* windowSlice = core->model().sliceById(0);
+        windowSlice->setStepHz(50);
+        core->model().flushPendingSettingsSave();
 
-        QVERIFY(admitted(core.signIn(phone)));
-        QCOMPARE(ownedBy(core, phone), QList<int>{1});
-        verifyDeviceSettings(core, 1);
+        sandbox.turnOnRunCore(*core);
+        QVERIFY(core->model().hostsStationDevice());
+        QVERIFY(core->model().reservedSliceLetters().isEmpty());
+        QCOMPARE(sliceIds(*core), QList<int>{0});
+
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{1});
+        SliceModel* device = core->model().sliceById(1);
+        QCOMPARE(device->frequency(), kDeviceFrequencyHz);
+        QCOMPARE(device->stepHz(), 50);
+        QCOMPARE(core->model().txBoundSlice(), windowSlice);
+    }
+
+    // Run Core turned off: the model no longer hosts, keeps no letters, and
+    // the layout keeps the device's letter for the next start.
+    void stoppingTheHostEndsHostingAndKeepsTheLayout()
+    {
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
+
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        setDeviceSettings(*core, 0);
+        Sandbox::stop(core);
+
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        QVERIFY(core->model().hostsStationDevice());
+        QCOMPARE(core->model().reservedSliceLetters(), QList<int>{0});
+        core->host->stop();
+        QVERIFY(!core->model().hostsStationDevice());
+        QVERIFY(core->model().reservedSliceLetters().isEmpty());
+        core->model().requestSettingsSave();
+        core->model().flushPendingSettingsSave();
+        const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), kMac);
+        QCOMPARE(layout.state, ReceiveLayoutStore::LoadState::Loaded);
+        QCOMPARE(layout.slices.size(), 1);
+        QCOMPARE(layout.slices.first().id, 0);
+        QCOMPARE(layout.slices.first().owner, mac.key.fingerprint());
+    }
+
+    // A headless layout's entries no paired device has (an unowned slice)
+    // come through a run inside the window unchanged.
+    void insideTheWindowKeepsTheHeadlessUnownedEntries()
+    {
+        Sandbox sandbox;
+        Device mac(QStringLiteral("Mac window"), QStringLiteral("computer"));
+
+        auto core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        sandbox.pair(*core, mac);
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QCOMPARE(ownedBy(*core, mac), QList<int>{0});
+        setDeviceSettings(*core, 0);
+        const int unowned = core->model().addSlice(QStringLiteral("pan-0"));
+        QCOMPARE(unowned, 1);
+        core->model().sliceOwnership()->setOwner(unowned, QByteArray());
+        core->model().sliceById(unowned)->setFrequency(3573000.0);
+        Sandbox::stop(core);
+
+        core = sandbox.start(Hosting::Window);
+        QVERIFY(core);
+        verifyWindowSlice(*core, 1);
+        Sandbox::stop(core);
+
+        const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), kMac);
+        QCOMPARE(layout.state, ReceiveLayoutStore::LoadState::Loaded);
+        QCOMPARE(layout.slices.size(), 2);
+        QCOMPARE(layout.slices.at(0).id, 0);
+        QCOMPARE(layout.slices.at(0).owner, mac.key.fingerprint());
+        QCOMPARE(layout.slices.at(1).id, 1);
+        QVERIFY(layout.slices.at(1).owner.isEmpty());
+        QCOMPARE(layout.slices.at(1).frequencyHz, 3573000.0);
+
+        core = sandbox.start(Hosting::Headless);
+        QVERIFY(core);
+        QCOMPARE(sliceIds(*core), (QList<int>{0, 1}));
+        QVERIFY(admitted(Sandbox::signIn(*core, mac)));
+        QVERIFY(ownedBy(*core, mac).contains(0));
+        verifyDeviceSettings(*core, 0);
     }
 };
 

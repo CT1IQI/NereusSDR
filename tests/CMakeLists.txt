@@ -1518,7 +1518,10 @@ nereus_add_test(tst_slice_step_agc_auto_persistence EXTRA_LABELS models core)
 # after a Core restart, headless or inside the desktop window, either way.
 nereus_add_test(tst_station_hosting_slice_letters
     fakes/LoopbackTransport.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
     EXTRA_LABELS session)
+target_compile_definitions(tst_station_hosting_slice_letters PRIVATE NEREUS_BUILD_TESTS)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)

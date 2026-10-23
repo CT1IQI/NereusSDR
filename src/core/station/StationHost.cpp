@@ -102,6 +102,11 @@ void StationHost::stop()
     m_hostSampler.reset();
     m_mediaHub.reset();
     m_stationServer.reset();
+    // The window no longer hosts the Core: the model stages the paired
+    // devices' layout one last time and stops keeping their letters.
+    if (m_options.hostingDevice && m_radioModel) {
+        m_radioModel->setHostsStationDevice(false);
+    }
     m_started = false;
     m_stopPending = false;
     m_stopping = false;

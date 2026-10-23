@@ -693,11 +693,14 @@
 //   2026-10-23 - Slice letters across Core restarts (JJ: "the core
 //                headless and core inside window should be the same
 //                experience"): a Core inside a desktop window keeps its
-//                paired devices' slices in the receive layout and gives
-//                them back, held, on their letters at connect, before the
-//                window takes the lowest free letter (setHostsStationDevice,
-//                addStartingSlices). J.J. Boyd (KG4VCF), AI-assisted via
-//                Anthropic Claude Code.
+//                paired devices' letters and saved settings from the
+//                receive layout without making their slices, takes the
+//                lowest letter nobody keeps for the window, and gives a
+//                device its letter when it signs in; the window's layout
+//                save keeps every entry that is not a device's
+//                (setHostsStationDevice, addStartingSlices,
+//                placeReservedSlicesFor, captureHostedReceiveLayout).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2900,24 +2903,39 @@ public:
     /// Slice letters across Core restarts (JJ 2026-10-23, "the core
     /// headless and core inside window should be the same experience"):
     /// true while this model is the Core inside a desktop window, the
-    /// station device being that window (StationHost with a hosting
-    /// device). Such a Core keeps the receive layout's device slices as the
-    /// headless Core does (captureReceiveLayout) and, at connect, gives a
-    /// paired device's slices back their letters before the window takes
-    /// its own (addStartingSlices). Set while the radio is connected, the
-    /// device slices the layout names come back at once; a letter the
-    /// window already uses goes to that device's saved slices instead.
-    /// Local only.
+    /// station device being that window (StationHost with a hosting device
+    /// sets it at start and clears it at stop). Such a Core keeps the
+    /// receive layout's paired-device entries as the headless Core does
+    /// (captureReceiveLayout), carrying every other entry through
+    /// unchanged, and keeps each returning device's letter and settings for
+    /// it (addStartingSlices) without making its slice until it signs in
+    /// (placeReservedSlicesFor). Set while the radio is connected, the
+    /// letters are kept at once; a letter the window already uses is not,
+    /// and that device gets the lowest free letter with the settings the
+    /// letter holds then, which are the window's. Cleared, it stages the
+    /// layout one last time and drops the kept letters. Local only.
     void setHostsStationDevice(bool hosts);
     bool hostsStationDevice() const { return m_hostsStationDevice; }
 
-    /// The slices a connect starts with when there are none: on a Core
-    /// inside a desktop window, the receive layout's paired-device slices
-    /// first, each on its letter and held for its device, then the
-    /// window's own slice on the lowest free letter, on "pan-0". Elsewhere
-    /// one slice, A. Returns the window's slice id, or -1 when none was
-    /// made. Local only.
+    /// The slices a connect starts with when there are none: one slice on
+    /// "pan-0". On a Core inside a desktop window it takes the lowest letter
+    /// not kept for a returning paired device, or the last letter when the
+    /// layout keeps them all (that device then gets the lowest free letter,
+    /// with its own settings, when it signs in). Returns the slice's id, or
+    /// -1 when none was made. Local only.
     int addStartingSlices(const QString& radioMac);
+
+    /// StationServer admission, before a device's saved slices: makes the
+    /// slices kept for `device` (addStartingSlices), each on its letter when
+    /// free, else the lowest free letter, with the settings kept for it,
+    /// owned by the device. A slice that cannot be made goes to the
+    /// device's saved slices. Needs the radio connected. Returns how many
+    /// were made. Local only.
+    int placeReservedSlicesFor(const QByteArray& device);
+
+    /// The letters kept for paired devices that have not signed in, lowest
+    /// first.
+    QList<int> reservedSliceLetters() const;
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
     /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
@@ -7677,13 +7695,16 @@ private:
     bool activateRestoredRadeReceiveOwner(QString* error);
     void setReceiveLayoutRestoreStatus(const QString& state, const QString& message);
     bool captureReceiveLayout(QString* error);
-    // setHostsStationDevice / addStartingSlices: the receive layout's
-    // paired-device slices, held for their devices on their letters while
-    // one letter stays free for the window; the rest go to each device's
-    // saved slices. Returns how many came back.
-    int restoreHeldDeviceSlices(const QString& radioMac);
-    // captureReceiveLayout for the Core inside a desktop window: only the
-    // paired devices' slices, never the window's own.
+    // setHostsStationDevice / addStartingSlices: keeps the receive layout's
+    // paired-device letters, with each letter's settings as they are now.
+    void reserveDeviceSlices(const QString& radioMac);
+    bool sliceLetterReserved(int id) const;
+    int lowestUnreservedFreeSliceId(int cap) const;
+    // The slice limit before the connect sizes the stream pool: the board's.
+    int startingSliceCap() const;
+    // captureReceiveLayout for the Core inside a desktop window: the paired
+    // devices' slices and kept letters, never the window's own, with every
+    // other entry of the saved layout carried through.
     bool captureHostedReceiveLayout();
 
     // RADE threads (2026-09-30): one receive route per RADE slice. The
@@ -8333,6 +8354,16 @@ private:
     bool m_receiveLayoutManaged{false};
     // setHostsStationDevice: the Core inside a desktop window.
     bool m_hostsStationDevice{false};
+    // addStartingSlices: a returning paired device's letter, kept for it
+    // until it signs in. letterKept is false when the window has the letter;
+    // the device then takes the lowest free one.
+    struct DeviceSliceReservation {
+        QByteArray device;
+        ReceiveSliceState state;
+        QMap<QString, QString> settings;
+        bool letterKept {false};
+    };
+    QList<DeviceSliceReservation> m_deviceSliceReservations;
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.

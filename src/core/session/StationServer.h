@@ -181,6 +181,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
+//               a desktop window before its radio connects. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: peerReadsRxOnlyPairs: RX-only antennas 0..5 for a peer
 //               that declared radioAntennaRows 2. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -2994,6 +2997,9 @@ private:
     // view's burst is sent again (receiveLayoutHydrated).
     bool m_ownerChangesInBurst = false;
     QHash<QByteArray, QList<SavedSlice>> m_slicesNotRestored;
+    // Devices admitted to a Core inside a desktop window before its radio
+    // connected, placed when it does (placeSlicesForAdmission).
+    QSet<QByteArray> m_placementAwaitingRadio;
     QTimer* m_graceTimer = nullptr;
     bool m_mediaEnabled = false;
     bool m_displayBudgetEnforcementEnabled = false;
