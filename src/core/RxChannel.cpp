@@ -83,6 +83,13 @@
 //                 (takeOutputNonFiniteSamples). For the Core log. Measures
 //                 only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. NereusSDR-original.
+//   2026-10-23 - processIq outputs silence for a chunk shorter than the
+//                 channel's WDSP input block instead of letting fexchange2
+//                 read past it. A slice moved to a slower stream was fed
+//                 before the lane rebuilt its channel, and WDSP took the
+//                 memory past the chunk (NaN and inf) into its filters, AGC,
+//                 meters and audio. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -403,6 +410,7 @@ RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
     , m_channelId(channelId)
     , m_bufferSize(bufferSize)
     , m_sampleRate(sampleRate)
+    , m_wdspInputSize(bufferSize)
 {
     m_lane = lane;
     for (auto& slot : m_meterCache) {
@@ -2986,6 +2994,25 @@ void RxChannel::processIq(float* inI, float* inQ,
     if (!m_wdspReady.load(std::memory_order_acquire)) {
         // R-R3-39: the lane has not opened this channel's WDSP side yet (or
         // has retired it). Silence, and no WDSP call.
+        std::memset(outI, 0, sampleCount * sizeof(float));
+        std::memset(outQ, 0, sampleCount * sizeof(float));
+        return;
+    }
+
+    // 2026-10-23: a chunk shorter than the channel's WDSP input block never
+    // reaches WDSP. fexchange2 copies ch[].in_size samples from the legs
+    // whatever sampleCount says (third_party/wdsp/src/iobuffs.c:543-547), so
+    // a short chunk makes it read past the caller's buffer, and the memory
+    // there (NaN and inf among it) goes through the filters, AGC, meters and
+    // audio. It happens when a slice moves to a stream at a lower rate: the
+    // DSP worker drains the new stream's chunks at once, while the channel's
+    // SetInputBuffsize waits on the receive lane
+    // (RadioModel::applyStreamDspGeometry). Thetis cannot reach this state:
+    // SetXcmInrate and the receive loop take the same per-stream critical
+    // section (ChannelMaster/cmaster.c:343 and 457 [v2.10.3.15]), which the
+    // audio path here may not do. The chunk is silence instead; a longer one
+    // is read as its prefix, as before.
+    if (sampleCount < m_wdspInputSize.load(std::memory_order_acquire)) {
         std::memset(outI, 0, sampleCount * sizeof(float));
         std::memset(outQ, 0, sampleCount * sizeof(float));
         return;

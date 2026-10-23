@@ -86,6 +86,12 @@
 //                 non-finite samples in fexchange2's output. For the Core
 //                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. NereusSDR-original.
+//   2026-10-23 - wdspInputSize(): the input block WDSP's channel holds, so
+//                 processIq keeps a chunk shorter than it out of fexchange2
+//                 (a slice moved to a slower stream before its rate change
+//                 landed fed WDSP memory past the chunk: NaN and inf). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -344,6 +350,14 @@ public:
     int channelId() const { return m_channelId; }
     int bufferSize() const { return m_bufferSize.load(std::memory_order_acquire); }
     int sampleRate() const { return m_sampleRate.load(std::memory_order_acquire); }
+
+    // The input block WDSP's channel was last built with: OpenChannel's
+    // in_size, then SetInputBuffsize on each rate change. bufferSize() is the
+    // carry, which runs ahead of the lane; this follows WDSP itself.
+    // WdspEngine sets it on the lane, while the DSP worker is quiesced.
+    // processIq never hands fexchange2 a shorter chunk.
+    int wdspInputSize() const { return m_wdspInputSize.load(std::memory_order_acquire); }
+    void setWdspInputSize(int inSize) { m_wdspInputSize.store(inSize, std::memory_order_release); }
 
     // --- R-R3-39: the receive lane ---
     //
@@ -1408,6 +1422,8 @@ private:
     // worker reads bufferSize() for its external-diversity chunk.
     std::atomic<int> m_bufferSize;
     std::atomic<int> m_sampleRate;
+    // wdspInputSize(): written on the lane, read by the DSP worker.
+    std::atomic<int> m_wdspInputSize;
 
     // Atomic flags for lock-free audio thread reads
     std::atomic<int> m_mode{static_cast<int>(DSPMode::LSB)};  // Must match WdspEngine::createRxChannel init
