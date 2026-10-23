@@ -39,6 +39,9 @@
 //   2026-10-16: a Warm that names a bundle keeps its Mic Mode at Standard
 //               through the test run's stand-in calls, never the system's.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23: on Windows the helper's exit at stdin EOF runs no process
+//               detach (no DLL static destructors); a Shutdown still does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -64,6 +67,14 @@
 #include "../src/capture_main.cpp"
 #undef main
 
+// Last, so its macros reach none of the headers above.
+#if defined(Q_OS_WIN)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 using namespace NereusSDR;
 namespace P = NereusSDR::CaptureProtocol;
 
@@ -80,6 +91,29 @@ const QString kListedDevice = QStringLiteral("NereusSDR test microphone");
 // stores it and refuses one; unset, the child has none.
 constexpr char kHelperMicModeEnv[] = "NEREUS_TEST_HELPER_MIC_MODE";
 constexpr char kMicModeBundle[] = "com.example.window";
+
+// 2026-10-23: the helper child marks the process detach on its stderr.
+// Windows calls the exe's TLS callbacks with DLL_PROCESS_DETACH from
+// ExitProcess (std::_Exit, exit), the same pass that runs every DLL's
+// static destructors; TerminateProcess calls none.  MinGW and clang link a
+// .CRT$XLY callback into the exe's TLS callback list.
+constexpr char kProcessDetachMark[] = "nereus-test: process detach ran";
+#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
+constexpr bool kMarksProcessDetach = true;
+bool s_markProcessDetach = false;  // set once in main, before any thread
+
+void NTAPI markProcessDetach(PVOID, DWORD reason, PVOID)
+{
+    if (reason != DLL_PROCESS_DETACH || !s_markProcessDetach) {
+        return;
+    }
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), kProcessDetachMark,
+              static_cast<DWORD>(sizeof(kProcessDetachMark) - 1), &written, nullptr);
+}
+#else
+constexpr bool kMarksProcessDetach = false;
+#endif
 
 MicModeCalls helperTestMicModeCalls(const QByteArray& script)
 {
@@ -498,6 +532,43 @@ private slots:
         QCOMPARE(helper.process().exitCode(), 0);
     }
 
+    // 2026-10-23: the Core closes its first helper at startup, right after
+    // its Warm, and the helper ends at stdin EOF from its reader thread.  On
+    // Windows that exit ran the process detach (std::_Exit is ExitProcess):
+    // the DLLs' static destructors ran on the reader thread after the main
+    // thread was killed, and aborted in libgcc_s_seh-1.dll on the STRIX.
+    // The exit now runs none of it.  A Shutdown's normal return from main
+    // still does, which shows the mark can appear.
+    void helperExitAtStdinEofRunsNoProcessDetach()
+    {
+        if (!kMarksProcessDetach) {
+            QSKIP("the process detach is marked only in a Windows GCC or clang build");
+        }
+        {
+            Child helper;
+            QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+            QVERIFY(helper.next(3000).has_value());
+            helper.send(P::encodeShutdown());
+            QVERIFY(helper.finishes(3000));
+            QCOMPARE(helper.process().exitCode(), 0);
+            const QByteArray diagnostics = helper.diagnostics();
+            QVERIFY2(diagnostics.contains(kProcessDetachMark), diagnostics.constData());
+        }
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(P::encodeWarm());
+        QVERIFY(nextTypeIs(helper, P::RecordType::Warmed, 3000));
+        helper.process().closeWriteChannel();
+        QVERIFY2(helper.finishes(1000), "helper outlived its control pipe");
+        QCOMPARE(helper.process().exitStatus(), QProcess::NormalExit);
+        QCOMPARE(helper.process().exitCode(), 0);
+        const QByteArray diagnostics = helper.diagnostics();
+        QVERIFY2(diagnostics.contains("exiting: parent closed the control pipe"),
+                 diagnostics.constData());
+        QVERIFY2(!diagnostics.contains(kProcessDetachMark), diagnostics.constData());
+    }
+
     void helperShutdownExitsWithZero()
     {
         Child helper;
@@ -817,6 +888,13 @@ private slots:
     }
 };
 
+#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
+// The exe's TLS callback (see kProcessDetachMark).  Not const, as the
+// MinGW runtime's own entries in this list are not.
+extern "C" __attribute__((section(".CRT$XLY"), used))
+PIMAGE_TLS_CALLBACK nereusTestProcessDetachCallback = markProcessDetach;
+#endif
+
 int main(int argc, char* argv[])
 {
     if (argc > 1 && std::strcmp(argv[1], "--capture-helper") == 0) {
@@ -832,6 +910,9 @@ int main(int argc, char* argv[])
         // Fake query only: exercise logging before the real entry point,
         // without reaching a platform device API.
         NereusSDR::tracedNativeAudioQuery("test.no-device-query", -1, [] { return 0; });
+#if defined(Q_OS_WIN) && (defined(Q_CC_GNU) || defined(Q_CC_CLANG))
+        s_markProcessDetach = true;
+#endif
         return captureHelperEntryPointForTest(argc - 1, argv + 1);
     }
     if (argc > 2 && std::strcmp(argv[1], "--fake-capture-child") == 0) {

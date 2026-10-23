@@ -110,6 +110,10 @@
 #ifdef Q_OS_WIN
 #include <fcntl.h>
 #include <io.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <csignal>
 #include <unistd.h>
@@ -290,10 +294,23 @@ struct CommandQueue {
     std::deque<ParentCommand> commands;
 };
 
+// Ends the helper at once with code 0, from whichever thread sees the
+// reason (usually the stdin reader, while the main thread may be inside a
+// native audio call).  2026-10-23: on Windows std::_Exit is ExitProcess,
+// which kills the main thread mid-call and then runs every DLL's
+// DLL_PROCESS_DETACH, and with it the static destructors of
+// libNereusCore, Qt and the rest, on this thread.  On the STRIX that tore
+// down the helper's statics after a Warm and aborted in libgcc's emutls
+// (0x40000015 in libgcc_s_seh-1.dll), each time the Core closed its first
+// helper at startup.  TerminateProcess runs none of that.  On macOS and
+// Linux std::_Exit is the _exit system call, which runs nothing either.
 [[noreturn]] void exitNow(const char* why)
 {
     std::fprintf(stderr, "nereus-audio-capture: exiting: %s\n", why);
     std::fflush(stderr);
+#ifdef Q_OS_WIN
+    ::TerminateProcess(::GetCurrentProcess(), 0);
+#endif
     std::_Exit(0);
 }
 
