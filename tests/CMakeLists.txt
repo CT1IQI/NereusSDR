@@ -10425,6 +10425,13 @@ target_compile_definitions(tst_display_codec_v2 PRIVATE
 nereus_add_test(tst_display_codec_v2_regen)
 target_compile_definitions(tst_display_codec_v2_regen PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+# Display codec v2 Task 3: negotiation. displayCodecVersion goes only to a
+# peer that declared displayCodec 2, last before coreBuildInfo; the media
+# start may ask for version 2 only then; RemoteDisplayCodecV2 off withdraws
+# it from every peer.
+nereus_add_test(tst_display_codec_v2_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 nereus_add_test(tst_display_budget)
 # iPhone app Task 76 (R-IOS-31): the Core's display budget shared among
 # the devices signed in to it, holder first.
