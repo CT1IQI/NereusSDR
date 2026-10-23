@@ -7053,7 +7053,7 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
-# + band + modeGroup). Five tests:
+# + band + modeGroup). Six tests:
 #   parsesSampleAdif (10 QSO bundled fixture, first/last callsigns
 #   resolve, SSB -> PHONE / CW -> CW group normalisation),
 #   emitsFinishedSignal (QSignalSpy waits parseFileAsync ->
@@ -7061,6 +7061,8 @@ nereus_add_test(tst_core_spot_bearing CORE_ONLY)
 #   skipsHeaderSection (no <adif_ver> / <programid> leakage),
 #   handlesCaseInsensitiveTags (mixed-case <CALL> / <Call> /
 #   <call> + <EOR> / <eor> / <Eor> all parse),
+#   handlesTypeIndicatorTags (<CALL:6:S> / <FREQ:6:N> typed tags
+#   parse like plain ones; Longpath tests/tst_adif_parser.cpp [@383f058]),
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
@@ -11077,6 +11079,10 @@ endif()
 # document, section 12.8): the Core's relay-leg runner over the relay
 # fixtures in rendezvous/conformance/v1/relay/, and the leg's own rules.
 # Loopback only.
+# 2026-10-22: Happy Eyeballs (RFC 8305) for WebSockets to a host name: a
+# silent IPv6 address (a full accept queue on ::1) and an answering IPv4 one,
+# the in-process CONNECT tunnel, and the cases left as before. Loopback only.
+nereus_add_test(tst_happy_eyeballs EXTRA_LABELS session)
 nereus_add_test(tst_relay_leg EXTRA_LABELS session)
 target_compile_definitions(tst_relay_leg PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
