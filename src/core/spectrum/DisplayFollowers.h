@@ -269,7 +269,7 @@ struct WaterfallLevelSettings {
     /// Whether the follower has an estimate yet (NoiseFloorFollower::seeded).
     /// NF-AGC's run level takes nothing from a row without one, and starts
     /// at the floor's target on the first row with one.
-    bool noiseFloorSeeded {true};
+    bool noiseFloorSeeded {false};
     /// Clarity writes the levels itself between rows; nothing here moves
     /// them while it does.
     bool clarityActive {false};
