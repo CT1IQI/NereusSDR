@@ -54,6 +54,10 @@
 //               (MicModeKeeper.h), before the helper's first engine call,
 //               and Warmed says what came of it.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-23: on Windows the helper's immediate exit is TerminateProcess,
+//               not std::_Exit (ExitProcess), so no DLL static destructor
+//               runs on the reader thread.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
