@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the noise floor reads the first row, so
+//                                    NF-AGC's low is -133 and -133.044 and its
+//                                    window needs no second request.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  The stall test also checks the pan's
 //                                    own keyframe waits and blended and
 //                                    repeated rows. AI-assisted via
@@ -9391,11 +9396,13 @@ private slots:
         // S7: NF-AGC is an option under AGC. Alone it leaves the stored
         // levels and asks the Core for none.
         QTest::newRow("nf-only") << false << true << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
-        // With AGC: the low is the pan's settled noise floor plus the
-        // offset of -5. The floor starts at -200 and its line follows over
-        // 41 frames at 20 a second: -200 + 1/41, then + 1.9756/41 more.
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
+        // With AGC: the low is the pan's noise floor plus the offset of -5.
+        // The first row seeds the floor at its median, -128 (pixel 64 of
+        // -160 + 0.5 i), so -133. On the second row the 24 pixels under
+        // -128 average with it in power to -129.805, and the line follows
+        // over 41 frames at 20 a second: -128 - 1.805/41 - 5 = -133.044.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -133.0f << 0.0f << -133.04402f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -133.0f << 0.0f << -133.04402f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }
@@ -9611,21 +9618,20 @@ private slots:
         // (the pan's and the stored levels' -180 to 0 dBm with the headroom).
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -190.0);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 10.0);
-        // NF-AGC's accepted low (-204.9 dBm) is under the -190 dBm asked
-        // first, so the window is asked again with 10 dB of headroom below
-        // it. AGC's accepted pair (-171 and the stored High, 0) fits the
-        // window asked first now that AGC leaves the high level alone, so it
-        // asks nothing more; the request it used to make followed its high
-        // level (-83.5), not its low. Manual and Clarity fit theirs too.
+        // NF-AGC's accepted low (-133 dBm, the floor read from the first
+        // row) fits the -190 dBm window asked first, so it asks nothing more;
+        // it asked again for -215 only while the floor started at -200
+        // (coreWaterfallAgcWindowContainsAcceptedLevels covers a low under
+        // the window). AGC's accepted pair (-171 and the stored High, 0)
+        // fits the window asked first now that AGC leaves the high level
+        // alone, so it asks nothing more; the request it used to make
+        // followed its high level (-83.5), not its low. Manual and Clarity
+        // fit theirs too.
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
-        const int expectedRequests = mode == QStringLiteral("noiseFloorAgc") ? 2 : 1;
+        const int expectedRequests = 1;
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
-        if (mode == QStringLiteral("noiseFloorAgc")) {
-            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
-                         .value(QStringLiteral("minDbm")).toDouble(), -215.0);
-        }
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
