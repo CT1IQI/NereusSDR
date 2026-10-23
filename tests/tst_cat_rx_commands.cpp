@@ -360,7 +360,7 @@ private slots:
  void filterRepliesFollowTheConstraint() {
     // A filter write the slice constrains still answers "": Thetis's ZZSF
     // always does (CAT/CATCommands.cs:6247-6253 [v2.10.3.15]), and its
-    // UpdateRX1Filters widens and constrains the pair (console.cs:7544-7582).
+    // UpdateRX1Filters widens and constrains the pair (console.cs:7544-7582 [v2.10.3.15]).
     RadioModel model; slices(model); const quint64 id=start(model); CatService& service=*model.catService();
     SliceModel* slice=model.sliceById(0);
     // Center 9000, width 4000 asks for 7000..11000; the slice keeps 7000..10000.

@@ -22,7 +22,7 @@
 //                (console.cs:35044-35131 [v2.10.3.15]) in setFilter,
 //                setFilterLow, setFilterHigh, setDspMode and the layout
 //                restore; setFilter refuses a zero-width filter
-//                (console.cs:7582); shiftFilter keeps the width. Placement
+//                (console.cs:7582 [v2.10.3.15]); shiftFilter keeps the width. Placement
 //                in setFilter as Longpath does it (Longpath
 //                src/models/SliceModel.cpp:1110-1129 [@383f058]).
 //                Ported by J.J. Boyd (KG4VCF), with AI-assisted

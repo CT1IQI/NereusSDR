@@ -816,7 +816,7 @@ public:
     // (a drag held at the cap, a refused zero width), filterChanged is
     // emitted with the stored pair anyway, so a view that drew the request
     // shows what the receiver runs, as Thetis sets Display.RX1FilterLow/High
-    // only from the constrained values (console.cs:7589-7590).
+    // only from the constrained values (console.cs:7589-7590 [v2.10.3.15]).
     // From Longpath src/models/SliceModel.h:484 [@383f058]: the placement
     // in setFilter.
     void setFilter(int low, int high);

@@ -7,17 +7,17 @@
 // (console.cs:35044-35131 [v2.10.3.15]). Thetis runs it in
 // UpdateRX1Filters / UpdateRX2Filters (console.cs:7580, 7700
 // [v2.10.3.15]), the one path every receive filter change takes, and
-// then refuses a zero-width result (console.cs:7582). The whole-passband
+// then refuses a zero-width result (console.cs:7582 [v2.10.3.15]). The whole-passband
 // moves (filter shift and width sliders, whole-filter drag, the meter
 // filter drag) call it first with filterShift = true so the width is
-// kept (console.cs:35202, 35420, 50635, 50711; MeterManager.cs:19399).
+// kept (console.cs:35202, 35420, 50635, 50711; MeterManager.cs:19399 [v2.10.3.15]).
 //
 // Two rules:
 //   sideband - an edge may not cross 0 Hz the wrong way for the mode;
 //              only when "Limit filter edges to sidebands" is on, which
-//              is off by default (console.cs:7516).
+//              is off by default (console.cs:7516 [v2.10.3.15]).
 //   cap      - |edge| <= MaxFilterShift and MaxFilterWidth, both 10000
-//              by default (console.cs:13208, 13221); not in FM.
+//              by default (console.cs:13208, 13221 [v2.10.3.15]); not in FM.
 //
 // Before this test SliceModel::setFilter took any value: a 250 kHz
 // filter, a zero-width filter, and an LSB edge across zero with the
