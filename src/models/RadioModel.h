@@ -699,7 +699,10 @@
 //                device its letter when it signs in; the window's layout
 //                save keeps every entry that is not a device's
 //                (setHostsStationDevice, addStartingSlices,
-//                placeReservedSlicesFor, captureHostedReceiveLayout).
+//                placeReservedSlicesFor, captureHostedReceiveLayout). Each
+//                local connect snapshots the device letters' settings so a
+//                device never gets the window's; windowSliceId names the
+//                window's own starting slice for its one-time wiring.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -2909,11 +2912,13 @@ public:
     /// (captureReceiveLayout), carrying every other entry through
     /// unchanged, and keeps each returning device's letter and settings for
     /// it (addStartingSlices) without making its slice until it signs in
-    /// (placeReservedSlicesFor). Set while the radio is connected, the
-    /// letters are kept at once; a letter the window already uses is not,
-    /// and that device gets the lowest free letter with the settings the
-    /// letter holds then, which are the window's. Cleared, it stages the
-    /// layout one last time and drops the kept letters. Local only.
+    /// (placeReservedSlicesFor). Set while the window already has its
+    /// slices (Run Core turned on later, connected or not), the letters are
+    /// kept at once; a letter the window already uses is not, and that
+    /// device gets the lowest free letter with the settings the letter held
+    /// when the radio connected (the connect's snapshot, so its own, never
+    /// the window's). Cleared, it stages the layout one last time and drops
+    /// the kept letters. Local only.
     void setHostsStationDevice(bool hosts);
     bool hostsStationDevice() const { return m_hostsStationDevice; }
 
@@ -2936,6 +2941,14 @@ public:
     /// The letters kept for paired devices that have not signed in, lowest
     /// first.
     QList<int> reservedSliceLetters() const;
+
+    /// The slice this window's one-time wiring follows (the spectrum's
+    /// first view, the VFO flag built with it, the mode, AGC and NR menus,
+    /// the RADE and Phone/CW applets, the restore push): the slice the
+    /// connect started this window on (addStartingSlices). Slice A unless a
+    /// Core inside the window kept A for a returning paired device, and
+    /// always A for a remote window.
+    int windowSliceId() const { return m_windowSliceId; }
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
     /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
@@ -7702,6 +7715,12 @@ private:
     int lowestUnreservedFreeSliceId(int cap) const;
     // The slice limit before the connect sizes the stream pool: the board's.
     int startingSliceCap() const;
+    // The board's own slice cap, as StationServer::deviceLayoutLimit, for
+    // a device's saved slices.
+    int deviceLayoutLimit() const;
+    // addStartingSlices: the layout's paired-device letters' settings as
+    // they are at connect, before the window's slice can write them.
+    void snapshotDeviceLetterSettings(const QString& radioMac);
     // captureReceiveLayout for the Core inside a desktop window: the paired
     // devices' slices and kept letters, never the window's own, with every
     // other entry of the saved layout carried through.
@@ -8364,6 +8383,13 @@ private:
         bool letterKept {false};
     };
     QList<DeviceSliceReservation> m_deviceSliceReservations;
+    // reserveDeviceSlices ran for this hosting run (with a radio address).
+    bool m_deviceLettersReserved{false};
+    // snapshotDeviceLetterSettings: per letter, for m_deviceLetterSnapshotMac.
+    QString m_deviceLetterSnapshotMac;
+    QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
+    // windowSliceId.
+    int m_windowSliceId{0};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.

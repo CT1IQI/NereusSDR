@@ -4,7 +4,8 @@
 //   2026-10-23: a Core inside a desktop window gives a returning device
 //               the letters it kept for it (placeReservedSlicesFor), and a
 //               device admitted before the radio connects is placed when it
-//               does (m_placementAwaitingRadio). J.J. Boyd (KG4VCF),
+//               does (m_placementAwaitingRadio); a saved slice never takes a
+//               letter kept for another device. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-22: RX-only antennas as Thetis's checkbox sum (0..5):
 //               radioAntennaRowsVersion 2 for a peer that declared
@@ -11002,8 +11003,19 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // device's letter from the saved layout, which it reads when the radio
     // connects (RadioModel::addStartingSlices). A device admitted before
     // that is placed when the radio connects, so it neither takes a letter
-    // kept for another device nor leaves the window without one.
-    if (m_radioModel->hostsStationDevice() && m_radioModel->currentRadioMac().isEmpty()) {
+    // kept for another device nor leaves the window without one. An older
+    // window (no sessionHolder) needs its slice at admission or it is
+    // refused (olderWindowWithoutSliceReason), so it is placed now, as
+    // before.
+    bool holdsSessions = false;
+    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+        if (it.value().sessionDeviceId == deviceId && peerHoldsSessions(it.key())) {
+            holdsSessions = true;
+            break;
+        }
+    }
+    if (holdsSessions && m_radioModel->hostsStationDevice()
+        && m_radioModel->currentRadioMac().isEmpty()) {
         m_placementAwaitingRadio.insert(deviceId);
         m_connectedDevices->refresh();
         return;
@@ -11023,8 +11035,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
         const QList<SavedSlice> saved = DeviceLayoutStore::load(store, mac, deviceId);
         QList<SavedSlice> notRestored;
         for (const SavedSlice& entry : saved) {
+            // A letter a Core inside the window keeps for another device is
+            // not free (JJ 2026-10-23); lowestFreeSliceId skips those too.
             const int sliceId = m_radioModel->sliceById(entry.id) == nullptr
                     && entry.id < WdspEngine::kMaxSliceChannels
+                    && !m_radioModel->reservedSliceLetters().contains(entry.id)
                 ? entry.id
                 : m_radioModel->lowestFreeSliceId();
             if (sliceId < 0) {

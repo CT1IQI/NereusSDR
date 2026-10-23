@@ -1523,6 +1523,10 @@ nereus_add_test(tst_station_hosting_slice_letters
     EXTRA_LABELS session)
 target_compile_definitions(tst_station_hosting_slice_letters PRIVATE NEREUS_BUILD_TESTS)
 
+# JJ 2026-10-23: a window that starts on B (a Core inside it kept A for a
+# paired device) wires its spectrum, menus and applets to B, not to A.
+nereus_add_test(tst_window_wiring_follows_starting_slice EXTRA_LABELS gui)
+
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
 
