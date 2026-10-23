@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - refreshSliceAntennasFromAlex: a slice names its antennas
+//                from Setup's per-band antenna table after a restore and on
+//                every connect, now that it saves no antenna of its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
 //                local connection is created until it reports Connected or
 //                ends, then waits the post-disconnect quiet period
@@ -15969,6 +15974,13 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             restoredSavedState = true;
         }
     }
+    // A restored slice names its antennas from Setup's antenna table for
+    // the band it came back on; it keeps none of its own. Not wired yet,
+    // so this sets the labels and writes nothing.
+    if (m_role == Role::Local && (restoreSeed || restoredSavedState)) {
+        refreshSliceAntennasFromAlex(slice);
+        if (!self || !added) { return -1; }
+    }
     m_slices.append(slice);
     m_slicePublications[slice].constructing = false;
     const auto currentAdded = [&] {
@@ -25008,6 +25020,11 @@ void RadioModel::loadSliceState(SliceModel* slice)
 
     slice->restoreFromSettings(currentBand);
 
+    // The restored band's antennas come from Setup's antenna table. The
+    // slice used to restore a saved label of its own here and write it
+    // over that band's row of the table when the radio connected again.
+    refreshSliceAntennasFromAlex(slice);
+
     // And put the restored rate on the DDC, not just on the menu. Codex
     // review round 7, PR #293. Same call as the band-change path: this is
     // the launch-time restore, and it was equally display-only.
@@ -25141,6 +25158,22 @@ void RadioModel::clearStationModMonitor()
 {
     m_stationModMonitor[0].reset();
     m_stationModMonitor[1].reset();
+}
+
+void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)
+{
+    // Setup's per-band antenna table (AlexController) is the only store of
+    // a band's antennas, as in Thetis, whose band stack entry holds no
+    // antenna (clsBandStackManager.cs:114-142 [v2.10.3.15]); the antennas
+    // live in Alex alone. The band is the one the slice's frequency is in,
+    // which is the band the slice's rxAntennaChanged / txAntennaChanged
+    // handlers write back to, so the write-back finds the values it would
+    // write and changes nothing.
+    if (slice == nullptr) {
+        return;
+    }
+    const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+    slice->refreshAntennasFromAlex(m_alexController, bandFromFrequency(slice->frequency()), &sku);
 }
 
 void RadioModel::applyTxAntennaFromBoundSlice()
@@ -28682,6 +28715,15 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // fresh connection. Matches Thetis's initial UpdateAlexAntSelection
         // call path on radio startup (HPSDR/Alex.cs:310 [@501e3f5]).
         applyAlexAntennaForBand(m_lastBand);
+        // And every slice names its antennas from the table for its own
+        // band, so a label restored or kept from before the connection
+        // never reaches the table as a new choice. A remote window's
+        // labels are the Core's and are left alone.
+        if (m_role == Role::Local) {
+            for (SliceModel* slice : std::as_const(m_slices)) {
+                refreshSliceAntennasFromAlex(slice);
+            }
+        }
         // Phase 3F: same for the per-ADC band-pass. The slice set survives a
         // reconnect, so the fresh connection has to be told which chain is
         // filtered and which is wide before the first tune moves anything.

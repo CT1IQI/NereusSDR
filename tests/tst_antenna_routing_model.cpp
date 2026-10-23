@@ -595,6 +595,95 @@ private slots:
         model.injectConnectionForTest(nullptr);
         delete mock;
     }
+
+    // ── Setup's antenna table is the only per-band store ─────────────────────
+
+    // Reported on Discord (OZ1CT, 2026-10-22): go from 80 m to 20 m and back
+    // to 80 m, and 80 m's row of Setup's antenna table holds 20 m's antennas.
+    // The slice saved one antenna label for the whole slice, and the band
+    // button's restore wrote it into the band it returned to.
+    void band_return_keeps_setup_antennas() {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        model.setCapsForTest(/*hasAlex=*/true);
+        AlexController& alex = model.alexControllerMutable();
+        alex.setRxAnt(Band::Band80m, 3);
+        alex.setTxAnt(Band::Band80m, 3);
+        alex.setRxAnt(Band::Band20m, 2);
+        alex.setTxAnt(Band::Band20m, 2);
+
+        model.addSlice();
+        model.setActiveSlice(0);
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.wireSliceSignalsForTest();
+
+        slice->setFrequency(3700000.0);   // 80 m
+        QCOMPARE(model.lastBand(), Band::Band80m);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT3"));
+
+        model.onBandButtonClicked(Band::Band20m);   // first visit: the seed
+        QCOMPARE(model.lastBand(), Band::Band20m);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT2"));
+
+        model.onBandButtonClicked(Band::Band80m);   // second visit: the restore
+        QCOMPARE(model.lastBand(), Band::Band80m);
+
+        QCOMPARE(alex.rxAnt(Band::Band80m), 3);
+        QCOMPARE(alex.txAnt(Band::Band80m), 3);
+        QCOMPARE(alex.rxAnt(Band::Band20m), 2);
+        QCOMPARE(alex.txAnt(Band::Band20m), 2);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(slice->txAntenna(), QStringLiteral("ANT3"));
+        QVERIFY(!mock->calls.isEmpty());
+        QCOMPARE(mock->calls.last().trxAnt, 3);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
+
+    // Reported with the case above: switch the radio off and on again, and
+    // the band the slice was on (20 m) takes another antenna in Setup's
+    // table. The connect-time restore of the slice's last band wrote the
+    // slice's own saved label (Slice0/RxAntenna, TxAntenna, which settings
+    // files from earlier builds still hold) over that band's row.
+    void reconnect_keeps_setup_antennas() {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("20m"));
+        s.setValue(QStringLiteral("Slice0/Band20m/Frequency"), 14200000.0);
+        s.setValue(QStringLiteral("Slice0/RxAntenna"), QStringLiteral("ANT1"));
+        s.setValue(QStringLiteral("Slice0/TxAntenna"), QStringLiteral("ANT1"));
+
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        model.setCapsForTest(/*hasAlex=*/true);
+        AlexController& alex = model.alexControllerMutable();
+        alex.setRxAnt(Band::Band20m, 3);
+        alex.setTxAnt(Band::Band20m, 3);
+
+        model.addSlice();
+        model.setActiveSlice(0);
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.wireSliceSignalsForTest();
+
+        model.loadSliceStateForTest(slice);
+
+        QCOMPARE(slice->frequency(), 14200000.0);
+        QCOMPARE(alex.rxAnt(Band::Band20m), 3);
+        QCOMPARE(alex.txAnt(Band::Band20m), 3);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(slice->txAntenna(), QStringLiteral("ANT3"));
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
 };
 
 QTEST_MAIN(TestAntennaRoutingModel)
