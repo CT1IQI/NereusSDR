@@ -1716,6 +1716,95 @@
     {
       "counters": {
         "duplicateParts": 0,
+        "framesLost": 0,
+        "malformed": 0,
+        "partsLost": 0,
+        "staleMessages": 0
+      },
+      "messages": [
+        "4e534443021a002a00000101000000030000000100000000000f4243c31600000000000000080006000002000007478d34d34d34d002000006aeae9d3a74e8",
+        "4e534443021a002a00000101000000030000000200000000001e8483c316000080000000000800060000020000076c8d34d34d34d002000006e3ae9d3a74e8",
+        "4e5344430232002a00000101000000030000000300000000002dc6c3c3160000000000000008000600000200000618ae9d3a74e8",
+        "4e534443022a002a00000101000000030000000300000000002dc6c3c31600008000000000080006000002000007918d34d34d34d0"
+      ],
+      "name": "context-floats-compare-by-value",
+      "results": [
+        {
+          "disposition": "accepted",
+          "frames": [
+            {
+              "contextGeneration": 3,
+              "encoderSequence": 1,
+              "endpointId": 257,
+              "maxDbm": 0,
+              "minDbm": -150,
+              "producerTimestamp": "1000003",
+              "trace": [71, 84, 97, 110, 123, 136, 149, 162],
+              "traceCarried": false,
+              "traceSamples": 8,
+              "waterfall": [174, 203, 232, 5, 34, 63],
+              "waterfallAdvance": true,
+              "waterfallSamples": 6,
+              "wide": [],
+              "wideSamples": 0
+            }
+          ],
+          "reason": "none"
+        },
+        {
+          "disposition": "accepted",
+          "frames": [
+            {
+              "contextGeneration": 3,
+              "encoderSequence": 2,
+              "endpointId": 257,
+              "maxDbm": 0,
+              "minDbm": -150,
+              "producerTimestamp": "2000003",
+              "trace": [108, 121, 134, 147, 160, 173, 186, 199],
+              "traceCarried": false,
+              "traceSamples": 8,
+              "waterfall": [227, 0, 29, 58, 87, 116],
+              "waterfallAdvance": true,
+              "waterfallSamples": 6,
+              "wide": [],
+              "wideSamples": 0
+            }
+          ],
+          "reason": "none"
+        },
+        {
+          "disposition": "held",
+          "frames": [],
+          "reason": "none"
+        },
+        {
+          "disposition": "accepted",
+          "frames": [
+            {
+              "contextGeneration": 3,
+              "encoderSequence": 3,
+              "endpointId": 257,
+              "maxDbm": 0,
+              "minDbm": -150,
+              "producerTimestamp": "3000003",
+              "trace": [145, 158, 171, 184, 197, 210, 223, 236],
+              "traceCarried": false,
+              "traceSamples": 8,
+              "waterfall": [24, 53, 82, 111, 140, 169],
+              "waterfallAdvance": true,
+              "waterfallSamples": 6,
+              "wide": [],
+              "wideSamples": 0
+            }
+          ],
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "counters": {
+        "duplicateParts": 0,
         "framesLost": 2,
         "malformed": 0,
         "partsLost": 0,
@@ -2511,6 +2600,46 @@
         "4e534443021a002a00000101000000030000000100000000000f4243c3160000c1f0000000080006000003000007478d34d34d34d002000006aeae9d3a74e8"
       ],
       "name": "malformed-plane-coding-3",
+      "results": [
+        {
+          "disposition": "rejected",
+          "frames": [],
+          "reason": "malformed"
+        }
+      ]
+    },
+    {
+      "counters": {
+        "duplicateParts": 0,
+        "framesLost": 0,
+        "malformed": 1,
+        "partsLost": 0,
+        "staleMessages": 0
+      },
+      "messages": [
+        "4e534443021a002a00000101000000030000000100000000000f42437fc00000c1f0000000080006000002000007478d34d34d34d002000006aeae9d3a74e8"
+      ],
+      "name": "malformed-nan-min-dbm",
+      "results": [
+        {
+          "disposition": "rejected",
+          "frames": [],
+          "reason": "malformed"
+        }
+      ]
+    },
+    {
+      "counters": {
+        "duplicateParts": 0,
+        "framesLost": 0,
+        "malformed": 1,
+        "partsLost": 0,
+        "staleMessages": 0
+      },
+      "messages": [
+        "4e534443021a002a00000101000000030000000100000000000f4243c31600007fc0000000080006000002000007478d34d34d34d002000006aeae9d3a74e8"
+      ],
+      "name": "malformed-nan-max-dbm",
       "results": [
         {
           "disposition": "rejected",

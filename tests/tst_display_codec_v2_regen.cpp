@@ -30,6 +30,10 @@
 //   2026-10-22: The rejects decided at the version dispatch (bad magic,
 //               unsupported version, oversized, truncated in the magic).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-23: The float context fields compare by value (-0.0 equals
+//               +0.0 in a context and between a split frame's parts), and
+//               a NaN interval is malformed. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -164,6 +168,21 @@ DisplayCodecFrame seqFrame(quint32 endpoint, quint32 generation, quint32 sequenc
     }
     DisplayCodecFrame frame = encoderFrame(endpoint, generation, sequence, trace, waterfall, wide, true);
     frame.producerTimestamp = 1'000'000ULL * sequence + generation;
+    return frame;
+}
+
+/// seqFrame on endpoint A, generation 3, with the interval -150 dBm to
+/// +0.0 dBm, or to -0.0 dBm when `negativeZero`: the same context by value,
+/// another bit pattern on the wire. The planes are dequantized on it.
+DisplayCodecFrame signedZeroFrame(quint32 sequence, bool negativeZero)
+{
+    DisplayCodecFrame frame = seqFrame(kEndpointA, 3, sequence);
+    const QVector<quint8> trace = Vectors::quantizeRow(frame.traceDbm);
+    const QVector<quint8> waterfall = Vectors::quantizeRow(frame.waterfallDbm);
+    frame.context.maxDbm = negativeZero ? -0.0f : 0.0f;
+    frame.traceDbm = Vectors::dequantizeRow(trace, frame.context.minDbm, frame.context.maxDbm);
+    frame.waterfallDbm =
+        Vectors::dequantizeRow(waterfall, frame.context.minDbm, frame.context.maxDbm);
     return frame;
 }
 
@@ -457,6 +476,17 @@ QJsonArray buildSequences()
          {rowPart(a(9, 3)), rejected("oldContext")}},
         counters(0, 0, 0, 0, 0));
 
+    // ---- The float context fields compare by value ----
+    // Both decoders compare minDbm and maxDbm as values, not bit patterns:
+    // a maxDbm of -0.0 is the context +0.0 started, and parts whose headers
+    // differ only there agree.
+    add(QStringLiteral("context-floats-compare-by-value"),
+        {{whole(signedZeroFrame(1, false)), accepted({signedZeroFrame(1, false)})},
+         {whole(signedZeroFrame(2, true)), accepted({signedZeroFrame(2, true)})},
+         {rowPart(signedZeroFrame(3, false)), held()},
+         {tracePart(signedZeroFrame(3, true)), accepted({signedZeroFrame(3, false)})}},
+        counters(0, 0, 0, 0, 0));
+
     // ---- framesLost across the 2^32 sequence wrap ----
     add(QStringLiteral("frames-lost-across-the-sequence-wrap"),
         {{whole(a(0xFFFFFFFEU)), accepted({a(0xFFFFFFFEU)})},
@@ -518,6 +548,18 @@ QJsonArray buildSequences()
         QByteArray message = base;
         message[DisplayCodecEncoder::kHeaderBytes] = static_cast<char>(coding);
         oneMalformed(QStringLiteral("malformed-plane-coding-%1").arg(coding), message, "malformed");
+    }
+    // A NaN interval end is malformed, as in v1 (the interval is finite
+    // with maxDbm above minDbm), so no context comparison ever sees one.
+    for (const int offset : {28, 32}) {
+        QByteArray message = base;
+        message[offset] = static_cast<char>(0x7F);
+        message[offset + 1] = static_cast<char>(0xC0);
+        message[offset + 2] = '\0';
+        message[offset + 3] = '\0';
+        oneMalformed(offset == 28 ? QStringLiteral("malformed-nan-min-dbm")
+                                  : QStringLiteral("malformed-nan-max-dbm"),
+                     message, "malformed");
     }
     for (const int code : {3, 255}) {
         QByteArray message = base;

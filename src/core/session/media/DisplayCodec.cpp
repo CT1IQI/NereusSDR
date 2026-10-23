@@ -15,6 +15,10 @@
 //   2026-10-22: NSDC v2 decoder: version dispatch, part pairing, fills and
 //               the loss counters. J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-23: The float context fields compare by value on both
+//               decoders (the phone's too), so -0.0 equals +0.0; a NaN
+//               never reaches the comparison. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/session/media/DisplayCodec.h"
@@ -136,11 +140,21 @@ bool validContext(const DisplayCodecContext& context)
         && context.wideSamples <= DisplayCodecEncoder::kMaxSamplesPerPlane;
 }
 
+/// The one rule for the float context fields, here and in the phone's
+/// decoder: they compare by value, never by bit pattern, so -0.0 equals
+/// +0.0. A NaN would compare unequal to itself, but none reaches here:
+/// validContext() refuses a non-finite interval as malformed when a message
+/// is parsed and before a frame is encoded.
+bool sameDbm(float left, float right)
+{
+    return left == right;
+}
+
 bool sameContext(const DisplayCodecContext& left, const DisplayCodecContext& right)
 {
     return left.endpointId == right.endpointId
         && left.contextGeneration == right.contextGeneration
-        && left.minDbm == right.minDbm && left.maxDbm == right.maxDbm
+        && sameDbm(left.minDbm, right.minDbm) && sameDbm(left.maxDbm, right.maxDbm)
         && left.traceSamples == right.traceSamples
         && left.waterfallSamples == right.waterfallSamples
         && left.wideSamples == right.wideSamples;
