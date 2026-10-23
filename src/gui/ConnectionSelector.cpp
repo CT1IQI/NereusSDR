@@ -11,6 +11,10 @@
 //               cell's full text (JJ: "unable to see the whole column info
 //               and unable to resize"). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22: fitted once when the list first fills, then grown (never
+//               shrunk) on refresh, so widths do not jump as status text
+//               changes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "gui/ConnectionSelector.h"
@@ -282,8 +286,20 @@ void ConnectionSelector::fitColumnsToContents()
     if (m_columnsSizedByUser) {
         return;
     }
+    // Fitted exactly until the list first holds a target, then only grown:
+    // a refresh whose status text is shorter keeps the width, so the
+    // columns do not jump as the text changes.
+    // (Fitted, then the earlier width put back when it was wider, before
+    // anything is painted.)
     for (int column = 0; column < m_targetTree->columnCount(); ++column) {
+        const int before = m_targetTree->columnWidth(column);
         m_targetTree->resizeColumnToContents(column);
+        if (m_columnsFitted && m_targetTree->columnWidth(column) < before) {
+            m_targetTree->setColumnWidth(column, before);
+        }
+    }
+    if (!m_targets.isEmpty()) {
+        m_columnsFitted = true;
     }
 }
 

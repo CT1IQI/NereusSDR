@@ -7,6 +7,9 @@
 // Modification history (NereusSDR):
 //   2026-10-22: columnsResizeAndShowTheirWholeText. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the widths grow only, and the sideways scroll is checked
+//               at a width the columns cannot fit. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/ConnectionSelector.h"
@@ -475,6 +478,34 @@ void ConnectionSelectorTest::columnsResizeAndShowTheirWholeText()
                                 .arg(column).arg(tree->columnWidth(column)).arg(needed)));
     }
 
+    // A refresh with shorter status text keeps every width: the columns
+    // are fitted once, then only grown, so they do not jump as text changes.
+    QList<int> fitted;
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        fitted.append(tree->columnWidth(column));
+    }
+    QList<ConnectionTargetRow> shorter = targets;
+    shorter[2].state = QStringLiteral("Available");
+    selector.setTargets(shorter);
+    QCoreApplication::processEvents();
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        QCOMPARE(tree->columnWidth(column), fitted.at(column));
+    }
+
+    // Longer status text grows its column to show it whole, here far wider
+    // than any window the selector allows.
+    QStringList parts;
+    for (int i = 0; i < 8; ++i) {
+        parts.append(longState);
+    }
+    const QString hugeState = parts.join(QStringLiteral(", "));
+    QList<ConnectionTargetRow> longer = targets;
+    longer[2].state = hugeState;
+    selector.setTargets(longer);
+    QCoreApplication::processEvents();
+    QVERIFY(tree->columnWidth(3) >= metrics.horizontalAdvance(hugeState));
+    QCOMPARE(tree->columnWidth(0), fitted.at(0));
+
     // Too wide for the window: the list scrolls sideways.
     selector.resize(selector.minimumWidth(), selector.height());
     QCoreApplication::processEvents();
@@ -482,9 +513,9 @@ void ConnectionSelectorTest::columnsResizeAndShowTheirWholeText()
     for (int column = 0; column < tree->columnCount(); ++column) {
         total += tree->columnWidth(column);
     }
-    if (total > tree->viewport()->width()) {
-        QVERIFY(tree->horizontalScrollBar()->maximum() > 0);
-    }
+    QVERIFY2(total > tree->viewport()->width(),
+             qPrintable(QStringLiteral("%1 <= %2").arg(total).arg(tree->viewport()->width())));
+    QVERIFY(tree->horizontalScrollBar()->maximum() > 0);
 
     // The window resizes: no fixed size.
     QCOMPARE(selector.maximumWidth(), QWIDGETSIZE_MAX);

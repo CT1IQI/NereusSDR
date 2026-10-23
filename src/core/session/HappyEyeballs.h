@@ -33,10 +33,20 @@
 // name a proxy (which resolves the name itself), is left as before.
 //
 // =================================================================
+// No Nagle on either tunnel socket (the accepted loopback connection and
+// the connection to the far end), so a leg that turns Nagle off on its
+// WebSocket (RelayLeg, section 12.5) keeps it off end to end. A failed race
+// answers the CONNECT with the status Qt maps to the real cause
+// (failureStatusLine), not one it reports as a proxy fault.
+//
+// =================================================================
 // Modification history (NereusSDR):
 //   2026-10-22: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-22: no Nagle on either tunnel socket; failure statuses Qt
+//               reports as the real error; the listener a QObject child.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QAbstractSocket>
@@ -84,8 +94,14 @@ void setResolverForTest(Resolver resolver);
 QNetworkProxy proxyForWebSocket(const QUrl& url, QWebSocket* socket);
 
 /// The socket that carries `socket`'s bytes to its far end when it runs
-/// through a tunnel (for its real local and remote addresses), or null.
-const QAbstractSocket* upstreamOf(const QWebSocket* socket);
+/// through a tunnel (for its real local and remote addresses and its
+/// options), or null.
+QAbstractSocket* upstreamOf(const QWebSocket* socket);
+
+/// The status line a tunnel answers a CONNECT with when the race failed
+/// with `error`: the one Qt's HTTP proxy client reports as that error
+/// rather than as a proxy fault (see the .cpp for Qt's mapping).
+QByteArray failureStatusLine(QAbstractSocket::SocketError error);
 
 } // namespace HappyEyeballs
 
@@ -134,17 +150,17 @@ public:
     HappyEyeballsTunnel(const QString& host, quint16 port, QObject* parent = nullptr);
     ~HappyEyeballsTunnel() override;
 
-    bool isListening() const { return m_server.isListening(); }
+    bool isListening() const { return m_server->isListening(); }
     /// The HTTP proxy at this tunnel's loopback listener.
     QNetworkProxy proxy() const;
     /// The connection to the far end, once one won; null before.
-    const QTcpSocket* upstream() const { return m_upstream.data(); }
+    QTcpSocket* upstream() const { return m_upstream.data(); }
 
 private:
     void onNewConnection();
     void onClientReadable();
     void onUpstreamConnected(QTcpSocket* socket);
-    void onUpstreamFailed();
+    void onUpstreamFailed(QAbstractSocket::SocketError error);
     void pump(QTcpSocket* from, QTcpSocket* to);
     void onSideDisconnected(QTcpSocket* from, QTcpSocket* to);
     void answerAndClose(const QByteArray& statusLine);
@@ -155,7 +171,8 @@ private:
 
     QString m_host;
     quint16 m_port = 0;
-    QTcpServer m_server;
+    // A child, so it moves threads with the tunnel.
+    QTcpServer* m_server = nullptr;
     QPointer<QTcpSocket> m_client;
     QPointer<QTcpSocket> m_upstream;
     QPointer<HappyEyeballsConnector> m_connector;

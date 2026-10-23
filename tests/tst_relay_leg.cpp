@@ -24,6 +24,8 @@
 //   2026-10-22: a relay reached by name over IPv4 when IPv6 is silent
 //               (aLegReachesItsRelayByNamePastASilentAddress). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: no Nagle on the tunnel's connection to the relay.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -809,7 +811,10 @@ private slots:
         // Qt's own one-address-at-a-time connect.
         const auto* legSocket = leg->findChild<QWebSocket*>(QString(), Qt::FindDirectChildrenOnly);
         QVERIFY(legSocket != nullptr);
-        QVERIFY(HappyEyeballs::upstreamOf(legSocket) != nullptr);
+        QAbstractSocket* upstream = HappyEyeballs::upstreamOf(legSocket);
+        QVERIFY(upstream != nullptr);
+        // Section 12.5: no Nagle on the leg, past the tunnel too.
+        QVERIFY(upstream->socketOption(QAbstractSocket::LowDelayOption).toInt() != 0);
         QTRY_VERIFY(!connection->received.isEmpty());
         QCOMPARE(connection->received.first(), QByteArray("\x80name-token", 11));
         connection->socket->sendBinaryMessage(QByteArray("\x81\x01\x00", 3));

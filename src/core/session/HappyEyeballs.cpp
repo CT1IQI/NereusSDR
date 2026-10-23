@@ -10,6 +10,9 @@
 //   2026-10-22: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-22: no Nagle on either tunnel socket; failure statuses Qt
+//               reports as the real error; the listener a QObject child.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/HappyEyeballs.h"
@@ -22,6 +25,7 @@
 #include <QWebSocket>
 
 #include <algorithm>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -108,7 +112,7 @@ QNetworkProxy HappyEyeballs::proxyForWebSocket(const QUrl& url, QWebSocket* sock
     return tunnel->proxy();
 }
 
-const QAbstractSocket* HappyEyeballs::upstreamOf(const QWebSocket* socket)
+QAbstractSocket* HappyEyeballs::upstreamOf(const QWebSocket* socket)
 {
     if (socket == nullptr) {
         return nullptr;
@@ -116,6 +120,25 @@ const QAbstractSocket* HappyEyeballs::upstreamOf(const QWebSocket* socket)
     const auto* tunnel =
         socket->findChild<HappyEyeballsTunnel*>(QString(), Qt::FindDirectChildrenOnly);
     return tunnel != nullptr ? tunnel->upstream() : nullptr;
+}
+
+QByteArray HappyEyeballs::failureStatusLine(QAbstractSocket::SocketError error)
+{
+    // Qt 6's HTTP proxy client (QHttpSocketEngine::slotSocketReadNotification,
+    // qtbase src/network/socket/qhttpsocketengine.cpp, v6.11.0 lines
+    // 640-653) maps a CONNECT reply to the socket's error: 403 and 405 to
+    // SocketAccessError, 404 to HostNotFoundError ("Host not found"), 503
+    // to ConnectionRefusedError ("Connection refused"), and any other
+    // status to ProxyProtocolError ("Error communicating with HTTP
+    // proxy"), which blames a proxy the operator never set up.
+    if (error == QAbstractSocket::HostNotFoundError) {
+        return QByteArrayLiteral("HTTP/1.1 404 Not Found");
+    }
+    // Refused, unreachable, or timed out: no address took the connection.
+    // Qt maps no status to a timeout or an unreachable network, so these
+    // take the nearest it has, "Connection refused" (the race's own reason
+    // goes to the log).
+    return QByteArrayLiteral("HTTP/1.1 503 Service Unavailable");
 }
 
 // ── HappyEyeballsConnector ─────────────────────────────────────────────
@@ -254,10 +277,11 @@ HappyEyeballsTunnel::HappyEyeballsTunnel(const QString& host, quint16 port, QObj
     : QObject(parent)
     , m_host(withoutBrackets(host))
     , m_port(port)
+    , m_server(new QTcpServer(this))
 {
-    connect(&m_server, &QTcpServer::newConnection, this, &HappyEyeballsTunnel::onNewConnection);
-    m_server.setMaxPendingConnections(1);
-    m_server.listen(QHostAddress::LocalHost, 0);
+    connect(m_server, &QTcpServer::newConnection, this, &HappyEyeballsTunnel::onNewConnection);
+    m_server->setMaxPendingConnections(1);
+    m_server->listen(QHostAddress::LocalHost, 0);
 }
 
 HappyEyeballsTunnel::~HappyEyeballsTunnel()
@@ -272,14 +296,14 @@ HappyEyeballsTunnel::~HappyEyeballsTunnel()
 
 QNetworkProxy HappyEyeballsTunnel::proxy() const
 {
-    return QNetworkProxy(QNetworkProxy::HttpProxy, m_server.serverAddress().toString(),
-                         m_server.serverPort());
+    return QNetworkProxy(QNetworkProxy::HttpProxy, m_server->serverAddress().toString(),
+                         m_server->serverPort());
 }
 
 void HappyEyeballsTunnel::onNewConnection()
 {
-    while (m_server.hasPendingConnections()) {
-        QTcpSocket* socket = m_server.nextPendingConnection();
+    while (m_server->hasPendingConnections()) {
+        QTcpSocket* socket = m_server->nextPendingConnection();
         // One connection: the WebSocket's own. Any later one is refused.
         if (m_stage != Stage::Listening) {
             socket->abort();
@@ -296,7 +320,7 @@ void HappyEyeballsTunnel::onNewConnection()
             }
         });
     }
-    m_server.close();
+    m_server->close();
 }
 
 bool HappyEyeballsTunnel::targetMatches(const QByteArray& authority) const
@@ -364,6 +388,11 @@ void HappyEyeballsTunnel::onUpstreamConnected(QTcpSocket* socket)
     }
     m_upstream = socket;
     m_stage = Stage::Piping;
+    // No Nagle on either side (section 12.5 for the relay leg; every
+    // tunnel alike): the loopback hop and the connection to the far end
+    // send small messages at once, as the WebSocket's own socket does.
+    m_client->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+    socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
     // Bounded buffers each way: a side that does not read holds the other
     // back, as a direct TCP connection would.
     m_client->setReadBufferSize(HappyEyeballs::kPipeHighWaterBytes);
@@ -391,13 +420,14 @@ void HappyEyeballsTunnel::onUpstreamConnected(QTcpSocket* socket)
     pump(m_upstream, m_client);
 }
 
-void HappyEyeballsTunnel::onUpstreamFailed()
+void HappyEyeballsTunnel::onUpstreamFailed(QAbstractSocket::SocketError error)
 {
     if (m_connector) {
         m_connector->deleteLater();
     }
     if (m_stage == Stage::Connecting) {
-        answerAndClose("HTTP/1.1 502 Bad Gateway");
+        qCInfo(lcHappyEyeballs) << "No address of" << m_host << "answered:" << error;
+        answerAndClose(HappyEyeballs::failureStatusLine(error));
     }
 }
 
@@ -444,7 +474,7 @@ void HappyEyeballsTunnel::answerAndClose(const QByteArray& statusLine)
 void HappyEyeballsTunnel::shut()
 {
     m_stage = Stage::Closed;
-    m_server.close();
+    m_server->close();
     if (m_connector) {
         m_connector->deleteLater();
     }

@@ -20,6 +20,8 @@
 //               scrolls sideways when they do not fit, and every cell's
 //               tooltip holds its full text. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-22: fitted once, then grown only. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -102,7 +104,8 @@ private:
     const ConnectionTargetRow* selectedTarget() const;
     void updateActions();
     QPushButton* makeButton(const QString& text, const QString& objectName);
-    /// Each column as wide as its widest cell, until the operator drags one.
+    /// Each column as wide as its widest cell (fitted when the list first
+    /// fills, then grown only), until the operator drags one.
     void fitColumnsToContents();
 
     QTreeWidget* m_targetTree{nullptr};
@@ -128,6 +131,8 @@ private:
     bool m_headerPressed{false};
     /// The operator dragged a column: the widths are theirs from then on.
     bool m_columnsSizedByUser{false};
+    /// The columns were fitted to a list with targets: grow only from now.
+    bool m_columnsFitted{false};
 };
 
 // iPhone app Task 18 (R-IOS-08): Add a Core by code. The operator types

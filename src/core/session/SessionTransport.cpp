@@ -22,9 +22,9 @@
 //                                    Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  A socket that runs through a Happy
 //                                    Eyeballs tunnel reports the network
-//                                    connection's addresses and TCP info.
-//                                    AI-assisted via Anthropic Claude
-//                                    Code.
+//                                    connection's addresses, TCP info
+//                                    and TCP_NODELAY. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionTransport.h"
@@ -182,16 +182,18 @@ SessionLinkDiagnostics WebSocketTransport::linkDiagnostics() const
     if (inner->state() != QAbstractSocket::ConnectedState) {
         return link;
     }
+    // 2026-10-22: through a Happy Eyeballs tunnel, the TCP connection that
+    // crosses the network, not the loopback hop, for TCP_NODELAY and
+    // TCP_INFO alike.
+    QAbstractSocket* network = HappyEyeballs::upstreamOf(m_socket);
+    QAbstractSocket* carrier = network != nullptr ? network : inner;
     // Read, never set: the socket's options are left as they are.
-    const QVariant noDelay = inner->socketOption(QAbstractSocket::LowDelayOption);
+    const QVariant noDelay = carrier->socketOption(QAbstractSocket::LowDelayOption);
     if (noDelay.isValid()) {
         link.noDelay = noDelay.toInt() != 0;
     }
 #ifdef Q_OS_LINUX
-    // 2026-10-22: through a Happy Eyeballs tunnel, the TCP connection that
-    // crosses the network, not the loopback hop.
-    const QAbstractSocket* network = HappyEyeballs::upstreamOf(m_socket);
-    const qintptr descriptor = (network != nullptr ? network : inner)->socketDescriptor();
+    const qintptr descriptor = carrier->socketDescriptor();
     if (descriptor >= 0) {
         const int fd = static_cast<int>(descriptor);
         struct tcp_info info {};

@@ -13,7 +13,14 @@
 // WebSocket through the in-process tunnel (Host header, bytes both ways,
 // the far end's real address), the cases left as before (an address
 // literal, a proxy the computer's settings name), and a tunnel that
-// carries only its own CONNECT.
+// carries only its own CONNECT. Also: no Nagle on either tunnel socket
+// (and the link diagnostic reads the network side), and a failed race
+// reaching the WebSocket as its real cause, never as a proxy fault.
+//
+// Which tests need the silent address (StalledListener.h, confirmed for
+// 3.5 s): Linux runs them over ::1, or over 127.0.0.2 when it has no IPv6;
+// macOS over 127.0.0.2; Windows has no silent loopback path and skips them,
+// saying why. Every other test runs everywhere.
 //
 // Loopback only; nothing leaves this computer.
 //
@@ -22,6 +29,9 @@
 //   2026-10-22: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-22: tunnelSocketsSendWithoutNagle,
+//               failureStatusesNameTheCause, aFailedRaceReachesTheWebSocket.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -37,6 +47,7 @@
 
 #include "StalledListener.h"
 #include "core/session/HappyEyeballs.h"
+#include "core/session/SessionTransport.h"
 #include "core/session/SystemProxy.h"
 
 using namespace NereusSDR;
@@ -249,6 +260,117 @@ private slots:
         QSignalSpy disconnected(&socket, &QWebSocket::disconnected);
         accepted.first()->close();
         QTRY_COMPARE_WITH_TIMEOUT(disconnected.size(), 1, kWellInsideMs);
+    }
+
+    // No Nagle anywhere on a tunnelled WebSocket: both tunnel sockets (the
+    // accepted loopback connection and the connection to the far end) send
+    // small messages at once, whatever leg uses the tunnel, and the link
+    // diagnostic reports the network side's TCP_NODELAY.
+    void tunnelSocketsSendWithoutNagle()
+    {
+        QWebSocketServer server(QStringLiteral("service"), QWebSocketServer::NonSecureMode);
+        QVERIFY(server.listen(kV4, 0));
+        SystemProxy::setProxyForTest(QNetworkProxy(QNetworkProxy::NoProxy));
+        HappyEyeballs::setResolverForTest(
+            [](const QString&) { return QList<QHostAddress>{kV4}; });
+        const QUrl url(QStringLiteral("ws://nagle.example.test:%1/").arg(server.serverPort()));
+        auto* socket = new QWebSocket;
+        WebSocketTransport transport(socket, 1024 * 1024);
+        const QNetworkProxy proxy = HappyEyeballs::proxyForWebSocket(url, socket);
+        QCOMPARE(proxy.type(), QNetworkProxy::HttpProxy);
+        socket->setProxy(proxy);
+        QSignalSpy connected(socket, &QWebSocket::connected);
+        socket->open(url);
+        QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 1, kWellInsideMs);
+
+        const auto* tunnel =
+            socket->findChild<HappyEyeballsTunnel*>(QString(), Qt::FindDirectChildrenOnly);
+        QVERIFY(tunnel != nullptr);
+        const QList<QTcpSocket*> sides =
+            tunnel->findChildren<QTcpSocket*>(QString(), Qt::FindDirectChildrenOnly);
+        QCOMPARE(sides.size(), 2);
+        QVERIFY(sides.contains(HappyEyeballs::upstreamOf(socket)));
+        for (QTcpSocket* side : sides) {
+            QCOMPARE(side->state(), QAbstractSocket::ConnectedState);
+            // Non-zero when set (macOS reads back the flag's bit, 4).
+            QVERIFY(side->socketOption(QAbstractSocket::LowDelayOption).toInt() != 0);
+        }
+
+        // The WebSocket's own (loopback) socket with Nagle on: the
+        // diagnostic still reports the network side, which has it off.
+        auto* inner = socket->findChild<QAbstractSocket*>();
+        QVERIFY(inner != nullptr && inner->parent() == socket);
+        inner->setSocketOption(QAbstractSocket::LowDelayOption, 0);
+        const SessionLinkDiagnostics link = transport.linkDiagnostics();
+        QVERIFY(link.noDelay.has_value());
+        QVERIFY(*link.noDelay);
+    }
+
+    // Qt's HTTP proxy client turns a CONNECT reply into the socket's error
+    // (qhttpsocketengine.cpp, Qt 6.11.0 lines 640-653): 404 is
+    // HostNotFoundError, 503 ConnectionRefusedError, any other status
+    // ProxyProtocolError ("Error communicating with HTTP proxy").
+    void failureStatusesNameTheCause_data()
+    {
+        QTest::addColumn<QAbstractSocket::SocketError>("error");
+        QTest::addColumn<QByteArray>("statusLine");
+        QTest::newRow("no address") << QAbstractSocket::HostNotFoundError
+                                    << QByteArray("HTTP/1.1 404 Not Found");
+        QTest::newRow("refused") << QAbstractSocket::ConnectionRefusedError
+                                 << QByteArray("HTTP/1.1 503 Service Unavailable");
+        QTest::newRow("unreachable") << QAbstractSocket::NetworkError
+                                     << QByteArray("HTTP/1.1 503 Service Unavailable");
+        QTest::newRow("timed out") << QAbstractSocket::SocketTimeoutError
+                                   << QByteArray("HTTP/1.1 503 Service Unavailable");
+    }
+
+    void failureStatusesNameTheCause()
+    {
+        QFETCH(QAbstractSocket::SocketError, error);
+        QFETCH(QByteArray, statusLine);
+        QCOMPARE(HappyEyeballs::failureStatusLine(error), statusLine);
+    }
+
+    // A race that fails reaches the WebSocket as its real cause: a name
+    // with no address as HostNotFoundError, a refused port as
+    // ConnectionRefusedError, never as a fault of a proxy the operator
+    // never set up.
+    void aFailedRaceReachesTheWebSocket_data()
+    {
+        QTest::addColumn<bool>("resolves");
+        QTest::addColumn<QAbstractSocket::SocketError>("expected");
+        QTest::newRow("unresolvable name") << false << QAbstractSocket::HostNotFoundError;
+        QTest::newRow("refused port") << true << QAbstractSocket::ConnectionRefusedError;
+    }
+
+    void aFailedRaceReachesTheWebSocket()
+    {
+        QFETCH(bool, resolves);
+        QFETCH(QAbstractSocket::SocketError, expected);
+        QTcpServer closed;
+        QVERIFY(closed.listen(kV4, 0));
+        const quint16 port = closed.serverPort();
+        closed.close();
+        SystemProxy::setProxyForTest(QNetworkProxy(QNetworkProxy::NoProxy));
+        HappyEyeballs::setResolverForTest([resolves](const QString&) {
+            return resolves ? QList<QHostAddress>{kV4} : QList<QHostAddress>{};
+        });
+        const QUrl url(QStringLiteral("ws://fails.example.test:%1/").arg(port));
+        QWebSocket socket;
+        const QNetworkProxy proxy = HappyEyeballs::proxyForWebSocket(url, &socket);
+        QCOMPARE(proxy.type(), QNetworkProxy::HttpProxy);
+        socket.setProxy(proxy);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+        QSignalSpy errors(&socket, &QWebSocket::errorOccurred);
+#else
+        QSignalSpy errors(&socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error));
+#endif
+        socket.open(url);
+        QTRY_VERIFY_WITH_TIMEOUT(!errors.isEmpty(), kWellInsideMs);
+        QCOMPARE(errors.first().first().value<QAbstractSocket::SocketError>(), expected);
+        QCOMPARE(socket.error(), expected);
+        QVERIFY2(!socket.errorString().contains(QLatin1String("proxy"), Qt::CaseInsensitive),
+                 qPrintable(socket.errorString()));
     }
 
     // The tunnel ends with its WebSocket.
