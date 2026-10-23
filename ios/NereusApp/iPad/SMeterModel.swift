@@ -238,9 +238,15 @@ final class SMeterModel: ObservableObject {
         maxBinReading(for: entry, subscribedSliceOnly: false)
     }
 
-    /// Why Max Bin is off on `entry`'s flag, nil when it can be shown.
+    /// Why Max Bin is off on `entry`'s flag, nil when it can be shown: the
+    /// slice's pan is not drawn here, or it is but the slice's passband is
+    /// outside the span it shows.
     func flagMaxBinReason(for entry: BandSlicesModel.Entry) -> String? {
-        flagMaxBin(for: entry).available ? nil : SMeterReadings.maxBinUnavailableText
+        if flagMaxBin(for: entry).available {
+            return nil
+        }
+        return maxBinPanShown(for: entry, subscribedSliceOnly: false)
+            ? SMeterReadings.maxBinOutsideSpanText : SMeterReadings.maxBinUnavailableText
     }
 
     /// The flags' choice of reading, from the more menu: it sets the
@@ -254,16 +260,9 @@ final class SMeterModel: ObservableObject {
     /// on the drawn pan, whose trace is that pan's.
     private func maxBinReading(for active: BandSlicesModel.Entry?,
                                subscribedSliceOnly: Bool) -> (available: Bool, value: Double?) {
-        guard let active, let panKey = active.panKey, !panKey.isEmpty,
-              let accepted = subscriber.acceptedDisplay,
-              !subscribedSliceOnly || accepted.subscription.sliceId == active.id,
-              accepted.panKey == panKey,
-              accepted.subscription.endpointId == band.endpointId,
-              accepted.subscription.revision == band.frameRevision,
+        guard let active, maxBinPanShown(for: active, subscribedSliceOnly: subscribedSliceOnly),
               let frame = band.state.frame,
-              let coverage = band.state.frameCoverage,
-              frame.endpointId == band.endpointId,
-              !band.paused, !band.showsTransmit else {
+              let coverage = band.state.frameCoverage else {
             return (false, nil)
         }
         let slice = active.slice
@@ -272,5 +271,23 @@ final class SMeterModel: ObservableObject {
                                          lowHz: slice.frequencyHz + slice.filterLowHz,
                                          highHz: slice.frequencyHz + slice.filterHighHz)
         return (value != nil, value)
+    }
+
+    /// Whether this device shows a live frame of `active`'s pan that Max Bin
+    /// may read, whatever span it covers.
+    private func maxBinPanShown(for active: BandSlicesModel.Entry?, subscribedSliceOnly: Bool) -> Bool {
+        guard let active, let panKey = active.panKey, !panKey.isEmpty,
+              let accepted = subscriber.acceptedDisplay,
+              !subscribedSliceOnly || accepted.subscription.sliceId == active.id,
+              accepted.panKey == panKey,
+              accepted.subscription.endpointId == band.endpointId,
+              accepted.subscription.revision == band.frameRevision,
+              let frame = band.state.frame,
+              band.state.frameCoverage != nil,
+              frame.endpointId == band.endpointId,
+              !band.paused, !band.showsTransmit else {
+            return false
+        }
+        return true
     }
 }

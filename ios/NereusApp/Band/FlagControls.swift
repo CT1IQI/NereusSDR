@@ -357,7 +357,24 @@ final class FlagControls: ObservableObject {
         slices.selectForTransmit(sliceId)
     }
 
-    /// One of the Sample rate list's rates, for the receiver that hears the slice.
+    /// Opens or closes the more menu's Sample rate list; opening it closes
+    /// the S-meter list, so one list is open at a time.
+    func toggleRateList() {
+        rateListOpen.toggle()
+        if rateListOpen {
+            meterListOpen = false
+        }
+    }
+
+    /// Opens or closes the more menu's S-meter list; opening it closes the
+    /// Sample rate list.
+    func toggleMeterList() {
+        meterListOpen.toggle()
+        if meterListOpen {
+            rateListOpen = false
+        }
+    }
+
     /// The more menu's S-meter choice: every flag's level follows it, as
     /// the S-meter's RX Mode, kept on this device.
     func pickFlagMeter(_ choice: FlagMeterChoice) {
@@ -366,6 +383,7 @@ final class FlagControls: ObservableObject {
         close()
     }
 
+    /// One of the Sample rate list's rates, for the receiver that hears the slice.
     func pickSampleRate(_ rateHz: Int, sliceId: Int) {
         rateListOpen = false
         slices.requestSampleRate(rateHz, sliceId: sliceId)

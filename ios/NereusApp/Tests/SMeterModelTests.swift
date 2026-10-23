@@ -197,6 +197,28 @@ struct SMeterModelTests {
         #expect(FlagMeterChoice(main.meterRxMode).tag == "MAX")
         #expect(main.sMeter.flagLevel(for: entry) == -50)
 
+        // The pan is drawn, but tuned away from the slice: Max Bin says the
+        // passband is outside the span, not that the display is closed.
+        var away = payload
+        away["contextGeneration"] = .number(2)
+        away["centreHz"] = .number(7_300_000)
+        away["sourceCentreHz"] = .number(7_300_000)
+        main.receive(.context(try #require(MediaControlDecoder.context(away, wideband: false, grant: false))))
+        main.receive(.displayFrame(DisplayFrame(endpointId: request.endpointId, contextGeneration: 2,
+                                                encoderSequence: 2, producerTimestamp: 0, isKeyframe: true,
+                                                waterfallAdvance: true, minDbm: -160, maxDbm: 0,
+                                                traceDbm: [-100, -90, -50, -100, -80, -100],
+                                                waterfallDbm: [-100, -100, -100, -100, -100, -100], wideDbm: [])))
+        #expect(await settle { main.sMeter.flagMaxBinReason(for: entry) == SMeterReadings.maxBinOutsideSpanText })
+        #expect(main.sMeter.flagLevel(for: entry) == nil)
+
+        // One of the more menu's lists is open at a time.
+        main.flagControls.toggleRateList()
+        main.flagControls.toggleMeterList()
+        #expect(main.flagControls.meterListOpen && !main.flagControls.rateListOpen)
+        main.flagControls.toggleRateList()
+        #expect(main.flagControls.rateListOpen && !main.flagControls.meterListOpen)
+
         // Kept on this device, with the meter's other choices.
         #expect(SMeterSettingsStore(defaults: defaults).settings.rxMode == .maxBin)
         main.flagControls.pickFlagMeter(.peak)

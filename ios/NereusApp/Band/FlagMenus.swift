@@ -375,7 +375,7 @@ struct FlagMoreMenu: View {
         }
         FlagMenuChrome.item(FlagControls.MoreItem.sampleRate, large: large, disabled: rates.isEmpty,
                             identifier: "flagMoreSampleRate") {
-            controls.rateListOpen.toggle()
+            controls.toggleRateList()
         }
         .accessibilityValue(controls.rateListOpen ? "Open" : "")
         if controls.rateListOpen {
@@ -424,7 +424,7 @@ extension FlagMoreMenu {
     func meterChoice(_ sMeter: SMeterModel) -> some View {
         let current = FlagMeterChoice(sMeter.state.settings.rxMode)
         FlagMenuChrome.item(FlagControls.MoreItem.sMeter(current), large: large, identifier: "flagMoreSMeter") {
-            controls.meterListOpen.toggle()
+            controls.toggleMeterList()
         }
         .accessibilityValue(controls.meterListOpen ? "Open" : current.label)
         if controls.meterListOpen {

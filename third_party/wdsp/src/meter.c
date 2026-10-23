@@ -32,6 +32,9 @@ warren@wpratt.com
 // it; mlog10 reads that value's bits as a finite number, about 3082 to 3084 dB,
 // so a receiver whose output carried a short non-finite burst showed a pegged
 // S-meter of about +3086 dBm until the meter was next flushed.
+// A skipped sample still decays the average and the peak, as a zero sample
+// would, so through a non-finite stretch the meter falls instead of holding
+// its last reading. Finite samples are handled exactly as upstream.
 
 #include "comm.h"
 
@@ -97,10 +100,15 @@ void xmeter (METER a)
 		for (i = 0; i < a->size; i++)
 		{
 			smag = a->buff[2 * i + 0] * a->buff[2 * i + 0] + a->buff[2 * i + 1] * a->buff[2 * i + 1];
-			a->peak *= a->mult_peak;
+			// NereusSDR: a non-finite sample decays the average and peak but is not added (see the note at the top).
 			if (!isfinite (smag))
+			{
+				a->avg *= a->mult_average;
+				a->peak *= a->mult_peak;
 				continue;
+			}
 			a->avg = a->avg * a->mult_average + (1.0 - a->mult_average) * smag;
+			a->peak *= a->mult_peak;
 			if (smag > np) np = smag;
 		}
 		if (np > a->peak) a->peak = np;

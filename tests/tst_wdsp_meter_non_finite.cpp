@@ -37,6 +37,11 @@ constexpr double kAmplitude = 0.1;           // a steady carrier, 20 dB below fu
 constexpr double kCarrierDb = -20.0;         // 10 log10(0.1 * 0.1)
 constexpr int kBurstBlock = 10;              // the block that carries the burst
 constexpr double kFiniteCeilingDb = 100.0;   // any real reading is far below this
+// A stretch of 20 non-finite blocks (about 107 ms, about one 0.1 s time
+// constant) from block 100; the average falls about 4.6 dB through it.
+constexpr int kStretchFirst = 100;
+constexpr int kStretchEnd = 120;
+constexpr double kFallDb = 3.0;
 
 } // namespace
 
@@ -51,12 +56,17 @@ private slots:
             blocks[static_cast<size_t>(2 * i)] = kAmplitude;
             blocks[static_cast<size_t>(2 * i + 1)] = 0.0;
         }
-        // The burst: NaN and infinite samples through one block.
+        // The burst: NaN and infinite samples through one block, among them
+        // lone infinities (I = +inf, Q = 0) that a NaN-only guard would let in.
         const int first = kBurstBlock * kSize;
         for (int i = first; i < first + kSize; i += 3) {
             blocks[static_cast<size_t>(2 * i)] = std::numeric_limits<double>::quiet_NaN();
             blocks[static_cast<size_t>(2 * i + 1)] =
                 (i % 2 == 0) ? std::numeric_limits<double>::infinity() : 0.0;
+            if (i + 1 < first + kSize) {
+                blocks[static_cast<size_t>(2 * (i + 1))] = std::numeric_limits<double>::infinity();
+                blocks[static_cast<size_t>(2 * (i + 1) + 1)] = 0.0;
+            }
         }
 
         std::vector<double> average(kBlocks);
@@ -72,6 +82,34 @@ private slots:
         // After the burst the meter reads the carrier again.
         QVERIFY2(std::abs(peak[kBlocks - 1] - kCarrierDb) < 0.5,
                  qPrintable(QStringLiteral("peak %1 dB").arg(peak[kBlocks - 1])));
+        QVERIFY2(std::abs(average[kBlocks - 1] - kCarrierDb) < 0.5,
+                 qPrintable(QStringLiteral("average %1 dB").arg(average[kBlocks - 1])));
+    }
+
+    // Through a stretch with no finite sample the average and the peak fall,
+    // as they would on silence, instead of holding the last reading.
+    void nonFiniteStretchLetsTheMeterFall()
+    {
+        std::vector<double> blocks(static_cast<size_t>(2 * kSize * kBlocks));
+        for (int i = 0; i < kSize * kBlocks; ++i) {
+            const bool inStretch = i >= kStretchFirst * kSize && i < kStretchEnd * kSize;
+            blocks[static_cast<size_t>(2 * i)] =
+                inStretch ? std::numeric_limits<double>::infinity() : kAmplitude;
+            blocks[static_cast<size_t>(2 * i + 1)] = 0.0;
+        }
+
+        std::vector<double> average(kBlocks);
+        std::vector<double> peak(kBlocks);
+        QVERIFY(nereus_meter_probe(blocks.data(), kSize, kBlocks, average.data(), peak.data()) == 1);
+
+        const double before = average[kStretchFirst - 1];
+        const double during = average[kStretchEnd - 1];
+        QVERIFY2(std::isfinite(during) && during < before - kFallDb,
+                 qPrintable(QStringLiteral("average %1 dB before, %2 dB at the end of the stretch")
+                                .arg(before).arg(during)));
+        QVERIFY2(std::isfinite(peak[kStretchEnd - 1]) && peak[kStretchEnd - 1] < peak[kStretchFirst - 1] - kFallDb,
+                 qPrintable(QStringLiteral("peak %1 dB before, %2 dB at the end of the stretch")
+                                .arg(peak[kStretchFirst - 1]).arg(peak[kStretchEnd - 1])));
         QVERIFY2(std::abs(average[kBlocks - 1] - kCarrierDb) < 0.5,
                  qPrintable(QStringLiteral("average %1 dB").arg(average[kBlocks - 1])));
     }
