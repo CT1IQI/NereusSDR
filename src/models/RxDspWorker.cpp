@@ -56,7 +56,7 @@
 //                 when it changed, rejoins the workgroup of the device the
 //                 speakers play on. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
-//   2026-10-23 — Note at the drain threshold: on the receive lane the
+//   2026-10-23 - Note at the drain threshold: on the receive lane the
 //                 ordering alone does not keep it equal to the channel's
 //                 input block; RxChannel::processIq's guard does. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.

@@ -152,11 +152,11 @@ private slots:
         Tally before;
         feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 300, n, before, 200);
         QVERIFY(before.peak > 0.0);
-        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
+        QCOMPARE(mismatchChunks(rx), 0LL); // new API
         Tally window;
         long m = 0;
         feed(rx, kOldRateHz, bufferSizeForRate(kOldRateHz), 40, m, window);
-        QCOMPARE(rx->takeInputSizeMismatchChunks(), 40LL); // new API
+        expectMismatch(rx, 40, bufferSizeForRate(kOldRateHz), bufferSizeForRate(kNewRateHz)); // new API
         qInfo("longer chunks: output peak %.6f, non-finite %ld", window.peak, window.nonFinite);
         QCOMPARE(window.nonFinite, 0L);
         QCOMPARE(window.peak, 0.0);
@@ -165,7 +165,17 @@ private slots:
 
     void theCoreLogLineCountsTheSilencedChunks()
     {
-        QCOMPARE(RadioModel::inputSizeMismatchLogLine(1, 20, 2048), QStringLiteral("Slice B (index 1): 20 I/Q chunk(s) silenced since the last report, their size not WDSP's input block of 2048 samples")); // new API
+        QCOMPARE(RadioModel::inputSizeMismatchLogLine(1, 20, 256, 2048), QStringLiteral("Slice B (index 1): 20 I/Q chunk(s) silenced since the last report (26.7 ms of audio): chunks of 256 samples, WDSP's input block 2048")); // new API
+    }
+
+    // A rate move's window (about 20 chunks on the Core) logs at info; more
+    // than 100 ms of silenced audio in an interval is a lasting mismatch.
+    void aLastingMismatchIsTheOnlyWarning()
+    {
+        QCOMPARE(RadioModel::inputSizeMismatchAudioMs(75), 100.0); // new API
+        QVERIFY(!RadioModel::inputSizeMismatchIsLasting(20)); // new API
+        QVERIFY(!RadioModel::inputSizeMismatchIsLasting(75)); // new API
+        QVERIFY(RadioModel::inputSizeMismatchIsLasting(76)); // new API
     }
 
     // What NaN does once it is inside a channel. A burst of whole NaN
@@ -217,6 +227,22 @@ private slots:
     }
 
 private:
+    static qint64 mismatchChunks(RxChannel* rx) // new API
+    { // new API
+        RxChannel::InputSizeMismatch taken; // new API
+        rx->takeInputSizeMismatch(taken); // new API
+        return taken.chunks; // new API
+    } // new API
+
+    static void expectMismatch(RxChannel* rx, qint64 chunks, int chunkSize, int wdspInputSize) // new API
+    { // new API
+        RxChannel::InputSizeMismatch taken; // new API
+        QVERIFY(rx->takeInputSizeMismatch(taken)); // new API
+        QCOMPARE(taken.chunks, chunks); // new API
+        QCOMPARE(taken.chunkSize, chunkSize); // new API
+        QCOMPARE(taken.wdspInputSize, wdspInputSize); // new API
+    } // new API
+
     void moveToASlowerStream(int id, NbMode nb)
     {
         RxChannel* rx = m_engine->createRxChannel(id, bufferSizeForRate(kOldRateHz), kDspSize,
@@ -231,21 +257,21 @@ private:
         feed(rx, kOldRateHz, bufferSizeForRate(kOldRateHz), 200, n, before, 100);
         QCOMPARE(before.nonFinite, 0L);
         QVERIFY2(before.peak > 0.0, "the channel never played the tone at 1536 kHz");
-        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
+        QCOMPARE(mismatchChunks(rx), 0LL); // new API
 
         // The window: the worker drains the 192 kHz stream into a channel
         // still built for 2048 samples (27 ms on the Core, about 20 chunks).
         Tally window;
         long m = 0;
         feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 40, m, window);
-        QCOMPARE(rx->takeInputSizeMismatchChunks(), 40LL); // new API
+        expectMismatch(rx, 40, bufferSizeForRate(kNewRateHz), bufferSizeForRate(kOldRateHz)); // new API
 
         QVERIFY(m_engine->setRxChannelRate(id, kNewRateHz));
         QCOMPARE(rx->wdspInputSize(), bufferSizeForRate(kNewRateHz));
 
         Tally after;
         feed(rx, kNewRateHz, bufferSizeForRate(kNewRateHz), 800, m, after, 600);
-        QCOMPARE(rx->takeInputSizeMismatchChunks(), 0LL); // new API
+        QCOMPARE(mismatchChunks(rx), 0LL); // new API
 
         const double sPeak = rx->getMeter(RxMeterType::SignalPeak);
         const double sAvg = rx->getMeter(RxMeterType::SignalAvg);

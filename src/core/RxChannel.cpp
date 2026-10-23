@@ -85,12 +85,13 @@
 //                 Code. NereusSDR-original.
 //   2026-10-23 - processIq outputs silence for a chunk of any other size
 //                 than the channel's WDSP input block instead of letting
-//                 fexchange2 read past it, and counts it
-//                 (takeInputSizeMismatchChunks). A slice moved to a slower
-//                 stream was fed before the lane rebuilt its channel, and
-//                 WDSP took the memory past the chunk (NaN and inf) into its
-//                 filters, AGC, meters and audio. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code. NereusSDR-original.
+//                 fexchange2 read past it, and counts it with the
+//                 mismatched sizes (takeInputSizeMismatch). A slice moved
+//                 to a slower stream was fed before the lane rebuilt its
+//                 channel, and WDSP took the memory past the chunk (NaN and
+//                 inf) into its filters, AGC, meters and audio. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -3007,7 +3008,7 @@ void RxChannel::processIq(float* inI, float* inQ,
     // the memory there (NaN and inf among it) goes through the filters, AGC,
     // meters and audio. With NB1 or NB2 on it was a write as well: the
     // blanker below writes its buffsize (the old in_size) back into the
-    // legs (nob.c:437-446). A longer chunk is in bounds but at the wrong
+    // legs (NB1: xanbEXTF, nob.c:437-446; NB2: xnobEXTF, nobII.c:742). A longer chunk is in bounds but at the wrong
     // rate: wrong-pitch audio and a wrong S-meter. Both happen when a slice
     // moves to a stream at another rate: the DSP worker drains the new
     // stream's chunks at once, while the channel's SetInputBuffsize waits
@@ -3019,10 +3020,18 @@ void RxChannel::processIq(float* inI, float* inQ,
     // The check is sound because every caller of applyRateOnLane quiesces
     // this worker first, so wdspInputSize() cannot change between this read
     // and fexchange2; the atomic only keeps the cross-thread read defined.
-    // The chunk is silence, and counted for the Core log.
-    if (sampleCount != m_wdspInputSize.load(std::memory_order_acquire)) {
+    // The chunk is silence, and counted for the Core log with the two
+    // sizes as they were here (the log runs later, after the re-rate).
+    const int wdspInputSize = m_wdspInputSize.load(std::memory_order_acquire);
+    if (sampleCount != wdspInputSize) {
         std::memset(outI, 0, sampleCount * sizeof(float));
         std::memset(outQ, 0, sampleCount * sizeof(float));
+        // Both sizes in one word, so a take never pairs one chunk's size
+        // with another's input block.
+        m_inputSizeMismatchSizes.store(
+            (static_cast<quint64>(static_cast<quint32>(sampleCount)) << 32)
+                | static_cast<quint32>(wdspInputSize),
+            std::memory_order_relaxed);
         m_inputSizeMismatchChunks.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -3351,9 +3360,17 @@ qint64 RxChannel::takeOutputNonFiniteSamples() const
     return m_outputNonFinite.exchange(0, std::memory_order_relaxed);
 }
 
-qint64 RxChannel::takeInputSizeMismatchChunks() const
+bool RxChannel::takeInputSizeMismatch(InputSizeMismatch& out) const
 {
-    return m_inputSizeMismatchChunks.exchange(0, std::memory_order_relaxed);
+    out = InputSizeMismatch{};
+    out.chunks = m_inputSizeMismatchChunks.exchange(0, std::memory_order_relaxed);
+    if (out.chunks <= 0) {
+        return false;
+    }
+    const quint64 sizes = m_inputSizeMismatchSizes.load(std::memory_order_relaxed);
+    out.chunkSize = static_cast<int>(sizes >> 32);
+    out.wdspInputSize = static_cast<int>(sizes & 0xffffffffu);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

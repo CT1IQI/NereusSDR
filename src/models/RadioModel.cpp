@@ -19,8 +19,10 @@
 // Modification history (NereusSDR):
 //   2026-10-23 - reportDspDiagnostics logs the I/Q chunks a slice's channel
 //                silenced because their size was not its WDSP input block
-//                (inputSizeMismatchLogLine). J.J. Boyd (KG4VCF), AI-assisted
-//                via Anthropic Claude Code.
+//                (inputSizeMismatchLogLine) with the chunk size and input
+//                block the guard saw, at info up to 100 ms of audio per
+//                interval and as a warning above. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
 //                local connection is created until it reports Connected or
 //                ends, then waits the post-disconnect quiet period
@@ -15579,13 +15581,26 @@ QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
         .arg(samples);
 }
 
-QString RadioModel::inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int wdspInputSize)
+QString RadioModel::inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize)
 {
-    return QStringLiteral("Slice %1: %2 I/Q chunk(s) silenced since the last report, their "
-                          "size not WDSP's input block of %3 samples")
+    return QStringLiteral("Slice %1: %2 I/Q chunk(s) silenced since the last report (%3 ms of "
+                          "audio): chunks of %4 samples, WDSP's input block %5")
         .arg(sliceLogName(sliceIndex))
         .arg(chunks)
+        .arg(inputSizeMismatchAudioMs(chunks), 0, 'f', 1)
+        .arg(chunkSize)
         .arg(wdspInputSize);
+}
+
+double RadioModel::inputSizeMismatchAudioMs(qint64 chunks)
+{
+    return static_cast<double>(chunks) * kBufferBaseSize * 1000.0 / kBufferBaseRate;
+}
+
+bool RadioModel::inputSizeMismatchIsLasting(qint64 chunks)
+{
+    return inputSizeMismatchAudioMs(chunks) > kInputSizeMismatchInfoMaxMs;
 }
 
 void RadioModel::reportDspDiagnostics(qint64 nowMs)
@@ -15618,13 +15633,23 @@ void RadioModel::reportDspDiagnostics(qint64 nowMs)
             nonFinite.lastLogMs = nowMs;
         }
         // 2026-10-23: chunks RxChannel::processIq kept out of WDSP.
-        OutputNonFiniteLog& mismatch = m_inputSizeMismatchLog[sliceId];
-        mismatch.pending += channel->takeInputSizeMismatchChunks();
+        InputSizeMismatchLog& mismatch = m_inputSizeMismatchLog[sliceId];
+        RxChannel::InputSizeMismatch taken;
+        if (channel->takeInputSizeMismatch(taken)) {
+            mismatch.pending += taken.chunks;
+            mismatch.chunkSize = taken.chunkSize;
+            mismatch.wdspInputSize = taken.wdspInputSize;
+        }
         if (mismatch.pending > 0
             && (mismatch.lastLogMs < 0
                 || nowMs - mismatch.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
-            qCWarning(lcDsp).noquote()
-                << inputSizeMismatchLogLine(sliceId, mismatch.pending, channel->wdspInputSize());
+            const QString line = inputSizeMismatchLogLine(
+                sliceId, mismatch.pending, mismatch.chunkSize, mismatch.wdspInputSize);
+            if (inputSizeMismatchIsLasting(mismatch.pending)) {
+                qCWarning(lcDsp).noquote() << line;
+            } else {
+                qCInfo(lcDsp).noquote() << line;
+            }
             mismatch.pending = 0;
             mismatch.lastLogMs = nowMs;
         }
