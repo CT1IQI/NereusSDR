@@ -12,9 +12,14 @@
 // withdraws the capability and the start field from every peer.
 //
 // The Core is the real StationServer and DaemonMediaController behind a
-// loopback station session. No radio, no audio, no displays are sent.
+// loopback station session. No radio and no audio; displays only where a
+// test feeds synthetic I/Q (Task 4: a v2 start's frames are version 2, a
+// v1 start's version 1).
 //
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  Task 4: the agreed version is the
+//                                    version byte of every display frame.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
 // =================================================================
@@ -29,7 +34,11 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 
+#include <cmath>
+#include <numbers>
+
 #include "core/AppSettings.h"
+#include "core/FFTEngine.h"
 #include "core/HpsdrModel.h"
 #include "core/session/MirrorSchema.h"
 #include "core/session/StationCapabilities.h"
@@ -37,10 +46,12 @@
 #include "core/session/StationServer.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/IMediaTransport.h"
+#include "core/spectrum/SpectrumDetectorMode.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -56,10 +67,38 @@ public:
     void stop() override {}
     bool acceptDescription(const QString&, const QString&) override { return true; }
     bool acceptCandidate(const QString&, const QString&) override { return true; }
-    bool sendDisplay(const QByteArray&) override { return false; }
+    bool sendDisplay(const QByteArray& bytes) override
+    {
+        if (!readyState) { return false; }
+        displays.append(bytes);
+        return true;
+    }
     bool sendRtp(const QByteArray&) override { return false; }
-    bool isReady() const override { return false; }
+    bool isReady() const override { return readyState; }
+    void becomeReady() { readyState = true; emit ready(); }
+
+    bool readyState = false;
+    QList<QByteArray> displays;
 };
+
+QVector<float> syntheticIq(int complexSamples, double cyclesPerSample)
+{
+    QVector<float> samples;
+    samples.reserve(complexSamples * 2);
+    for (int sample = 0; sample < complexSamples; ++sample) {
+        const double phase = 2.0 * std::numbers::pi * cyclesPerSample * sample;
+        samples.append(static_cast<float>(std::cos(phase)));
+        samples.append(static_cast<float>(std::sin(phase)));
+    }
+    return samples;
+}
+
+QJsonObject spectrumPlane()
+{
+    return {{QStringLiteral("detector"), static_cast<int>(SpectrumDetectorMode::Peak)},
+            {QStringLiteral("averageMode"), -1},
+            {QStringLiteral("averageAlpha"), 0.0}};
+}
 
 struct Harness {
     QTemporaryDir directory;
@@ -138,8 +177,92 @@ struct Harness {
         return names;
     }
 
+    // A slice and its stream, so a subscribe has a source to show.
+    int addFedSlice()
+    {
+        const int sliceId = radio.addSlice();
+        if (sliceId >= 0) {
+            streamIndex = radio.sliceById(sliceId)->streamIndex();
+        }
+        return sliceId;
+    }
+
+    void feedRadio()
+    {
+        QVERIFY(QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                          Q_ARG(int, streamIndex),
+                                          Q_ARG(QVector<float>, syntheticIq(1026, 0.125))));
+    }
+
+    bool subscribe(quint32 endpointId, int sliceId)
+    {
+        const QJsonObject control{
+            {QStringLiteral("op"), QStringLiteral("subscribe")},
+            {QStringLiteral("connectionId"), QLatin1String(kConnectionId)},
+            {QStringLiteral("endpointId"), static_cast<qint64>(endpointId)},
+            {QStringLiteral("revision"), 1},
+            {QStringLiteral("sliceId"), sliceId},
+            {QStringLiteral("tier"), QStringLiteral("wide")},
+            {QStringLiteral("fftSize"), 4096},
+            {QStringLiteral("windowType"), static_cast<int>(WindowFunction::Hann)},
+            {QStringLiteral("centreHz"), radio.streamCentreHz(streamIndex)},
+            {QStringLiteral("spanHz"), 192000.0},
+            {QStringLiteral("pixels"), 1024},
+            {QStringLiteral("fps"), 60},
+            {QStringLiteral("framesPerLine"), 1},
+            {QStringLiteral("trace"), spectrumPlane()},
+            {QStringLiteral("waterfall"), spectrumPlane()},
+            {QStringLiteral("minDbm"), -180.0},
+            {QStringLiteral("maxDbm"), 0.0},
+            {QStringLiteral("wideSpanFactor"), 0.0}};
+        return client.sendMediaControl(control, client.sessionEpoch());
+    }
+
+    int streamIndex = -1;
+
     void finish() { client.disconnectFromStation(QStringLiteral("test complete")); }
 };
+
+// Sends the start (`version` undefined: without the field), a subscribe,
+// and synthetic I/Q until the Core has sent `frames` display frames; then
+// the version byte of every display frame it sent.
+QList<int> versionBytesOfFrames(Harness& h, const QJsonValue& version, int frames)
+{
+    QList<int> versions;
+    const int sliceId = h.addFedSlice();
+    if (sliceId < 0) {
+        return versions;
+    }
+    if (!h.connectSession() || !h.startWith(version)
+        || !QTest::qWaitFor([&h] { return !h.mediaTransport.isNull(); }, 10'000)) {
+        return versions;
+    }
+    h.mediaTransport->becomeReady();
+    if (!h.subscribe(91, sliceId)) {
+        return versions;
+    }
+    const auto codecFrames = [&h] {
+        int count = 0;
+        for (const QByteArray& message : h.mediaTransport->displays) {
+            if (message.startsWith("NSDC")) {
+                ++count;
+            }
+        }
+        return count;
+    };
+    // A short count fails the caller's size check.
+    const bool enough = QTest::qWaitFor([&] {
+        h.feedRadio();
+        return codecFrames() >= frames;
+    }, 10'000);
+    Q_UNUSED(enough);
+    for (const QByteArray& message : h.mediaTransport->displays) {
+        if (message.startsWith("NSDC") && message.size() > 4) {
+            versions.append(static_cast<quint8>(message.at(4)));
+        }
+    }
+    return versions;
+}
 
 // Sends each refused start, then a start without the field. The loopback
 // delivers in order, so once the last start's transport exists every
@@ -167,6 +290,8 @@ class TstDisplayCodecV2Link : public QObject {
 private slots:
     void initTestCase()
     {
+        qRegisterMetaType<QVector<float>>();
+        qRegisterMetaType<MediaSourceKey>();
         // coreBuildInfo is sent only when the Core knows its version.
         m_savedVersion = QCoreApplication::applicationVersion();
         QCoreApplication::setApplicationVersion(QStringLiteral("2026.10.0"));
@@ -305,6 +430,33 @@ private slots:
         QVERIFY(!h.capabilityNames().contains(kField));
         QVERIFY(!h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         refusedThenPlainStarts(h, {QJsonValue(2)});
+        h.finish();
+    }
+
+    // Task 4: a v2 start's display frames all carry version byte 2; a
+    // start without the field, on the same Core build in another harness,
+    // gets version 1 frames.
+    void theAgreedVersionIsEveryFramesVersionByte_data()
+    {
+        QTest::addColumn<bool>("v2");
+        QTest::newRow("start agreed v2") << true;
+        QTest::newRow("start without the field") << false;
+    }
+
+    void theAgreedVersionIsEveryFramesVersionByte()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        QFETCH(bool, v2);
+        Harness h;
+        const QList<int> versions = versionBytesOfFrames(
+            h, v2 ? QJsonValue(2) : QJsonValue(QJsonValue::Undefined), 4);
+        QVERIFY2(versions.size() >= 4, qPrintable(QString::number(versions.size())));
+        QCOMPARE(h.controller.displayCodecVersion(), v2 ? quint32{2} : quint32{1});
+        for (int version : versions) {
+            QCOMPARE(version, v2 ? 2 : 1);
+        }
         h.finish();
     }
 };

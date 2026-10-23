@@ -8,6 +8,11 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 sender: a connection whose start agreed version 2
+//               sends every display frame as NSDC v2, a split frame's two
+//               parts in one sender turn, row part first; the diagnostics
+//               count split frames and refused second parts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 negotiation: a start may declare
 //               displayCodecVersion 2; displayCodecVersion() is the
 //               version the connection agreed. J.J. Boyd (KG4VCF),
@@ -336,8 +341,16 @@ struct DaemonDisplayDiagnostics {
     /// The longest time between two turns of the display sender's timer
     /// while this peer was ready, in microseconds; -1 before two turns.
     /// The turns are kDisplaySenderIntervalMs apart when the Core's main
-    /// thread is free, and a turn sends one display message at most.
+    /// thread is free, and a turn sends one display message at most, except
+    /// that an NSDC v2 split frame sends its two parts in one turn.
     qint64 displaySenderGapMaxUs = -1;
+    /// NSDC v2 only: frames sent in two parts (their row part taken), and
+    /// second parts (trace parts) the transport did not take after it took
+    /// the row part. On v2, displayFramesSent counts frames, not messages,
+    /// displayBytesSent the bytes of every message taken, and
+    /// displayMaxDeltaBytes the largest single message; no keyframes.
+    quint64 displaySplitFrames = 0;
+    quint64 displaySecondPartRefusals = 0;
 
     bool operator==(const DaemonDisplayDiagnostics&) const = default;
 };
@@ -503,7 +516,8 @@ public:
     /// Bench setting kDisplayKeyframeEveryFrameSettingsKey: every display
     /// frame (receive and transmit) is encoded as a keyframe. Takes effect
     /// on the next frame encoded. A keyframe request from the window is
-    /// still counted and honoured; it never sends a second frame.
+    /// still counted and honoured; it never sends a second frame. An NSDC
+    /// v2 connection has no keyframes, so it changes nothing there.
     void setDisplayKeyframeEveryFrame(bool on);
     bool displayKeyframeEveryFrame() const noexcept { return m_displayKeyframeEveryFrame.load(); }
     /// Display codec v2 (NSDC v2): the display codec version this
@@ -562,6 +576,14 @@ public:
     /// read is not run, for an unknown endpoint or one that asked for none.
     bool readDisplayExtrasForTest(quint32 endpointId,
                                   const std::function<void(const DisplayExtrasProcessor&)>& read);
+    /// NSDC v2 tests: sets a live endpoint's admitted frame bytes (its
+    /// displayCost.maximumFrameBytes) under the display lock. False for an
+    /// unknown endpoint.
+    bool setEndpointMaximumFrameBytesForTest(quint32 endpointId, quint32 bytes);
+    /// NSDC v2 tests: called with every display frame just before it is
+    /// encoded (either version), under the display lock, on the thread that
+    /// sends the displays. Empty clears it.
+    void setEncodedFrameObserverForTest(std::function<void(const DisplayCodecFrame&)> observer);
     /// Whether that engine's transforms follow its frame rate: true only
     /// while the display budget is lowered because the Core is busy
     /// (R-R3-08, R-R3-40). Empty for an unknown endpoint.
@@ -875,6 +897,18 @@ private:
     bool peerDisplayBusy(MediaPeer* peer) const;
     IMediaTransport::DisplaySendResult peerSubmitDisplay(MediaPeer* peer,
                                                          const QByteArray& message);
+    /// NSDC v2: what became of one frame's messages.
+    enum class DisplayV2Send {
+        PeerGone, // the peer or epoch changed during a send; touch nothing
+        NotTaken, // the first message was not taken: the frame is dropped
+        Taken,    // the first message (the row, or the whole frame) was taken
+    };
+    /// NSDC v2: offers a frame's messages in order in this one turn, the
+    /// row part first; after a message is not taken nothing more is
+    /// offered. Records the diagnostics. Pacing and the admitted cost were
+    /// checked by the caller against encoding.totalBytes().
+    DisplayV2Send submitDisplayCodecV2(MediaPeer* peer, quint64 epoch,
+                                       const DisplayCodecV2Encoding& encoding);
     bool peerIqBusy(MediaPeer* peer) const;
     IMediaTransport::DisplaySendResult peerSubmitIq(MediaPeer* peer, const QByteArray& message);
     void onStreamGeometryChanged(int streamIndex, double centreHz, int sampleRateHz);
@@ -1198,6 +1232,8 @@ private:
     // Bench setting DisplayKeyframeEveryFrame; written on the main thread,
     // read by whichever thread sends the displays.
     std::atomic<bool> m_displayKeyframeEveryFrame{false};
+    // NSDC v2 tests (setEncodedFrameObserverForTest); under the display lock.
+    std::function<void(const DisplayCodecFrame&)> m_encodedFrameObserver;
     bool m_audioProfileNegotiated{false};
     RemoteAudioProfile m_audioRequestedProfile{RemoteAudioProfile::Opus};
     RemoteAudioProfile m_audioActiveProfile{RemoteAudioProfile::Opus};
