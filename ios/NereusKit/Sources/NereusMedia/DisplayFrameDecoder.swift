@@ -4,6 +4,9 @@
 // 2026-10-22: NSDC v2 path (header and flag rules, the Rice plane, pairing of
 //   split parts, counters, reset), chosen by the version byte.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-23: The v2 header's interval compares by value, as the desktop's
+//   decoder does, so -0.0 equals +0.0. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import Foundation
 
@@ -479,23 +482,23 @@ public final class DisplayFrameDecoder {
     }
 
     /// Every header field but the flags; two parts agree when these are equal.
+    /// The interval compares by value, never by bit pattern, so -0.0 equals
+    /// +0.0 (the desktop's decoder has the same rule). A NaN end never gets
+    /// here: the parse refuses a non-finite interval as malformed.
     private struct VersionTwoHeader: Equatable {
         let endpointId: UInt32
         let contextGeneration: UInt32
         let sequence: UInt32
         let timestamp: UInt64
-        let minDbmBits: UInt32
-        let maxDbmBits: UInt32
+        let minDbm: Float
+        let maxDbm: Float
         let traceLength: Int
         let waterfallLength: Int
         let wideLength: Int
 
-        var minDbm: Float { Float(bitPattern: minDbmBits) }
-        var maxDbm: Float { Float(bitPattern: maxDbmBits) }
-
         /// The same context: the interval and the three row lengths.
         func sameShape(as other: VersionTwoHeader) -> Bool {
-            minDbmBits == other.minDbmBits && maxDbmBits == other.maxDbmBits
+            minDbm == other.minDbm && maxDbm == other.maxDbm
                 && traceLength == other.traceLength && waterfallLength == other.waterfallLength
                 && wideLength == other.wideLength
         }
@@ -702,7 +705,8 @@ public final class DisplayFrameDecoder {
             let header = VersionTwoHeader(
                 endpointId: try reader.u32(), contextGeneration: try reader.u32(),
                 sequence: try reader.u32(), timestamp: try reader.u64(),
-                minDbmBits: try reader.u32(), maxDbmBits: try reader.u32(),
+                minDbm: Float(bitPattern: try reader.u32()),
+                maxDbm: Float(bitPattern: try reader.u32()),
                 traceLength: Int(try reader.u16()), waterfallLength: Int(try reader.u16()),
                 wideLength: Int(try reader.u16()))
 
