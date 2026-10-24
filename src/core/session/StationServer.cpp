@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-24: "Limit filter edges to sidebands" (LimitFiltersToSidebands)
+//               reaches the Core's slices when a window's change or a
+//               removal lands in its settings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 negotiation: displayCodecVersion 2 for a minor-11
 //               peer that declared displayCodec 2, media on, while the
 //               Core's RemoteDisplayCodecV2 setting is on
@@ -3629,6 +3633,15 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(value.toString() == QLatin1String("True"));
                 }
+                // "Limit filter edges to sidebands" reaches the Core's
+                // slices at once, whichever path stored it, as Thetis's
+                // checkbox sets console.LimitFiltersToSideBands
+                // (setup.cs:22378-22381 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        value.toString() == QLatin1String("True"));
+                }
             });
     // Task 13: External TX Inhibit gates the Core's own keying, so a
     // window's change reaches the Core's TxInhibitMonitor, whichever path
@@ -3699,6 +3712,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             [this](const QString& key) {
                 if (key == QLatin1String("NetworkWatchdogEnabled") && m_radioModel) {
                     m_radioModel->applyNetworkWatchdog(RadioModel::kNetworkWatchdogDefault);
+                }
+                // Limit filter edges to sidebands defaults off
+                // (console.cs:7516 [v2.10.3.15]).
+                if (key == QLatin1String(RadioModel::kLimitFiltersToSidebandsKey)
+                    && m_radioModel) {
+                    m_radioModel->applyLimitFiltersToSidebands(
+                        RadioModel::kLimitFiltersToSidebandsDefault);
                 }
                 // Task 13: both External TX Inhibit boxes default off
                 // (console.cs:15336-15337 [v2.10.3.15]).

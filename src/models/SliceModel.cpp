@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - The RADE modes (RADE_U, RADE_L, RADE2_U, RADE2_L) join
+//                the sideband rule of constrainFilter when "Limit filter
+//                edges to sidebands" is on: NereusSDR's own extension, as
+//                Thetis has no RADE (JJ's ruling). J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
 //   2026-10-22 - Thetis's 10 Hz minimum filter width (console.cs:7544-7567
 //                [v2.10.3.15]) before the constraint in setFilter,
 //                setDspMode and the layout restore; a constrained request
@@ -894,7 +899,8 @@ void SliceModel::shiftFilter(int low, int high)
 // _max_filter_shift and _max_filter_width are kMaxFilterShiftHz and
 // kMaxFilterWidthHz (their Setup defaults). Modes Thetis's switch does not
 // name (DRM, and NereusSDR's RADE modes) take only the cap, as DRM does
-// in Thetis.
+// in Thetis; the RADE modes also take the sideband rule when the limit is
+// on (NereusSDR's own extension, marked below).
 bool SliceModel::constrainFilter(int& low, int& high, DSPMode mode,
                                  bool filterShift, bool limitToSidebands)
 {
@@ -959,6 +965,26 @@ bool SliceModel::constrainFilter(int& low, int& high, DSPMode mode,
             const int n = high - kMaxFilterShiftHz;
             high -= n;
             if (filterShift) { low -= n; }
+        }
+        break;
+    // NereusSDR extension (JJ's ruling 2026-10-24, PR 615): Thetis has no
+    // RADE modes, so this part has no Thetis source. With "Limit filter
+    // edges to sidebands" on, the RADE sideband edges stop at the carrier
+    // as LSB's and USB's do (the sideband rule above, same filterShift
+    // handling). Only that rule: with the limit off nothing changes for
+    // them, so they keep only the width cap below, as before.
+    case DSPMode::RADE_L:
+    case DSPMode::RADE2_L:
+        if (high > 0 && limitToSidebands) {
+            if (filterShift) { low -= high; }
+            high = 0;
+        }
+        break;
+    case DSPMode::RADE_U:
+    case DSPMode::RADE2_U:
+        if (low < 0 && limitToSidebands) {
+            if (filterShift) { high += low * -1; }
+            low = 0;
         }
         break;
     case DSPMode::FM:

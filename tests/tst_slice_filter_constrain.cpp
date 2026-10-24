@@ -34,6 +34,10 @@
 //                 mode change that constrains to zero width, and
 //                 filterForRequest. J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Claude Code.
+//   2026-10-24 - The RADE modes follow their sideband with the limit on
+//                 and are unchanged with it off (NereusSDR's own
+//                 extension, JJ's ruling). J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Claude Code.
 // =================================================================
 
 // --- From tst_filter_constrain.cpp (Longpath) ---
@@ -217,6 +221,62 @@ private slots:
         high = 600;
         QVERIFY(SliceModel::constrainFilter(low, high, DSPMode::DIGU, false, true));
         QCOMPARE(low, 0);
+    }
+
+    // NereusSDR extension (JJ's ruling 2026-10-24): Thetis has no RADE. With
+    // the limit on, an upper RADE mode stops its lower edge at the carrier
+    // as USB does, and a lower one its upper edge as LSB does; with it off
+    // nothing changes for them.
+    void radeFollowsItsSidebandOnlyWithTheLimitOn()
+    {
+        {
+            SliceModel s;
+            s.setDspMode(DSPMode::RADE_U);
+            QCOMPARE(s.dspMode(), DSPMode::RADE_U);
+            s.setLimitFiltersToSidebands(true);
+            s.setFilter(-400, 2350);
+            QCOMPARE(s.filterLow(), 0);
+            QCOMPARE(s.filterHigh(), 2350);
+        }
+        {
+            SliceModel s;
+            s.setDspMode(DSPMode::RADE_L);
+            QCOMPARE(s.dspMode(), DSPMode::RADE_L);
+            s.setLimitFiltersToSidebands(true);
+            s.setFilter(-2350, 400);
+            QCOMPARE(s.filterLow(), -2350);
+            QCOMPARE(s.filterHigh(), 0);
+        }
+        {
+            SliceModel s;
+            s.setDspMode(DSPMode::RADE_U);
+            QCOMPARE(s.dspMode(), DSPMode::RADE_U);
+            s.setFilter(-400, 2350);
+            QCOMPARE(s.filterLow(), -400);
+            QCOMPARE(s.filterHigh(), 2350);
+        }
+        {
+            SliceModel s;
+            s.setDspMode(DSPMode::RADE_L);
+            QCOMPARE(s.dspMode(), DSPMode::RADE_L);
+            s.setFilter(-2350, 400);
+            QCOMPARE(s.filterLow(), -2350);
+            QCOMPARE(s.filterHigh(), 400);
+        }
+        // The other two (RADE v2, which a slice takes only when the
+        // experimental opt-in is on), through the static function.
+        int low = -300;
+        int high = 2000;
+        QVERIFY(SliceModel::constrainFilter(low, high, DSPMode::RADE2_U, false, true));
+        QCOMPARE(low, 0);
+        low = -2000;
+        high = 300;
+        QVERIFY(SliceModel::constrainFilter(low, high, DSPMode::RADE2_L, false, true));
+        QCOMPARE(high, 0);
+        low = -2000;
+        high = 300;
+        QVERIFY(!SliceModel::constrainFilter(low, high, DSPMode::RADE2_L, false, false));
+        QCOMPARE(high, 300);
     }
 
     void amKeepsZeroInsideThePassband()

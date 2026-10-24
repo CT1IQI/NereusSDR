@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-24 - constrainFilter's comment: the RADE modes take the sideband
+//              rule when the limit is on, NereusSDR's own extension (Thetis
+//              has no RADE). J.J. Boyd (KG4VCF), with AI-assisted
+//              transformation via Claude Code.
 // 2026-10-22 - applyMinimumFilterWidth (Thetis console.cs:7544-7567
 //              [v2.10.3.15]), filterForRequest for the CAT and Rigctl
 //              replies, and a filterChanged resync when a request was
@@ -854,7 +858,10 @@ public:
     // the sideband, AM/SAM/DSB and SPEC groups. kMaxFilterShiftHz applies
     // in those same groups; kMaxFilterWidthHz applies in every mode but FM,
     // so DRM and the RADE modes, which the switch does not name, get only
-    // the width cap. filterShift keeps the width when an edge is moved.
+    // the width cap. NereusSDR's own extension (Thetis has no RADE): with
+    // limitToSidebands, RADE_U/RADE2_U follow USB's sideband rule and
+    // RADE_L/RADE2_L follow LSB's. filterShift keeps the width when an
+    // edge is moved.
     // From Longpath src/models/SliceModel.h:524 [@383f058]: the static
     // signature.
     static bool constrainFilter(int& low, int& high, DSPMode mode,

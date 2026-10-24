@@ -1460,6 +1460,11 @@ nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
 # Filter edges constrained as Thetis ConstrainFilter (console.cs:35044 [v2.10.3.15]).
 nereus_add_test(tst_slice_filter_constrain)
+# Setup > General > Filters' "Limit filter edges to sidebands" (Thetis
+# chkLimitFilterEdgesToSidebands): default, gating, persistence, every slice
+# at once, and the Core's setting over the in-process loopback.
+nereus_add_test(tst_limit_filters_to_sidebands
+    fakes/LoopbackTransport.cpp)
 # Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
 # a DSP edit on a slice that is not the active one is saved to that slice.
 nereus_add_test(tst_slice_squelch_channel_seed)
