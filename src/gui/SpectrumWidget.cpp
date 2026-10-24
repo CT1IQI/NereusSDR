@@ -11,7 +11,8 @@
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
 //                 remote pan's warm-up holds for an NSDC v2 frame whose
 //                 trace was carried (traceCarried) and keeps the start's
-//                 share of the last fresh trace.
+//                 share of the last fresh trace; a pan whose floor has no
+//                 estimate holds for one in any averaging mode.
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
 //                 pan's noise floor measures the trace's average with its
 //                 starting value taken out while it warms up, and not the
@@ -5055,23 +5056,26 @@ void SpectrumWidget::noteRemoteTraceWarmUp(const DisplayCodecFrame& frame)
     // away; the alpha is the one this pan asks for (setAveragingFor in
     // RemoteMediaController: averageAlphaForTimeMs at the Core's rate),
     // and the mode the integer this pan asks for (requestFor's plane()).
-    const int mode = static_cast<int>(m_spectrumAveraging);
-    if (m_remoteTraceStartShareAtContext <= 0.0 || (mode != 1 && mode != 3)) {
-        m_remoteTraceStartShare = 0.0;
-        return;
-    }
     if (frame.traceCarried) {
         // NSDC v2: the trace is the last decoded one, carried into a frame
         // whose own trace part was lost, so it is not the Core's average at
         // this frame's sequence and the start's share cannot be taken out
         // of it. Inside the warm-up the pan holds for this frame and keeps
-        // the share of the last fresh trace; once warm it measures
+        // the share of the last fresh trace. A pan whose floor has no
+        // estimate yet holds too, in any mode: after a context change the
+        // decoder has no trace to carry and fills the bottom of the codec
+        // range, which would seed the floor there. Otherwise it measures
         // the trace as any other frame's.
-        if (m_remoteTraceStartShare > 0.0) {
+        if (m_remoteTraceStartShare > 0.0 || !m_noiseFloor.seeded()) {
             m_noiseFloorMeasurement.fill(std::numeric_limits<float>::quiet_NaN(),
                                          frame.traceDbm.size());
             m_noiseFloorMeasurementFresh = true;
         }
+        return;
+    }
+    const int mode = static_cast<int>(m_spectrumAveraging);
+    if (m_remoteTraceStartShareAtContext <= 0.0 || (mode != 1 && mode != 3)) {
+        m_remoteTraceStartShare = 0.0;
         return;
     }
     const int fps = std::max(1, m_remoteFps > 0 ? m_remoteFps : overlayFrameRate());

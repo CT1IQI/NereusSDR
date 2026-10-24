@@ -33,6 +33,9 @@
 //                                    remote pan's warm-up leaves the floor
 //                                    and the start's share alone.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  A carried first trace does not seed a
+//                                    new pan with no averaging.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -504,6 +507,42 @@ private slots:
         QVERIFY(w.updateRemoteSpectrum(*carried));
         QCOMPARE(w.nfLerpAverageForTest(), floor);
         QCOMPARE(w.remoteTraceStartShareForTest(), share);
+    }
+
+    // PR 628 re-review round five: a v2 context clears the decoder's fill,
+    // so a first frame whose trace part was lost carries the bottom of the
+    // codec range across the width. A new pan with no averaging must not
+    // seed its floor there; it seeds from its first fresh frame, as a pan
+    // that never saw the carried frame does.
+    void aCarriedFirstTraceDoesNotSeedANewPan()
+    {
+        RemoteCore core(30);
+        core.request.trace.averageMode = 0;
+        SpectrumWidget w;
+        SpectrumWidget twin;
+        for (SpectrumWidget* pan : {&w, &twin}) {
+            pan->setSpectrumDetector(SpectrumDetector::Peak);
+            pan->setSpectrumAveraging(SpectrumAveraging::None);
+        }
+        core.start();
+        QVERIFY(!QTest::currentTestFailed());
+        core.attach(w);
+        core.attach(twin);
+
+        std::optional<DisplayCodecFrame> carried = core.next();
+        QVERIFY(carried.has_value());
+        carried->traceDbm.fill(core.request.minDbm);
+        carried->traceCarried = true;
+        QVERIFY(w.updateRemoteSpectrum(*carried));
+        QCOMPARE(w.nfLerpAverageForTest(), -200.0f);
+
+        std::optional<DisplayCodecFrame> fresh = core.next();
+        QVERIFY(fresh.has_value());
+        QVERIFY(w.updateRemoteSpectrum(*fresh));
+        QVERIFY(twin.updateRemoteSpectrum(*fresh));
+        QVERIFY2(w.nfLerpAverageForTest() > -140.0f,
+                 qPrintable(QString::number(w.nfLerpAverageForTest())));
+        QCOMPARE(w.nfLerpAverageForTest(), twin.nfLerpAverageForTest());
     }
 
     // PR 628 round two: while a new remote pan holds for the Core's
