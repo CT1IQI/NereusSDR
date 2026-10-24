@@ -3842,6 +3842,8 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 # copy shows and sets the same model state as the applet's own row and follows
 # the same transmit-permission gates.  The applet's own panel is unchanged.
 nereus_add_test(tst_tx_section_content)
+nereus_add_test(tst_rx_section_content)
+target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
