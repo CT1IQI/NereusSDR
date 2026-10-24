@@ -1,5 +1,8 @@
 // NereusSDR for iOS: several devices on one Core on the phone: another device's slice, the Core's questions and its notices
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: the app's hello declares displayCodec 2 (NSDC v2).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -45,7 +48,7 @@ struct SeveralDevicesScreenTests {
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1])
+                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2])
         // The capabilities that declare it were delivered last; wait for the app to read them.
         #expect(await settle(seconds: 30) { SeveralDevices.available(in: model.mirror) })
 
@@ -1129,7 +1132,7 @@ struct SeveralDevicesScreenTests {
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
         let root = ScreenRoot(model: model, sideways: sideways).preferredColorScheme(scheme).dynamicTypeSize(typeSize)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }
@@ -1362,7 +1365,7 @@ extension SeveralDevicesScreenTests {
             .preferredColorScheme(scheme)
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(ChromeColours.bar)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .light ? .light : .dark
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

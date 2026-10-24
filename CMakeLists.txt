@@ -1076,6 +1076,8 @@ set(CORE_SOURCES
     src/core/P1RadioConnection.cpp
     src/core/P2RadioConnection.cpp
     src/core/ReceiverManager.cpp
+    src/core/IqLevelMonitor.cpp
+    src/core/IqLevelMonitor.h
     src/core/AudioEngine.cpp
     src/core/WdspEngine.cpp
     # R-R3-39: FFTW's planners made thread-safe, double and single precision.
@@ -1660,6 +1662,7 @@ list(APPEND CORE_SOURCES
     src/core/session/MediaTunnel.cpp
     src/core/session/NetworkTrouble.cpp
     src/core/session/SystemProxy.cpp
+    src/core/session/HappyEyeballs.cpp
     src/core/session/media/RtpDuplicateFilter.cpp
     src/core/session/media/DualPathAudio.cpp
 )
