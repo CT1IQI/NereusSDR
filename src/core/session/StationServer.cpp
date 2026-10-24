@@ -5,6 +5,10 @@
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: That effective value is added only to a snapshot that has
+//               other content, so an empty snapshot still keeps a window's
+//               Core pages waiting. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: Setup description cap 30, General > Filters' Limit filter
 //               edges to sidebands row. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -7941,8 +7945,14 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
     // applies RadioModel's default to its slices, so the snapshot carries
     // that effective value and a phone's row reads it instead of showing
     // no value. Only this key; every other unstored setting stays absent.
+    // An empty snapshot stays empty: a window reads an empty snapshot with
+    // no seed marker as "the Core has not sent its settings" and keeps its
+    // Core pages waiting (SettingsProxy::setupDialogAllowed()), and an
+    // added default would read as the Core's content. A headless Core
+    // always carries its seed marker (server_main.cpp), so its phone row
+    // still gets the value.
     const QString limitFiltersKey = QLatin1String(RadioModel::kLimitFiltersToSidebandsKey);
-    if (!snapshot.contains(limitFiltersKey)) {
+    if (!snapshot.isEmpty() && !snapshot.contains(limitFiltersKey)) {
         snapshot.insert(limitFiltersKey, RadioModel::kLimitFiltersToSidebandsDefault
                                              ? QStringLiteral("True")
                                              : QStringLiteral("False"));

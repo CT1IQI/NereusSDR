@@ -2,6 +2,10 @@
 // 2026-10-24: a Core that never stored LimitFiltersToSidebands sends its
 // effective value, False, in the settings snapshot; a stored value is sent
 // as stored. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-24: the fresh Core carries its seed marker, as every headless Core
+// does, and an empty unseeded store still sends an empty snapshot (a window's
+// Core pages wait on that). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // 2026-10-24: the cap is 30; a version 30 phone reads and writes General >
 // Filters' Limit filter edges to sidebands. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
@@ -877,7 +881,10 @@ private slots:
     // A headless Core never stores LimitFiltersToSidebands, yet applies
     // RadioModel's default to its slices: the settings snapshot carries that
     // effective value, False, so a phone's row is live. A stored value goes
-    // as stored, and other unstored settings stay out of the snapshot.
+    // as stored, and other unstored settings stay out of the snapshot. An
+    // empty, unseeded store still sends an empty snapshot: a window reads
+    // that as "the Core has not sent its settings" and keeps its Core pages
+    // waiting, so no default is added to it.
     void freshCoreSendsLimitFilterEdgesEffectiveValue()
     {
         const QString key = QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey);
@@ -898,7 +905,10 @@ private slots:
         QHash<QByteArray, int> v30 = kHolder;
         v30.insert("setupDescription", 30);
         {
+            // A headless Core seeds its profile marker on every start
+            // (server_main.cpp).
             Core core;
+            core.settings->seedDaemonProfileMarker();
             Device phone(QStringLiteral("Fresh Core iPhone"), QStringLiteral("phone"));
             core.pair(phone);
             QVERIFY(!core.settings->contains(key));
@@ -907,6 +917,15 @@ private slots:
             const QMap<QString, QString> settings = snapshotOf(app);
             QCOMPARE(settings.value(key), QStringLiteral("False"));
             QVERIFY(!settings.contains(QStringLiteral("DisableHfPa")));
+            QVERIFY(!core.settings->contains(key));
+        }
+        {
+            Core core;
+            Device phone(QStringLiteral("Empty Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            QVERIFY(snapshotOf(app).isEmpty());
             QVERIFY(!core.settings->contains(key));
         }
         {

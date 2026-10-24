@@ -483,7 +483,7 @@
         {
             "from": "station",
             "message": {
-                "properties": [{"kind": "utf8", "name": "LimitFiltersToSidebands", "ordinal": 0, "value": "False"}],
+                "properties": [],
                 "type": "settings.snapshot"
             }
         },

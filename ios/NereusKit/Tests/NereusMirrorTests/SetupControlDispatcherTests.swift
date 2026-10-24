@@ -4,14 +4,14 @@
 // 2026-10-24: General V30's Limit filter edges to sidebands row: its value,
 //   an edit's round trip, a refusal and a Core that never stored the key.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
-// 2026-10-24: a fresh Core's snapshot (read from the conformance fixture the
-//   Core is checked against) gives the row its effective value, off, and the
-//   row is live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: a fresh Core's snapshot (its seed marker and the key's
+//   effective value, as tst_setup_description_live checks the Core sends)
+//   gives the row its effective value, off, and the row is live.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
 import LinkSessionTestSupport
-import LinkTestSupport
 import NereusLink
 import Testing
 @testable import NereusMirror
@@ -630,26 +630,19 @@ private final class PhoneKeys: SetupPhoneKeys {
         #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
     }
 
-    /// The settings snapshot a fresh Core sends, as the conformance suite
-    /// records it (the Core's own session run is checked against this file).
-    static func freshCoreSettings() throws -> [String: String] {
-        let url = LinkFixtureLoader.root.appendingPathComponent("sessions/settings-write.json")
-        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-        let steps = try #require(object["steps"] as? [[String: Any]])
-        let snapshot = try #require(steps.lazy.compactMap { $0["message"] as? [String: Any] }
-            .first { $0["type"] as? String == "settings.snapshot" })
-        let properties = try #require(snapshot["properties"] as? [[String: Any]])
-        var settings: [String: String] = [:]
-        for property in properties {
-            settings[try #require(property["name"] as? String)] = try #require(property["value"] as? String)
-        }
-        return settings
+    /// The settings snapshot a fresh headless Core sends: its seed marker
+    /// (written on every Core start) and the key's effective value, False.
+    /// tst_setup_description_live's freshCoreSendsLimitFilterEdgesEffectiveValue
+    /// checks the Core sends exactly this; an empty, unseeded snapshot gets
+    /// no added value, so a window's Core pages keep waiting for it.
+    static func freshCoreSettings() -> [String: String] {
+        ["DaemonProfileSeeded": "True", limitKey: "False"]
     }
 
     /// A Core that never stored the key (a headless Core) still sends its
     /// effective value, off: the row is live and off, and a toggle writes True.
     @Test func generalV30LimitFilterEdgesRowOnAFreshCoreIsLiveAndOff() async throws {
-        let fresh = try Self.freshCoreSettings()
+        let fresh = Self.freshCoreSettings()
         #expect(fresh[Self.limitKey] == "False")
         let rig = Rig()
         await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30, extraSettings: fresh)
