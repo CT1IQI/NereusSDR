@@ -162,9 +162,9 @@ private slots:
     // With the normalization on, a new bin count redraws the static overlay
     // (grid and dBm scale), or the grid stays on the old bin width's shift
     // while the trace takes the new one (Longpath commit c3ce95bf).
-    // A guard, green before the port too: on NereusSDR every local frame
-    // already dirties the overlay through acceptImdVisibleSpectrum(), so
-    // this holds the grid right should that per-frame redraw go.
+    // Since PR 619 the static overlay is rebuilt only when something marks
+    // it, so this row guards updateSpectrumLinear's check: a new bin count
+    // with the normalization on marks the overlay.
     void normalizedGridRedrawsWhenBinCountChanges()
     {
 #ifndef NEREUS_GPU_SPECTRUM
