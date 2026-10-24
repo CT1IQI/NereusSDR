@@ -1312,6 +1312,10 @@
 //                sampler's tick). Diagnostics only; NR and DSP
 //                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-24 - An AGC top change (TCI's agc_gain) saves the band's
+//                threshold once the lane readback gives it, so the band's
+//                AGC comes back as it was left. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -24882,6 +24886,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                     m_syncingAgc = true;
                     slice->setAgcThreshold(threshInt);
                     m_syncingAgc = wasSyncing;
+                    // The band keeps the threshold the new top gives, so the
+                    // band's AGC comes back as TCI's agc_gain left it. The
+                    // save scheduled below captured the band's values before
+                    // this lane readback landed.
+                    scheduleSettingsSave(slice);
                 }
             });
         }
