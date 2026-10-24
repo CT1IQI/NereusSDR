@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-24 - applyFilterRequest, setFilter's body, so shiftFilter re-sends
+//              the stored pair when its constrain changed the request and
+//              the stored pair did not move. J.J. Boyd (KG4VCF), with
+//              AI-assisted transformation via Claude Code.
 // 2026-10-24 - constrainFilter's comment: the RADE modes take the sideband
 //              rule when the limit is on, NereusSDR's own extension (Thetis
 //              has no RADE). J.J. Boyd (KG4VCF), with AI-assisted
@@ -850,6 +854,9 @@ public:
     // this before UpdateRX1Filters on its whole-passband moves (filter
     // shift slider, whole-filter drag, MeterManager filter drag):
     // console.cs:35202, 50635 [v2.10.3.15]; MeterManager.cs:19399.
+    // When the constraint changed the move and the stored pair did not
+    // move (a drag held at the cap), filterChanged is emitted with the
+    // stored pair, as setFilter does for its own steps.
     void shiftFilter(int low, int high);
 
     // From Thetis console.cs:35044-35131 [v2.10.3.15] (ConstrainFilter).
@@ -1948,6 +1955,10 @@ private:
     bool m_readOnlyListener{false};
     QString m_readOnlyListenerReason;
     StationApplyProbe m_stationApplyProbe;
+    // setFilter's steps; requestAlreadyChanged marks a request a caller
+    // (shiftFilter) has already constrained, so a stored pair that does
+    // not move is re-sent.
+    void applyFilterRequest(int low, int high, bool requestAlreadyChanged);
     // A setter's check: true (and announced) when `requested` would change
     // the value on a read-only listener outside the Core's own apply.
     template <typename T, typename U>

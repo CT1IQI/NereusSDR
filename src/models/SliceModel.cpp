@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - shiftFilter re-sends the stored pair when its constrain
+//                changed the request and the stored pair did not move (a
+//                centre drag held at the cap), through setFilter's re-send;
+//                NereusSDR's own view resync. J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
 //   2026-10-24 - The RADE modes (RADE_U, RADE_L, RADE2_U, RADE2_L) join
 //                the sideband rule of constrainFilter when "Limit filter
 //                edges to sidebands" is on: NereusSDR's own extension, as
@@ -807,6 +812,11 @@ void SliceModel::setFilterHigh(int high)
 
 void SliceModel::setFilter(int low, int high)
 {
+    applyFilterRequest(low, high, false);
+}
+
+void SliceModel::applyFilterRequest(int low, int high, bool requestAlreadyChanged)
+{
     // From Thetis console.cs:7544-7567 and 7579-7582 [v2.10.3.15]
     // (UpdateRX1Filters; the same in UpdateRX2Filters from 7666), through
     // filterForRequest.
@@ -815,7 +825,8 @@ void SliceModel::setFilter(int low, int high)
     // Placement in setFilter, the path every slice filter change takes:
     // From Longpath src/models/SliceModel.cpp:1110-1129 [@383f058].
     const auto [newLow, newHigh] = filterForRequest(low, high);
-    const bool requestChanged = (newLow != low || newHigh != high);
+    const bool requestChanged =
+        requestAlreadyChanged || newLow != low || newHigh != high;
 
     if (holdsListenerWrite(std::pair(m_filterLow, m_filterHigh), std::pair(newLow, newHigh))) { return; }
     if (m_filterLow != newLow || m_filterHigh != newHigh) {
@@ -890,8 +901,12 @@ void SliceModel::shiftFilter(int low, int high)
     // From Thetis console.cs:50630-50636 [v2.10.3.15] (rx1_whole_filter_drag):
     //   ConstrainFilter(ref nLow, ref nHigh, 1, true);
     //   UpdateRX1Filters(nLow, nHigh);
-    constrainFilter(low, high, m_dspMode, true, m_limitFiltersToSidebands);
-    setFilter(low, high);
+    const bool constrained =
+        constrainFilter(low, high, m_dspMode, true, m_limitFiltersToSidebands);
+    // A move the constraint changed whose stored pair does not move (a
+    // centre drag going on past the cap) re-sends the stored pair, as
+    // setFilter does, so a view that drew the request drops it.
+    applyFilterRequest(low, high, constrained);
 }
 
 // From Thetis console.cs:35044-35131 [v2.10.3.15] (ConstrainFilter). The

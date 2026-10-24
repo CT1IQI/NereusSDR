@@ -15,6 +15,9 @@
 //                 Claude Code.
 //   2026-10-24 - aCopiedPassbandCentreDragKeepsTheWidth. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Its drag goes on past the cap with the slice already
+//                 there, and the copy shows the stored filter. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -554,11 +557,15 @@ private slots:
             QApplication::sendEvent(passband, &me);
         };
         // 300 px right in the centre zone: +3000 Hz, 11000..12900 asked.
+        // Then 310 px (11100..13000) with the slice already at the cap.
         mouse(QEvent::MouseButtonPress, 150, Qt::LeftButton, Qt::LeftButton);
         mouse(QEvent::MouseMove, 450, Qt::NoButton, Qt::LeftButton);
-        mouse(QEvent::MouseButtonRelease, 450, Qt::LeftButton, Qt::NoButton);
+        QCOMPARE(slice.filterLow(), 8100);
+        QCOMPARE(slice.filterHigh(), 10000);
+        mouse(QEvent::MouseMove, 460, Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, 460, Qt::LeftButton, Qt::NoButton);
 
-        QCOMPARE(shifted.count(), 1);
+        QCOMPARE(shifted.count(), 2);
         QCOMPARE(slice.filterLow(), 8100);
         QCOMPARE(slice.filterHigh(), 10000);
         QCOMPARE(passband->filterLo(), 8100);

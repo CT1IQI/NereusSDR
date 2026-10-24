@@ -22,6 +22,10 @@
 // Modification history (NereusSDR):
 //   2026-10-22 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-24 - The centre drag goes on past the cap with the slice
+//                 already there, and the widget shows the stored filter.
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -183,11 +187,15 @@ private slots:
         QSignalSpy edged(passband, &FilterPassbandWidget::filterChanged);
 
         // 300 px right in the centre zone: +3000 Hz, 11000..12900 asked.
+        // Then 310 px (11100..13000) with the slice already at the cap.
         press(passband, 150, 20);
         moveTo(passband, 450, 20);
-        release(passband, 450, 20);
+        QCOMPARE(slice.filterLow(), 8100);
+        QCOMPARE(slice.filterHigh(), 10000);
+        moveTo(passband, 460, 20);
+        release(passband, 460, 20);
 
-        QCOMPARE(shifted.count(), 1);
+        QCOMPARE(shifted.count(), 2);
         QCOMPARE(edged.count(), 0);
         QCOMPARE(slice.filterLow(), 8100);
         QCOMPARE(slice.filterHigh(), 10000);

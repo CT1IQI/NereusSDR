@@ -38,6 +38,9 @@
 //                 and are unchanged with it off (NereusSDR's own
 //                 extension, JJ's ruling). J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-24 - shiftFilter re-sends the stored pair when a move held at
+//                 the cap leaves it in place. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Claude Code.
 // =================================================================
 
 // --- From tst_filter_constrain.cpp (Longpath) ---
@@ -342,6 +345,26 @@ private slots:
             QCOMPARE(emitted.at(0).toInt(), 100);
             QCOMPARE(emitted.at(1).toInt(), 10000);
         }
+    }
+
+    void aShiftHeldAtTheCapResendsTheStoredPair()
+    {
+        // A centre drag that goes on past the cap with the slice already
+        // there: shiftFilter keeps 8100..10000 and re-sends it, so a view
+        // that drew the request drops it. A shift that asks for the stored
+        // pair itself sends nothing.
+        SliceModel s;
+        s.setDspMode(DSPMode::USB);
+        s.setFilter(8100, 10000);
+        QSignalSpy spy(&s, &SliceModel::filterChanged);
+        s.shiftFilter(9200, 11100);
+        QCOMPARE(s.filterLow(), 8100);
+        QCOMPARE(s.filterHigh(), 10000);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 8100);
+        QCOMPARE(spy.at(0).at(1).toInt(), 10000);
+        s.shiftFilter(8100, 10000);
+        QCOMPARE(spy.count(), 1);
     }
 
     void anUnchangedRequestEmitsNothing()
