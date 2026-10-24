@@ -38,9 +38,10 @@
 //               Anthropic Claude Code.
 //   2026-10-24: an attempt's end line says how long after its dial it
 //               ended and what it met: the socket error and Qt's text for
-//               it, or the WebSocket close code and reason when the Core
-//               closed it before its hello. Log only; the operator's words
-//               are unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//               it, or, for a WebSocket closed before the Core's hello, its
+//               close code and quoted, escaped reason, or "no close frame"
+//               when the link dropped without one. Log only; the operator's
+//               words are unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 // =================================================================
 
@@ -88,9 +89,35 @@ QString socketErrorText(QAbstractSocket::SocketError error, const QString& text)
     return words;
 }
 
+// For the log only: a far end's text, quoted, with a quote, a backslash and
+// anything that could break the line (a control character, a line or
+// paragraph separator) escaped, so a peer cannot forge a log line.
+QString quotedForLog(const QString& text)
+{
+    QString quoted = QStringLiteral("\"");
+    const QList<uint> codePoints = text.toUcs4();
+    for (const uint codePoint : codePoints) {
+        const char32_t c = static_cast<char32_t>(codePoint);
+        if (c == U'"' || c == U'\\') {
+            quoted += QLatin1Char('\\');
+            quoted.append(QString::fromUcs4(&c, 1));
+        } else if (!QChar::isPrint(c) || QChar::category(c) == QChar::Separator_Line
+                   || QChar::category(c) == QChar::Separator_Paragraph) {
+            quoted += QStringLiteral("\\u%1").arg(static_cast<uint>(c), 4, 16, QLatin1Char('0'));
+        } else {
+            quoted.append(QString::fromUcs4(&c, 1));
+        }
+    }
+    quoted += QLatin1Char('"');
+    return quoted;
+}
+
 // For the log only: how a link closed before the Core's hello. A WebSocket
-// says its close code and reason, and the socket error if there was one.
-QString closedBeforeHelloText(SessionTransport* transport)
+// says its close code and reason when it closed with a close frame, or that
+// none came, and the socket error if there was one. Without a close frame,
+// Qt's closeCode() keeps its default, 1000, so the code alone cannot tell
+// (qwebsocket_p.cpp:118, :396 in Qt 6.11.0).
+QString closedBeforeHelloText(SessionTransport* transport, bool closeFrame)
 {
     QString words = QStringLiteral("closed before the Core's hello");
     auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
@@ -98,9 +125,13 @@ QString closedBeforeHelloText(SessionTransport* transport)
         return words;
     }
     const QWebSocket* socket = webSocket->socket();
-    words += QStringLiteral(", close code %1").arg(static_cast<int>(socket->closeCode()));
-    if (!socket->closeReason().isEmpty()) {
-        words += QStringLiteral(" (%1)").arg(socket->closeReason());
+    if (closeFrame) {
+        words += QStringLiteral(", close code %1").arg(static_cast<int>(socket->closeCode()));
+        if (!socket->closeReason().isEmpty()) {
+            words += QStringLiteral(", reason ") + quotedForLog(socket->closeReason());
+        }
+    } else {
+        words += QStringLiteral(", no close frame");
     }
     if (socket->error() != QAbstractSocket::UnknownSocketError) {
         words += QStringLiteral(", ") + socketErrorText(socket->error(), socket->errorString());
@@ -190,6 +221,9 @@ struct PathRacer::Entry {
     /// what ended it when the racer saw it (a link closed before its hello).
     QElapsedTimer dialed;
     QString endDetail;
+    /// For the end's log line: the link closed with a WebSocket close
+    /// frame, the far end's or Qt's own on a frame it could not take.
+    bool closeFrame = false;
 };
 
 PathRacer::PathRacer(QObject* parent) : QObject(parent) {}
@@ -514,11 +548,23 @@ void PathRacer::onOpened(int index, SessionTransport* transport)
     entry.transport = transport;
     connect(transport, &SessionTransport::textReceived, this,
             [this, index](const QByteArray& wire) { onHello(index, wire); });
+    // For the log only: whether the link closed with a close frame. Qt
+    // emits aboutToClose from close(), which a received close frame (or a
+    // frame Qt could not take) runs before the link goes; a link that drops
+    // with no close frame only disconnects (qwebsocket_p.cpp:390-420,
+    // :719-726, :1403-1407 and qabstractsocket.cpp:643-648, :2669-2750 in
+    // Qt 6.11.0). The racer reads it only for a link it did not close.
+    if (auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
+        webSocket != nullptr && webSocket->socket() != nullptr) {
+        connect(webSocket->socket(), &QWebSocket::aboutToClose, this, [this, index] {
+            m_entries[static_cast<size_t>(index)]->closeFrame = true;
+        });
+    }
     connect(transport, &SessionTransport::closed, this, [this, index] {
         Entry& e = *m_entries[static_cast<size_t>(index)];
         if (!e.ended) {
             if (e.hello.isEmpty()) {
-                e.endDetail = closedBeforeHelloText(e.transport);
+                e.endDetail = closedBeforeHelloText(e.transport, e.closeFrame);
             }
             endRung(index, e.hello.isEmpty() ? Outcome::NoAnswer : Outcome::Failed, QString());
         } else if (e.standby) {
