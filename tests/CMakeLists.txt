@@ -6804,6 +6804,14 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_tci_iq_roundtrip PRIVATE Qt6::WebSockets)
 endif()
 
+# Longpath cf756d8b: receive audio and I/Q to an app that stops reading are
+# dropped once 256 KiB or more waits for it, not queued without limit. A raw
+# socket does the handshake by hand and then reads nothing.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_binary_backpressure)
+    target_link_libraries(tst_tci_binary_backpressure PRIVATE Qt6::WebSockets)
+endif()
+
 # ── Phase 3J-1 Task 17.1: TX audio binary pipeline + single-client mutex ──────
 # Tests: TX mutex acquire/release, active-client-frame-lands, non-active-client-
 # frame-dropped (ring invariant).
@@ -11061,6 +11069,13 @@ nereus_add_test(tst_display_settings_model)
 # unit and from fake radios on both protocols.
 nereus_add_test(tst_radio_link_stats fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_radio_link_stats PRIVATE NEREUS_BUILD_TESTS)
+
+# A lost I/Q packet does not paint a line across the spectrum: the display
+# FFT drops its window in progress on a sequence gap, which both protocols
+# send before the samples after it. Ported from Longpath PR 62
+# (tests/tst_fft_window_after_gap.cpp [@383f058]) and extended, 2026-10-22.
+nereus_add_test(tst_fft_window_after_gap fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_fft_window_after_gap PRIVATE NEREUS_BUILD_TESTS)
 
 # RADE threads lane (2026-09-30): one Protocol 2 socket drain's I/Q reaches
 # the DSP worker as one post per stream, with the same samples in order.
