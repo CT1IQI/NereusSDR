@@ -143,6 +143,11 @@
 //                140 (oe5sos/Longpath @383f058) used as a cross-check. J.J.
 //                Boyd (KG4VCF), with AI-assisted transformation via Claude
 //                Code.
+//   2026-10-24 - defaultFilterForMode: DIGU/DIGL start on F1 3.0k (JJ's
+//                ruling, for FT8), NereusSDR's own default; Thetis starts
+//                them on F5 1.0k. The F1-F10 presets stay as Thetis has
+//                them. By J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -620,7 +625,8 @@ void SliceModel::setDspMode(DSPMode mode)
     // OLD mode) so coming back to that mode in this band restores the
     // operator's last-set cutoffs.  Then look up the saved filter for the
     // (currentBand, NEW mode) tuple; if persisted, use it; if absent, fall
-    // back to defaultFilterForMode (Thetis F5 presets).  Mirrors
+    // back to defaultFilterForMode (Thetis F5 presets; DIGU/DIGL start on
+    // F1, NereusSDR's own default).  Mirrors
     // Thetis preset[m].LastFilter (console.cs:14653-14671 [v2.10.3.13]).
     //
     // Band is computed from the slice's current frequency rather than read
@@ -2552,9 +2558,13 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         // 2026-10-22: was kDiguOffset ± 600 under a quoted "1.2k" F5 line
         // that no Thetis release carries (Longpath PR 139 found the same).
         //
-        // From Thetis console.cs:5341 [v2.10.3.15] — DIGU F5 preset:
-        //   preset[m].SetFilter(f, digu_click_tune_offset - 500, digu_click_tune_offset + 500, "1.0k");
-        return {kDiguOffset - 500, kDiguOffset + 500};
+        // 2026-10-24: NereusSDR's own default, differing from Thetis, which
+        // starts DIGU on F5 1.0k. JJ's ruling: most people run FT8 in DIGU,
+        // which needs about 3 kHz, so DIGU starts on the F1 3.0k slot. The
+        // value is the same expression as the DIGU F1 row of presetsForMode
+        // below (kDiguOffset ± 1500 = 0..3000 Hz), so it follows the offset
+        // exactly as F1 does. The F1-F10 presets are unchanged.
+        return {kDiguOffset - 1500, kDiguOffset + 1500};
     case DSPMode::SPEC:
         // SPEC mode: passthrough, wide filter
         return {-5000, 5000};
@@ -2562,9 +2572,12 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         // Phase 3J-1 closeout Item 4 (2026-05-12): reverted to Thetis F5
         // default -- see DIGU case above for the full rationale.
         //
-        // From Thetis console.cs:5299 [v2.10.3.15] — DIGL F5 preset:
-        //   preset[m].SetFilter(f, -digl_click_tune_offset - 500, -digl_click_tune_offset + 500, "1.0k");
-        return {-kDiglOffset - 500, -kDiglOffset + 500};
+        // 2026-10-24: NereusSDR's own default, differing from Thetis, which
+        // starts DIGL on F5 1.0k. DIGL starts on the F1 3.0k slot (JJ's
+        // ruling, for FT8; see the DIGU case above). The value is the same
+        // expression as the DIGL F1 row of presetsForMode below
+        // (-kDiglOffset ± 1500 = -3710..-710 Hz at offset 2210).
+        return {-kDiglOffset - 1500, -kDiglOffset + 1500};
     case DSPMode::SAM:
         // From Thetis console.cs:5509 [v2.10.3.15] — F5: -5000 to 5000, "10k"
         return {-5000, 5000};

@@ -18,15 +18,24 @@
 //
 // Longpath PRs 139 and 140 (oe5sos/Longpath, d5eb90b4) found the same
 // table drift; their values were used as a cross-check only.
+//
+// DIGU and DIGL are the exception to the F5 default: NereusSDR starts them
+// on F1 3.0k (JJ's ruling, 2026-10-24, for FT8), where Thetis starts them
+// on F5 1.0k. Saved presets the user edited stay as saved; slots the user
+// never edited, and Reset, give the Thetis values.
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-22 - Created by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
+//   2026-10-24 - DIGU/DIGL default on F1 3.0k, and saved presets kept
+//                as saved, by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
+#include "models/FilterPresetStore.h"
 #include "models/SliceModel.h"
 
 #include <utility>
@@ -129,11 +138,14 @@ private slots:
     }
 
     // Thetis starts every mode on F5 (preset[m].LastFilter = Filter.F5);
-    // defaultFilterForMode is that slot.
+    // defaultFilterForMode is that slot, except DIGU and DIGL (below).
     void defaultFilterIsThetisF5()
     {
         int mismatches = 0;
         for (const ModeTable& t : thetisTables()) {
+            if (t.mode == DSPMode::DIGU || t.mode == DSPMode::DIGL) {
+                continue;
+            }
             const Edges got  = SliceModel::defaultFilterForMode(t.mode);
             const Edges want = t.edges[4];
             if (got != want) {
@@ -142,6 +154,64 @@ private slots:
             }
         }
         QCOMPARE(mismatches, 0);
+    }
+
+    // NereusSDR's own default: DIGU and DIGL start on F1 3.0k for FT8, not
+    // the Thetis F5 1.0k. DIGU is 0..3000, DIGL -3710..-710 at offset 2210.
+    void digDefaultIsF1ThreeKilohertz()
+    {
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::DIGU), Edges(0, 3000));
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::DIGL), Edges(-3710, -710));
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::DIGU),
+                 SliceModel::presetsForMode(DSPMode::DIGU).at(0));
+        QCOMPARE(SliceModel::defaultFilterForMode(DSPMode::DIGL),
+                 SliceModel::presetsForMode(DSPMode::DIGL).at(0));
+    }
+
+    // Presets the user edited and saved stay exactly as saved: nothing
+    // migrates them to the Thetis values. A slot the user never edited
+    // gives the Thetis value, and Reset on an edited slot gives it too.
+    void savedPresetsStayAsSaved()
+    {
+        FilterPresetStore store;
+        FilterPreset edited;
+        edited.name = QStringLiteral("Mine");
+        edited.low  = -300;
+        edited.high = 900;
+        store.setPreset(DSPMode::CWU, 0, edited);
+        // DIGU F5 saved at the old NereusSDR default, 900..2100.
+        FilterPreset oldDig;
+        oldDig.name = QStringLiteral("F5");
+        oldDig.low  = 900;
+        oldDig.high = 2100;
+        store.setPreset(DSPMode::DIGU, 4, oldDig);
+
+        // A fresh store reads the saved values back unchanged.
+        FilterPresetStore reloaded;
+        const QList<FilterPreset> cwu = reloaded.presetsForMode(DSPMode::CWU);
+        QCOMPARE(cwu.size(), 10);
+        QCOMPARE(cwu[0].name, QStringLiteral("Mine"));
+        QCOMPARE(cwu[0].low, -300);
+        QCOMPARE(cwu[0].high, 900);
+        const QList<FilterPreset> digu = reloaded.presetsForMode(DSPMode::DIGU);
+        QCOMPARE(digu[4].low, 900);
+        QCOMPARE(digu[4].high, 2100);
+
+        // An unedited slot of the same mode: Thetis CWU F2 at pitch 600.
+        QCOMPARE(cwu[1].low, 200);
+        QCOMPARE(cwu[1].high, 1000);
+
+        // Reset on the edited slot: Thetis CWU F1, 100..1100.
+        reloaded.resetPreset(DSPMode::CWU, 0);
+        const FilterPreset reset = reloaded.presetsForMode(DSPMode::CWU).at(0);
+        QCOMPARE(reset.name, QStringLiteral("F1"));
+        QCOMPARE(reset.low, 100);
+        QCOMPARE(reset.high, 1100);
+        QCOMPARE(FilterPresetStore::defaultPreset(DSPMode::CWU, 0).low, 100);
+        QCOMPARE(FilterPresetStore::defaultPreset(DSPMode::CWU, 0).high, 1100);
+        // The other saved slot is untouched by that Reset.
+        QCOMPARE(reloaded.presetsForMode(DSPMode::DIGU).at(4).low, 900);
+        QCOMPARE(reloaded.presetsForMode(DSPMode::DIGU).at(4).high, 2100);
     }
 
     // CW slots sit on the CW pitch: at 700 Hz CWU F1 is 200..1200 and CWL
