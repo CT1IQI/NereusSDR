@@ -34,6 +34,8 @@
 
 #include "core/DdcAssignment.h"
 #include "core/RadioConnection.h"
+#include "core/StepAttenuatorController.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "core/accessories/AlexController.h"
 #include "models/Band.h"
 
@@ -341,7 +343,12 @@ private slots:
     // leaves the other bands' rows alone.
     void aDevicesAntennaPickLandsInTheTableRowForItsBand()
     {
+        // The Core publishes its table (alexAntennas) with a step
+        // attenuator, as tst_radio_bound_antenna_rows sets it up.
+        StepAttenuatorController step;
+        step.setTickTimerEnabled(false);
         Core core;
+        core.model->setStepAttController(&step);
         core.model->setBoardForTest(HPSDRHW::OrionMKII);  // Alex ANT1 to ANT3
         core.model->setCapsForTest(true);
         // A Core with a radio: the slice's handlers are wired at connect.
@@ -354,23 +361,58 @@ private slots:
         alex.setTxAnt(Band::Band40m, 2);
         core.model->sliceById(0)->setFrequency(14074000.0);
         Device a;
+        Device b(QStringLiteral("Grant's iPad"), QStringLiteral("tablet"), QStringLiteral("Grant's iPad"));
         core.pair(a);
-        LoopbackTransport* appA = core.signIn(a);
+        core.pair(b);
+        // Today's phones: they read the Core's per-band rows (2 m included).
+        const QHash<QByteArray, int> rows{{"deviceAuth", 1}, {"sessionHolder", 1},
+                                          {"radioAntennaRows", 1}, {"band2m", 1}};
+        LoopbackTransport* appA = core.signIn(a, rows);
+        LoopbackTransport* appB = core.signIn(b, rows);
         QVERIFY(admitted(appA));
+        QVERIFY(admitted(appB));
 
-        appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
-            "slice:0", {utf8("rxAntenna", QStringLiteral("ANT3")),
-                        utf8("txAntenna", QStringLiteral("ANT3"))}, 51)));
-        QTRY_VERIFY(!propertyResult(appA, 51).isEmpty());
-        for (const QJsonValue& result :
-             propertyResult(appA, 51).value(QStringLiteral("results")).toArray()) {
-            QVERIFY2(result.toObject().value(QStringLiteral("accepted")).toBool(false),
-                     qPrintable(result.toObject().value(QStringLiteral("reason")).toString()));
+        // A's pick on its own slice; with B signed in the change may wait
+        // for A's yes, which A gives.
+        const auto pick = [&](const char* property, quint32 id) {
+            appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+                "slice:0", {utf8(property, QStringLiteral("ANT3"))}, id)));
+            const bool answered =
+                QTest::qWaitFor([appA, id]() { return !propertyResult(appA, id).isEmpty(); }, 5000);
+            Q_UNUSED(answered);
+            const QJsonArray results =
+                propertyResult(appA, id).value(QStringLiteral("results")).toArray();
+            QJsonObject result = results.isEmpty() ? QJsonObject{} : results.first().toObject();
+            if (result.value(QStringLiteral("reason")).toString()
+                == QStringLiteral("Waiting for you to confirm.")) {
+                const QJsonObject question =
+                    ofType(appA->received(), QStringLiteral("confirm.request")).last();
+                result = core.invoke(appA, "confirm.proceed",
+                    {int64("id", question.value(QStringLiteral("id")).toInteger()),
+                     int64("choice", -1)});
+            }
+            return result;
+        };
+        for (const auto& [property, id] :
+             {std::pair<const char*, quint32>{"rxAntenna", 51}, {"txAntenna", 52}}) {
+            const QJsonObject result = pick(property, id);
+            QVERIFY2(result.value(QStringLiteral("accepted")).toBool(false),
+                     qPrintable(result.value(QStringLiteral("reason")).toString()));
         }
         QTRY_COMPARE(alex.rxAnt(Band::Band20m), 3);
         QTRY_COMPARE(alex.txAnt(Band::Band20m), 3);
         QCOMPARE(alex.rxAnt(Band::Band40m), 2);
         QCOMPARE(alex.txAnt(Band::Band40m), 2);
+        // The other device sees the changed table: the Core's alexAntennas
+        // object reaches it with the new row. (A's own changes are withheld
+        // from A's view by design, ruling 5.7 in StationServer.)
+        const AlexAntennaFacade* table = core.model->alexAntennaFacade();
+        QTRY_COMPARE(latest(appB->received(), QStringLiteral("alexAntennas"),
+                            QStringLiteral("rxAntennas")).toString(),
+                     table->rxAntennas());
+        QTRY_COMPARE(latest(appB->received(), QStringLiteral("alexAntennas"),
+                            QStringLiteral("txAntennas")).toString(),
+                     table->txAntennas());
     }
 };
 

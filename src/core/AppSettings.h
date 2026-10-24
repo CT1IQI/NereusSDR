@@ -638,7 +638,9 @@ public:
     //   Slice<N>/RfGain     — int 0-100
     //   (No antenna keys: Setup's per-band antenna table under
     //   hardware/<mac>/alex/antenna/ is the only antenna store. Older builds
-    //   wrote Slice<N>/RxAntenna and TxAntenna; nothing reads them now.)
+    //   wrote Slice<N>/RxAntenna and TxAntenna; nothing reads them now.
+    //   SliceModel::migrateLegacyKeys still writes them from the legacy
+    //   VfoRxAntenna / VfoTxAntenna, and they stay unread.)
     //   Slice<N>/SnbEnabled — "True"/"False"           — default "False" (session-level)
     //   Slice<N>/SsqlEnabled: "True"/"False", voice squelch (Thetis VSQL)
     //   Slice<N>/SsqlThresh:  double, slider value, 0..100

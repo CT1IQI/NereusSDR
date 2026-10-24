@@ -19,7 +19,11 @@
 // Modification history (NereusSDR):
 //   2026-10-23 - refreshSliceAntennasFromAlex: a slice names its antennas
 //                from Setup's per-band antenna table when it is made and on
-//                every connect, now that it saves no antenna of its own.
+//                every connect, now that it saves no antenna of its own. A
+//                table edit sets the transmit slice's TX label, and a slice
+//                tuned onto the station's band takes that band's labels
+//                (refreshSliceLabelsOnStationBand), so key-down never writes
+//                an older label back.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
@@ -2300,6 +2304,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // issue #98's protocol-layer gap.
     connect(&m_alexController, &AlexController::antennaChanged, this,
             [this](Band b) {
+        // The transmit slice's TX label follows its band's row, active or
+        // not: key-down writes that label back into the row
+        // (applyTxAntennaFromBoundSlice), so an older label would undo a
+        // Setup edit. The receive label is left to the active-slice refresh
+        // below. A remote window's labels are the Core's.
+        if (m_role == Role::Local) {
+            SliceModel* const txSlice = txBoundSlice();
+            if (txSlice && bandFromFrequency(txSlice->frequency()) == b) {
+                txSlice->setTxAntenna(QStringLiteral("ANT%1").arg(m_alexController.txAnt(b)));
+            }
+        }
         // Persist on every controller mutation so the per-band
         // selection survives app restart. Without this, AlexController
         // state lived only in memory — caught during PR #N bench
@@ -23975,6 +23990,23 @@ void RadioModel::crossBandForSlice(SliceModel* slice, Band newBand)
     }
 }
 
+// A slice tuned onto the band the station is already on changes band
+// without a crossing (crossBandForSlice runs only when the station's band
+// changes), so its labels still name its old band's row; as the transmit
+// slice it would write that TX label into this band's row at key-down.
+void RadioModel::refreshSliceLabelsOnStationBand(SliceModel* slice, Band band)
+{
+    // While the receive antenna is kept, the receive label names the relay's
+    // antenna and writing it would store the kept antenna as this band's
+    // (crossBandForSlice), so only the transmit label follows the row.
+    if (m_keptRxAntennaBand) {
+        slice->setTxAntenna(QStringLiteral("ANT%1").arg(m_alexController.txAnt(band)));
+        return;
+    }
+    const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+    slice->refreshAntennasFromAlex(m_alexController, band, &sku);
+}
+
 bool RadioModel::receiveAntennaDiffers(Band a, Band b) const
 {
     // iPhone app Task 75: whether the relay's receive side would move from
@@ -24053,10 +24085,14 @@ void RadioModel::wireBandTrackingForTest(SliceModel* slice)
 {
     // The frequency handler's band test, for a model with no connection
     // (wireSliceSignals runs only once a radio connects).
-    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double freq) {
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, slice, sliceBand = bandFromFrequency(slice->frequency())](double freq) mutable {
         const Band newBand = bandFromFrequency(freq);
+        const Band oldSliceBand = std::exchange(sliceBand, newBand);
         if (newBand != m_lastBand) {
             crossBandForSlice(slice, newBand);
+        } else if (oldSliceBand != newBand) {
+            refreshSliceLabelsOnStationBand(slice, newBand);
         }
     });
 }
@@ -24087,7 +24123,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // Reporter frequency now follows the station-level active slice from
     // addSliceImpl, iPhone app Task 73; the simplex TX-follows-RX push has
     // lived there longer.)
-    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double freq) {
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, slice, sliceBand = bandFromFrequency(slice->frequency())](double freq) mutable {
         // The FreeDV Reporter push moved to addSliceImpl (iPhone app Task
         // 73), wired once for every slice whatever the connection does, so
         // it follows the station-level active slice alone.
@@ -24111,11 +24148,14 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         // for that band. Letting the coalesced scheduleSettingsSave() flush
         // keeps the CURRENT band's slot up to date without either bug.
         Band newBand = bandFromFrequency(freq);
+        const Band oldSliceBand = std::exchange(sliceBand, newBand);
         if (newBand != m_lastBand) {
             qCDebug(lcConnection) << "T10: band crossing" << bandLabel(m_lastBand)
                                   << "→" << bandLabel(newBand)
                                   << "(freq=" << freq << "Hz)";
             crossBandForSlice(slice, newBand);
+        } else if (oldSliceBand != newBand) {
+            refreshSliceLabelsOnStationBand(slice, newBand);
         }
         scheduleSettingsSave(slice);
     });
