@@ -6539,6 +6539,13 @@ nereus_add_test(tst_spectrum_tx_overlay)
 # setPresetsForMode reorder persists, presetsChanged fires on every mutator.
 nereus_add_test(tst_filter_preset_store)
 
+# ── Longpath bug-fix port, bug 3: filter presets match Thetis ───────────────
+# Table-driven: every F1..F10 slot of LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+# and DSB against Thetis InitFilterPresets (console.cs:5188-5582
+# [v2.10.3.15]), F5 as the default filter, and the CW slots following the CW
+# pitch with the CWPitch setter's image-limit slide.
+nereus_add_test(tst_filter_presets_thetis)
+
 # ── Issue #175 Task 1: per-SKU PA UI constants for HL2 mi0bot parity ─────────
 # 5 tests asserting the 9 constexpr helpers + 2 attenuator constants added
 # in HpsdrModel.h for HL2 (HERMESLITE) mi0bot-Thetis slider/spinbox parity:
@@ -9179,6 +9186,14 @@ target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
 nereus_add_test(tst_juice_dual_stack_port CORE_ONLY EXTRA_LABELS session)
 target_link_libraries(tst_juice_dual_stack_port PRIVATE datachannel-static)
 target_include_directories(tst_juice_dual_stack_port PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libjuice_SOURCE_DIR}/src")
+# libjuice offers each IPv6 /64 once, and on macOS with the address the
+# system sends from rather than the first one listed
+# (cmake/patches/libjuice-0005).
+nereus_add_test(tst_juice_ipv6_source_address CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_juice_ipv6_source_address PRIVATE datachannel-static)
+target_include_directories(tst_juice_ipv6_source_address PRIVATE
     "${libdatachannel_SOURCE_DIR}/include"
     "${libjuice_SOURCE_DIR}/src")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
