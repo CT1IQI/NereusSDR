@@ -12,7 +12,9 @@
 //               samplesQueuedAheadOfAGapAreFedBeforeIt feeds B as exactly a
 //               window, so no frame is triggered inside the drain;
 //               aSequenceGapResetsTheSourcesOfItsStreamOnly feeds more than
-//               four clean windows before its second gap. J.J. Boyd
+//               four clean windows before its second gap, each feed drained
+//               before the next, and holds the other stream's gap to no
+//               engine window reset, taken or let through. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Claude Code.
 //   2026-10-24: aLossyLinkKeepsTheCoresSourceMakingFrames at the smallest
 //               and the largest FFT, held to the healthy link's frame rate
@@ -658,6 +660,8 @@ struct Harness {
     std::mutex clockThreadsLock;
     QSet<QString> clockThreads;
     QPointer<QTimer> manualSender;
+    // The complex pairs each feedRadio() call hands the radio's tap.
+    static constexpr int kRadioFeedPairs = 1026;
     DaemonMediaController controller;
     int sliceId{-1};
     int spareSliceId{-1};
@@ -766,7 +770,7 @@ struct Harness {
         const bool invoked = QMetaObject::invokeMethod(
             &radio, "rawIqDataForStream", Qt::DirectConnection,
             Q_ARG(int, streamIndex),
-            Q_ARG(QVector<float>, syntheticIq(1026, cyclesPerSample)));
+            Q_ARG(QVector<float>, syntheticIq(kRadioFeedPairs, cyclesPerSample)));
         QVERIFY(invoked);
     }
 
@@ -4142,15 +4146,17 @@ void TstDaemonMediaController::aKeyEdgeResetsEveryActiveSourceOnce()
 // resets nothing; -1 (a Protocol 1 gap) resets every stream.
 void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
 {
+    // Each source's FFT size: one window is this many pairs.
+    constexpr int kFftSize = 1024;
     Harness harness;
     harness.establishSession();
     harness.startReadyPeer();
     const double centre = harness.radio.streamCentreHz(harness.streamIndex);
     QVERIFY(harness.client.sendMediaControl(tieredSubscription(
-        33, 1, harness.sliceId, centre, QStringLiteral("wide"), 1024),
+        33, 1, harness.sliceId, centre, QStringLiteral("wide"), kFftSize),
         harness.client.sessionEpoch()));
     QVERIFY(harness.client.sendMediaControl(tieredSubscription(
-        34, 1, harness.sliceId, centre, QStringLiteral("fine"), 1024),
+        34, 1, harness.sliceId, centre, QStringLiteral("fine"), kFftSize),
         harness.client.sessionEpoch()));
     QTRY_COMPARE(harness.controller.activeSourceCount(), 2);
     DaemonSpectrumSource* const source = &harness.controller.sharedSpectrum()->source();
@@ -4166,19 +4172,47 @@ void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
     const auto resetsSince = [&](int index) {
         return source->inputHistoryResets(keys.at(index)) - before.at(index);
     };
+    // 2026-10-24: one feed, drained by every source before the next, so
+    // the input queue (2048 pairs, under two feeds) never overflows, and
+    // any gap queued before the feed has been taken when this returns.
+    const auto feedAndDrain = [&] {
+        QList<quint64> handoffs;
+        for (const MediaSourceKey& key : keys) {
+            handoffs.append(source->completedInputHandoffs(key));
+        }
+        harness.feedRadio();
+        for (int i = 0; i < keys.size(); ++i) {
+            if (!QTest::qWaitFor([&] {
+                    return source->completedInputHandoffs(keys.at(i)) > handoffs.at(i);
+                }, 10'000)) {
+                return false;
+            }
+        }
+        return true;
+    };
 
     emit harness.radio.iqSequenceGapForStream(harness.streamIndex);
-    harness.feedRadio();
+    QVERIFY(feedAndDrain());
     QTRY_COMPARE(resetsSince(0), quint64{1});
     QTRY_COMPARE(resetsSince(1), quint64{1});
 
     // Another stream's gap: the samples after it still drain, and reset
-    // nothing here.
+    // nothing here. 2026-10-24: nor does the engine take it at all, reset
+    // or let through, so the check holds whatever the engine's rule.
+    QList<quint64> windowResets;
+    QList<quint64> windowResetsSkipped;
+    for (const MediaSourceKey& key : keys) {
+        windowResets.append(source->engineWindowResets(key));
+        windowResetsSkipped.append(source->engineWindowResetsSkipped(key));
+    }
     emit harness.radio.iqSequenceGapForStream(harness.streamIndex + 1);
-    harness.feedRadio();
-    QTest::qWait(50);
+    QVERIFY(feedAndDrain());
     QCOMPARE(resetsSince(0), quint64{1});
     QCOMPARE(resetsSince(1), quint64{1});
+    for (int i = 0; i < keys.size(); ++i) {
+        QCOMPARE(source->engineWindowResets(keys.at(i)), windowResets.at(i));
+        QCOMPARE(source->engineWindowResetsSkipped(keys.at(i)), windowResetsSkipped.at(i));
+    }
 
     // 2026-10-24 (option c): a gap less than FFTEngine::kGapLossyLinkWindows
     // windows after the last one is let through, so the link is fed well
@@ -4188,18 +4222,20 @@ void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
     for (const MediaSourceKey& key : keys) {
         decimation = std::max(decimation, source->engineDecimation(key));
     }
-    const int cleanPairs = 2 * NereusSDR::FFTEngine::kGapLossyLinkWindows * 1024 * decimation;
-    for (int fed = 0; fed < cleanPairs; fed += 1026) {
+    const int cleanPairs =
+        2 * NereusSDR::FFTEngine::kGapLossyLinkWindows * kFftSize * decimation;
+    for (int fed = 0; fed < cleanPairs; fed += Harness::kRadioFeedPairs) {
         QTest::qWait(10);
-        harness.feedRadio();
+        QVERIFY(feedAndDrain());
     }
 
     emit harness.radio.iqSequenceGapForStream(-1);
-    harness.feedRadio();
+    QVERIFY(feedAndDrain());
     QTRY_COMPARE(resetsSince(0), quint64{2});
     QTRY_COMPARE(resetsSince(1), quint64{2});
     // Had the other stream's gap reset these sources, the count would now
-    // go on to 3.
+    // go on to 3 (one let through instead is caught by the engine counts
+    // above).
     QTest::qWait(50);
     QCOMPARE(resetsSince(0), quint64{2});
     QCOMPARE(resetsSince(1), quint64{2});
