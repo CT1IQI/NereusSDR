@@ -1305,6 +1305,10 @@
 //                sampler's tick). Diagnostics only; NR and DSP
 //                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-24 - An AGC-T move saves the RF gain the lane readback gives,
+//                so the slice's RF gain comes back as it was left on a
+//                restart. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -17329,6 +17333,10 @@ void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel)
             m_syncingAgc = true;
             slice->setRfGain(rfGain);
             m_syncingAgc = wasSyncing;
+            // The slice keeps the RF gain the new threshold gives, so it comes
+            // back as the user left it. The save the caller scheduled captured
+            // the slice's values before this lane readback landed.
+            scheduleSettingsSave(slice);
         }
     });
 }
@@ -24816,8 +24824,10 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // AGC-T AUTO and its offset. Nothing scheduled a save for either, so
     // AUTO switched on and the app closed wrote nothing unless another
     // control was moved afterwards. The AUTO tick's own threshold writes
-    // still schedule nothing: updateAutoAgc sets m_syncingAgc, and the
-    // agcThresholdChanged handler above returns on it before its save.
+    // schedule no save of their own: updateAutoAgc sets m_syncingAgc, and the
+    // agcThresholdChanged handler above returns on it before its save. The
+    // tick's RF gain readback (syncRfGainFromAgcTop) does schedule one when
+    // it changes the RF gain, and the 500 ms save debounce coalesces those.
     connect(slice, &SliceModel::autoAgcEnabledChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::autoAgcOffsetChanged,  this, [this, slice]() { scheduleSettingsSave(slice); });
 

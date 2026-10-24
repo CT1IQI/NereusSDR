@@ -40,6 +40,9 @@
 //   2026-10-17 -- Teardown stops the TX worker before the audio engine
 //                 drops the input it reads (main CI crash at 4066a86b6).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 -- An AGC-T move saves the RF gain the lane readback gives,
+//                 so the band's AGC comes back as it was left on restart.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -53,6 +56,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <thread>
 
@@ -206,6 +210,82 @@ private slots:
         QCOMPARE(channel->filterLow(), 350.0);
         QCOMPARE(channel->filterHigh(), 2450.0);
         QCOMPARE(channel->agcThreshold(), -37);
+    }
+
+    // The desktop AGC-T slider sets the threshold; the receive lane reads
+    // back the AGC top it gives and sets the slice's RF gain. A save that
+    // ran before that readback kept the old RF gain, and on restart the
+    // restored RF gain set the AGC top again and moved the band's AGC away
+    // from where the slider left it.
+    void agcThresholdMoveSavesTheRfGainFromTheReadback()
+    {
+        AppSettings::instance().clear();
+        // The band's AGC as WDSP holds it: the threshold read back from the
+        // channel (what the AGC runs on, not the slice's cached copy).
+        const auto wdspThreshold = [](RadioModel& radio, SliceModel* slice) {
+            RxChannel* channel = radio.rxChannelForSlice(slice->sliceIndex());
+            if (channel == nullptr) {
+                return 1000;
+            }
+            int thresh = 1000;
+            bool read = false;
+            channel->requestAgcReadBack(slice, [&thresh, &read](double, double t) {
+                thresh = static_cast<int>(std::round(t));
+                read = true;
+            });
+            QDeadlineTimer deadline(5000);
+            while (!read && !deadline.hasExpired()) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            }
+            return thresh;
+        };
+
+        int movedThreshold = 0;
+        int movedRfGain = 0;
+        int movedWdspThreshold = 0;
+        {
+            auto harness = ConnectableRadioModel::create(
+                10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+            QVERIFY(harness);
+            RadioModel& radio = harness->model();
+            SliceModel* slice = radio.slices().first();
+            QVERIFY(slice);
+            slice->setFrequency(14225000.0);
+            radio.requestSettingsSave();
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            const int rfGainBefore = slice->rfGain();
+
+            // The slider: outside the AGC sync guard.
+            movedThreshold = slice->agcThreshold() - 25;
+            slice->setAgcThreshold(movedThreshold);
+            // The coalesced save can run before the lane's readback lands: flush
+            // here, before the readback reaches this thread, as that timer would.
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            QTRY_VERIFY_WITH_TIMEOUT(slice->rfGain() != rfGainBefore, 5000);
+            radio.flushPendingSettingsSave();
+            movedRfGain = slice->rfGain();
+            QCOMPARE(slice->agcThreshold(), movedThreshold);
+            movedWdspThreshold = wdspThreshold(radio, slice);
+            QVERIFY(movedWdspThreshold != 1000);
+        }
+
+        // Restart: the settings as the file holds them, then a fresh model.
+        AppSettings::instance().load();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* slice = radio.slices().first();
+        QVERIFY(slice);
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QCOMPARE(wdspThreshold(radio, slice), movedWdspThreshold);
+        QCOMPARE(slice->agcThreshold(), movedThreshold);
+        QCOMPARE(slice->rfGain(), movedRfGain);
     }
 
     void reconnectPreservesLiveReceivers()
