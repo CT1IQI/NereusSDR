@@ -6,6 +6,9 @@
 // does, and an empty unseeded store still sends an empty snapshot (a window's
 // Core pages wait on that). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
+// 2026-10-24: the fresh Core test compares the whole snapshot (seed marker and
+// LimitFiltersToSidebands), and the empty-store case also asserts a settings
+// snapshot arrived. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-24: the cap is 30; a version 30 phone reads and writes General >
 // Filters' Limit filter edges to sidebands. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
@@ -915,8 +918,12 @@ private slots:
             auto* app = core.signIn(phone, v30);
             QVERIFY(admitted(app));
             const QMap<QString, QString> settings = snapshotOf(app);
-            QCOMPARE(settings.value(key), QStringLiteral("False"));
-            QVERIFY(!settings.contains(QStringLiteral("DisableHfPa")));
+            // The whole snapshot: the seed marker and the key's effective
+            // value, nothing else (Swift's freshCoreSettings mirrors this).
+            const QMap<QString, QString> expected{
+                {QStringLiteral("DaemonProfileSeeded"), QStringLiteral("True")},
+                {key, QStringLiteral("False")}};
+            QCOMPARE(settings, expected);
             QVERIFY(!core.settings->contains(key));
         }
         {
@@ -925,6 +932,18 @@ private slots:
             core.pair(phone);
             auto* app = core.signIn(phone, v30);
             QVERIFY(admitted(app));
+            // A settings snapshot did arrive, and it is empty.
+            const auto hasSnapshot = [](LoopbackTransport* peer) {
+                for (const QByteArray& wire : peer->received()) {
+                    SessionMessage message;
+                    if (SessionMessages::decode(wire, &message)
+                        && message.kind == SessionMessageKind::SettingsSnapshot) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            QVERIFY(hasSnapshot(app));
             QVERIFY(snapshotOf(app).isEmpty());
             QVERIFY(!core.settings->contains(key));
         }

@@ -1405,11 +1405,15 @@ Core applies it to every slice when a window's write lands in its settings,
 the same path the desktop box uses. A Core that refuses the write hands back
 its own value and reason as for any setting row. The Core sends only the
 settings it has stored, with one exception for this key: a Core that never
-stored `LimitFiltersToSidebands` (a headless Core, or one whose box was
-never changed) still applies RadioModel's default, off, to its slices, so
-its settings snapshot carries `LimitFiltersToSidebands` `"False"` to every
-session and the row is live and off. A stored value is sent as stored; no
-other unstored setting is added to the snapshot. A V3 to V29 peer receives General at version 3
+stored `LimitFiltersToSidebands` still applies RadioModel's default, off, to
+its slices, so it adds `LimitFiltersToSidebands` `"False"` to its settings
+snapshot, but only to a snapshot that already has other content. Every
+headless Core writes its `DaemonProfileSeeded` marker on start
+(server_main.cpp:603), so its snapshot is never empty and the phone's row is
+live and off. A Core with nothing stored and no marker sends an empty
+snapshot, as before: a remote window's Core pages wait, and a phone shows
+the row greyed with the missing-value reason. A stored value is sent as
+stored; no other unstored setting is added to the snapshot. A V3 to V29 peer receives General at version 3
 exactly as before, without the page. This version adds no mirror field,
 ordinal, verb or capability; the Core caps a declaration at 30.
 
