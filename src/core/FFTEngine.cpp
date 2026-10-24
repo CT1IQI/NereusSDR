@@ -41,6 +41,12 @@
 //               copied; the project-level LICENSE applies. Ported by
 //               J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //               Claude Code.
+//   2026-10-23: NereusSDR-original stall bound on that reset
+//               (applyPendingWindowReset, frameIntervalPairs): with no frame
+//               for kGapResetStallFrameIntervals frame intervals, the gap is
+//               let through and counted in windowResetsSkipped(). JJ's
+//               ruling (option a). J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -331,10 +337,10 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
     // ueber das ganze Bild. requestWindowReset() setzt die Fahne von
     // irgendeinem Faden, abgeholt wird sie hier, auf dem Faden, dem das
     // Fenster gehoert.
-    if (m_windowResetPending.exchange(false)) {
-        m_iqWritePos = 0;
-        m_windowResets.fetch_add(1);
-    }
+    // NereusSDR: the flag is taken in applyPendingWindowReset(), which
+    // drops the window as Longpath does (m_iqWritePos = 0 and the count)
+    // unless the stall bound lets the gap through.
+    applyPendingWindowReset();
 
     // Apply any pending FFT size change (coalesces rapid slider drags)
     int pending = m_pendingFftSize.exchange(0);
@@ -365,6 +371,10 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
             }
             m_decimationCounter = (m_decimationCounter + 1) % dec;
         }
+        // NereusSDR-original (2026-10-23): input since the last frame, for
+        // the gap-reset stall bound; skipped pairs count too, as they pass
+        // in time between frames.
+        ++m_pairsSinceFrame;
         if (m_skipPending > 0) {
             // Between two transforms' windows: not analysed.
             --m_skipPending;
@@ -413,6 +423,47 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 #else
     Q_UNUSED(interleavedIQ);
 #endif
+}
+
+bool FFTEngine::applyPendingWindowReset()
+{
+    if (!m_windowResetPending.exchange(false)) {
+        return false;
+    }
+    // NereusSDR-original (2026-10-23), JJ's ruling (option a): the stall
+    // bound. Each reset makes the next frame wait for a whole window of new
+    // samples, so a link that loses packets more often than once a window
+    // would never finish one and the display would freeze on its last
+    // frame. After kGapResetStallFrameIntervals frame intervals with no
+    // frame, the gap is let through: the window keeps what it has, and the
+    // next frame shows a slightly smeared line instead.
+    if (m_pairsSinceFrame
+        >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs()) {
+        m_windowResetsSkipped.fetch_add(1);
+        return false;
+    }
+    // From Longpath src/core/FFTEngine.cpp:246-249 [@383f058] (PR 62).
+    m_iqWritePos = 0;
+    m_windowResets.fetch_add(1);
+    return true;
+}
+
+qint64 FFTEngine::frameIntervalPairs() const
+{
+    // NereusSDR-original (2026-10-23): the advance processFrame() takes
+    // between frames, in decimated input pairs. Clamped to the FFT size as
+    // there, unless transforms follow the frame rate, when the samples
+    // skipped between windows make up the rest of the interval.
+    const double sr  = m_sampleRate.load();
+    const int    fps = qMax(1, m_targetFps.load());
+    qint64 advance = (sr > 0.0)
+        ? static_cast<qint64>(std::round(sr / static_cast<double>(fps)))
+        : static_cast<qint64>(m_currentFftSize);
+    advance = std::max<qint64>(1, advance);
+    if (!m_transformsFollowFrameRate.load() && m_currentFftSize > 0) {
+        advance = std::min<qint64>(advance, m_currentFftSize);
+    }
+    return advance;
 }
 
 void FFTEngine::noteMinimumGapSkip(int droppedPairs)
@@ -779,6 +830,9 @@ void FFTEngine::processFrame()
     // Restart frame timer
     m_frameTimer.restart();
     m_frameTimerStarted = true;
+    // NereusSDR-original (2026-10-23): the gap-reset stall bound counts
+    // from here.
+    m_pairsSinceFrame = 0;
 
     // Emit both signals in lock-step.  fftReady serves chrome / AGC
     // consumers that need full-band dBm (ClarityController, NoiseFloorTracker);

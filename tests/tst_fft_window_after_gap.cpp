@@ -21,6 +21,13 @@
 // Modification history (NereusSDR):
 //   2026-10-22: Ported from Longpath and extended by J.J. Boyd (KG4VCF),
 //               with AI-assisted transformation via Claude Code.
+//   2026-10-23: The trigger is Longpath's (forward loss only, at most once
+//               per 20 ms): a repeated or reordered frame or packet sends no
+//               gap, and two losses inside the throttle send one. The
+//               NereusSDR-original stall bound: a lossy link keeps making
+//               frames, a single gap on a healthy link still drops the
+//               window. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               via Claude Code.
 //
 // --- From tst_fft_window_after_gap.cpp (Longpath) ---
 //
@@ -61,6 +68,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
 using namespace NereusSDR;
@@ -125,7 +133,7 @@ double floorBelowToneDb(const QVector<float>& binsLinear)
             far.push_back(std::max(static_cast<double>(binsLinear[i]), 1e-30));
         }
     }
-    std::nth_element(far.begin(), far.begin() + static_cast<long>(far.size() / 2), far.end());
+    std::nth_element(far.begin(), far.begin() + static_cast<std::ptrdiff_t>(far.size() / 2), far.end());
     return 10.0 * std::log10(far[far.size() / 2] / static_cast<double>(*peakIt));
 }
 
@@ -133,6 +141,22 @@ QVector<float> frameBins(const QSignalSpy& spy, int index)
 {
     return spy.at(index).at(1).value<QVector<float>>();
 }
+
+// The stall-bound cases: a 1024 FFT at 48 kHz and 60 frames a second
+// advances 800 samples a frame, so one frame interval is 800 pairs and the
+// bound lets a gap through once 2400 pairs have passed with no frame.
+constexpr double kBoundRateHz = 48000.0;
+constexpr int kBoundFps = 60;
+constexpr int kBoundIntervalPairs = 800;
+// processFrame holds a frame that would come within 5 ms of the last one;
+// each round of these cases waits this long, a lower bound, so the rate
+// they see is the samples' and not the wall clock's.
+constexpr int kPastMinimumFrameGapMs = 6;
+
+// A sequence number one less than the next, as a radio would repeat it
+// (skipEp6Sequence and skipDdcSequence add, modulo 2^32).
+constexpr quint32 kBackOne = 0xFFFFFFFFu;
+constexpr quint32 kBackThree = 0xFFFFFFFDu;
 
 RadioInfo p1Info(const P1FakeRadio& fake)
 {
@@ -400,6 +424,228 @@ private slots:
                                       QStringLiteral("iq2"), QStringLiteral("iq2")}));
         conn.disconnect();
         fake.stop();
+    }
+
+    // NereusSDR, 2026-10-23: Longpath's trigger (src/core/P1RadioConnection.cpp
+    // :2715 [@383f058], `seq > m_ep6LastSeq + 1`). A repeated frame and a
+    // frame from the past are counted as sequence errors but lose nothing,
+    // so they send no gap; a forward jump afterwards still does.
+    void p1RepeatedOrReorderedFrameSendsNoGap()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QStringList events;
+        QObject ctx;
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &ctx,
+                         [&events](int rx, const QVector<float>&) {
+                             if (rx == 0) { events << QStringLiteral("iq"); }
+                         });
+        QObject::connect(&conn, &RadioConnection::iqSequenceGap, &ctx,
+                         [&events](int rx) {
+                             events << QStringLiteral("gap%1").arg(rx);
+                         });
+        conn.connectToRadio(p1Info(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+
+        fake.sendEp6Frames(3);              // 0, 1, 2
+        fake.skipEp6Sequence(kBackOne);
+        fake.sendEp6Frames(2);              // 2 again, then 3
+        fake.skipEp6Sequence(kBackThree);
+        fake.sendEp6Frames(1);              // 1: from the past
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 6, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap-1")), 0);
+
+        fake.skipEp6Sequence(4);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 7, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap-1")), 1);
+        QCOMPARE(events.at(events.size() - 2), QStringLiteral("gap-1"));
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // NereusSDR, 2026-10-23: Longpath's trigger for Protocol 2
+    // (src/core/P2RadioConnection.cpp:3234 [@383f058], `delta > 0`).
+    void p2RepeatedOrReorderedPacketSendsNoGap()
+    {
+        P2FakeRadio fake;
+        QVERIFY(fake.start());
+        P2RadioConnection conn;
+        conn.setPortBasesForTest(fake.outboundPortBase(), fake.inputRolePortBase());
+        conn.init();
+        QStringList events;
+        QObject ctx;
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &ctx,
+                         [&events](int ddc, const QVector<float>&) {
+                             events << QStringLiteral("iq%1").arg(ddc);
+                         });
+        QObject::connect(&conn, &RadioConnection::iqSequenceGap, &ctx,
+                         [&events](int ddc) {
+                             events << QStringLiteral("gap%1").arg(ddc);
+                         });
+        conn.connectToRadio(fake.radioInfo());
+        QTRY_VERIFY_WITH_TIMEOUT(fake.hasClient(), 3000);
+
+        for (int i = 0; i < 3; ++i) {
+            fake.sendDdc(2);                // 0, 1, 2
+        }
+        fake.skipDdcSequence(kBackOne);
+        fake.sendDdc(2);                    // 2 again
+        fake.sendDdc(2);                    // 3
+        fake.skipDdcSequence(kBackThree);
+        fake.sendDdc(2);                    // 1: from the past
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 6, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap2")), 0);
+
+        fake.skipDdcSequence(3);
+        fake.sendDdc(2);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 7, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap2")), 1);
+        QCOMPARE(events.at(events.size() - 2), QStringLiteral("gap2"));
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // NereusSDR, 2026-10-23: Longpath's throttle
+    // (src/core/P1RadioConnection.cpp:2721-2723 [@383f058]). Two losses
+    // read one after the other, well inside 20 ms, send one gap; a loss
+    // after the throttle has run out sends the next.
+    void twoLossesWithinTheThrottleSendOneGap()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QStringList events;
+        QObject ctx;
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &ctx,
+                         [&events](int rx, const QVector<float>&) {
+                             if (rx == 0) { events << QStringLiteral("iq"); }
+                         });
+        QObject::connect(&conn, &RadioConnection::iqSequenceGap, &ctx,
+                         [&events](int rx) {
+                             events << QStringLiteral("gap%1").arg(rx);
+                         });
+        conn.connectToRadio(p1Info(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+
+        fake.sendEp6Frames(3);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 3, 3000);
+        // Both losses are on the socket before this thread reads either.
+        fake.skipEp6Sequence(4);
+        fake.sendEp6Frames(1);
+        fake.skipEp6Sequence(4);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 5, 3000);
+        QCOMPARE(events, (QStringList{QStringLiteral("iq"), QStringLiteral("iq"),
+                                      QStringLiteral("iq"), QStringLiteral("gap-1"),
+                                      QStringLiteral("iq"), QStringLiteral("iq")}));
+
+        // A lower bound: a busy machine only waits longer.
+        QTest::qWait(static_cast<int>(RadioConnection::kIqSequenceGapMinIntervalMs) + 10);
+        fake.skipEp6Sequence(4);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 6, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap-1")), 2);
+        QCOMPARE(events.at(events.size() - 2), QStringLiteral("gap-1"));
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // NereusSDR, 2026-10-23, JJ's ruling (option a): a link that loses a
+    // packet more often than once a window. Without the stall bound every
+    // gap drops the window before it fills and no frame ever comes out (the
+    // frozen waterfall). With it, a gap after kGapResetStallFrameIntervals
+    // frame intervals with no frame is let through, and frames keep coming
+    // at a steady rate: never more rounds apart than the bound plus one
+    // window takes to pass.
+    void aLossyLinkKeepsProducingFrames()
+    {
+        FFTEngine engine(0);
+        engine.setFftSize(kFftSize);
+        engine.setSampleRate(kBoundRateHz);
+        engine.setOutputFps(kBoundFps);
+        QSignalSpy frames(&engine, &FFTEngine::fftReadyLinear);
+
+        constexpr int kBatchPairs = kFftSize / 2 - 112;   // 400: a gap every 400
+        constexpr int kRounds = 60;
+        constexpr int kMaxRoundsApart =
+            (FFTEngine::kGapResetStallFrameIntervals * kBoundIntervalPairs + kFftSize
+             + kBatchPairs - 1) / kBatchPairs + 1;
+        qint64 first = 0;
+        int lastFrameRound = -1;
+        int longestApart = 0;
+        for (int round = 0; round < kRounds; ++round) {
+            const int before = frames.count();
+            engine.requestWindowReset();
+            engine.feedIQ(tone(first, kBatchPairs));
+            first += kBatchPairs + kGapPairs;
+            if (frames.count() > before) {
+                longestApart = std::max(longestApart, round - lastFrameRound);
+                lastFrameRound = round;
+            }
+            QTest::qWait(kPastMinimumFrameGapMs);
+        }
+        longestApart = std::max(longestApart, kRounds - 1 - lastFrameRound);
+
+        QVERIFY2(frames.count() >= kRounds / kMaxRoundsApart,
+                 qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link")
+                                .arg(frames.count()).arg(kRounds)));
+        QVERIFY2(longestApart <= kMaxRoundsApart,
+                 qPrintable(QStringLiteral("%1 rounds without a frame (bound %2)")
+                                .arg(longestApart).arg(kMaxRoundsApart)));
+        QVERIFY(engine.windowResetsSkipped() > 0);
+        // The gaps the bound did not let through still dropped the window.
+        QVERIFY(engine.windowResets() > 0);
+        QCOMPARE(engine.windowResets() + engine.windowResetsSkipped(),
+                 quint64(kRounds));
+    }
+
+    // NereusSDR, 2026-10-23: the other side of the bound. On a link making
+    // frames at its normal rate, one gap still drops the window as before:
+    // it is counted as a reset, not skipped, and the next round, short of a
+    // window, makes no frame.
+    void aSingleGapOnAHealthyLinkStillDropsTheWindow()
+    {
+        FFTEngine engine(0);
+        engine.setFftSize(kFftSize);
+        engine.setSampleRate(kBoundRateHz);
+        engine.setOutputFps(kBoundFps);
+        QSignalSpy frames(&engine, &FFTEngine::fftReadyLinear);
+
+        qint64 first = 0;
+        engine.feedIQ(tone(first, kFftSize + 1));
+        first += kFftSize + 1;
+        for (int round = 0; round < 4; ++round) {
+            QTest::qWait(kPastMinimumFrameGapMs);
+            engine.feedIQ(tone(first, kBoundIntervalPairs));
+            first += kBoundIntervalPairs;
+        }
+        QCOMPARE(frames.count(), 5);   // one a frame interval
+
+        QTest::qWait(kPastMinimumFrameGapMs);
+        engine.feedIQ(tone(first, kBoundIntervalPairs / 2));
+        first += kBoundIntervalPairs / 2 + kGapPairs;
+        engine.requestWindowReset();
+        engine.feedIQ(tone(first, kBoundIntervalPairs));
+        first += kBoundIntervalPairs;
+        QCOMPARE(engine.windowResets(), quint64(1));
+        QCOMPARE(engine.windowResetsSkipped(), quint64(0));
+        QCOMPARE(frames.count(), 5);   // 800 fresh pairs: short of a window
+
+        // The window fills from the gap on, and its frame is clean.
+        engine.feedIQ(tone(first, kFftSize - kBoundIntervalPairs + 1));
+        QCOMPARE(frames.count(), 6);
+        const double floorDb = floorBelowToneDb(frameBins(frames, 5));
+        QVERIFY2(floorDb < kCleanFloorDb,
+                 qPrintable(QStringLiteral("the frame after a gap has a floor at %1 dB")
+                                .arg(floorDb)));
     }
 };
 

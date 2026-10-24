@@ -862,9 +862,10 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - Each stream's FFT engine drops its window in progress on
 //                RadioModel::iqSequenceGapForStream, queued in order with the
-//                samples (after Longpath MainWindow.cpp:16439-16458
-//                [@383f058], PR 62). J.J. Boyd (KG4VCF), with AI-assisted
-//                transformation via Claude Code.
+//                samples (after Longpath
+//                src/gui/MainWindow.cpp:16439-16458 [@383f058], PR 62).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs

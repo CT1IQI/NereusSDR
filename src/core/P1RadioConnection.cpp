@@ -244,11 +244,12 @@
 //   2026-10-15 - A request cut short names the limit to raise, not the
 //                Core's packages, since the desktop app logs it too. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-22 - An EP6 sequence mismatch emits iqSequenceGap(-1) before the
-//                frame's samples, after Longpath P1RadioConnection.cpp
-//                2715-2727 [@383f058] (PR 62); every mismatch, as AetherSDR
-//                PR 5744 resets. J.J. Boyd (KG4VCF), with AI-assisted
-//                transformation via Claude Code.
+//   2026-10-22 - Lost EP6 frames emit iqSequenceGap(-1) before the frame's
+//                samples, ported from Longpath
+//                src/core/P1RadioConnection.cpp:2715-2727 [@383f058] (PR 62):
+//                forward loss only, at most once per 20 ms
+//                (kIqSequenceGapMinIntervalMs). J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*
@@ -4752,17 +4753,26 @@ void P1RadioConnection::onReadyRead()
                     // frame of a connection has no number before it.
                     m_linkStats.noteSequenced(arrivalUs,
                                               (seqError && m_ep6SeqPrimed) ? 1U : 0U);
-                    // NereusSDR, 2026-10-22, after Longpath PR 62
-                    // (P1RadioConnection.cpp:2715-2727 [@383f058]): the
-                    // same mismatch leaves a jump in every display FFT's
-                    // window. Sent before parseEp6Frame hands this frame's
-                    // samples on, so each engine drops its window first.
-                    // -1: the EP6 frame carries every receiver interleaved.
-                    // Any mismatch, as Thetis counts it, not only a forward
-                    // jump: a repeated or reordered frame breaks the window
-                    // too (AetherSDR PR 5744, a449dee4).
-                    if (seqError && m_ep6SeqPrimed) {
-                        emit iqSequenceGap(-1);
+                    // From Longpath src/core/P1RadioConnection.cpp:2715-2727
+                    // [@383f058] (PR 62). Longpath's m_ep6HaveSeq and
+                    // m_ep6LastSeq are m_ep6SeqPrimed and m_ep6LastRecvSeq
+                    // here; its loss count (m_ep6WndLost, line 2716) is not
+                    // taken, the count above is Thetis's. Sent before
+                    // parseEp6Frame hands this frame's samples on, so each
+                    // engine drops its window first. A repeated or
+                    // reordered frame sends nothing, as in Longpath.
+                    if (m_ep6SeqPrimed && seqnum > m_ep6LastRecvSeq + 1) {
+                        // Das angefangene FFT-Fenster ist jetzt wertlos.
+                        // Gedrosselt, sonst flutet ein schlechter Funkweg die
+                        // Ereignisschlange: ein Fenster dauert bei 768 kHz
+                        // gut 5 ms, 20 ms Abstand verliert also nichts.
+                        const qint64 nowGap = QDateTime::currentMSecsSinceEpoch();
+                        if (nowGap - m_lastGapSignalMs >= kIqSequenceGapMinIntervalMs) {
+                            m_lastGapSignalMs = nowGap;
+                            // -1: die EP6-Folge traegt alle Empfaenger verschachtelt, eine
+                            // Luecke dort trifft wirklich jeden.
+                            emit iqSequenceGap(-1);
+                        }
                     }
                     // NereusSDR-native jitter (RFC 3550 section 6.4.1, see
                     // RadioLinkStats): one ep6 datagram is two 504-byte

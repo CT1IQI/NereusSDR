@@ -33,8 +33,8 @@
 //                 NereusSDR-original synchronization logic.
 //   2026-10-22 - noteIqSequenceGap: an I/Q sequence gap routed through the
 //                 hardware-to-logical map the samples take, after Longpath
-//                 ReceiverManager.cpp:359 [@383f058] (PR 62 follow-up
-//                 7eccc204). J.J. Boyd (KG4VCF), with AI-assisted
+//                 src/core/ReceiverManager.cpp:359 [@383f058] (PR 62
+//                 follow-up 7eccc204). J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Claude Code.
 //   2026-10-22 - I/Q level log in feedIqData (IqLevelMonitor, one line per
 //                 hardware DDC at most every 10 s: RMS and peak dBFS,

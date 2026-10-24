@@ -44,12 +44,19 @@
 //               may set that unkeys on this object's thread and refuses a
 //               key until it is cleared. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
-//   2026-10-22: iqSequenceGap, a lost, repeated or reordered I/Q datagram,
-//               sent before the samples after it, so the display FFTs drop
-//               their window in progress. Idea from Longpath PR 62
-//               (caddf95b) and AetherSDR PR 5744 (a449dee4); no upstream
-//               code. J.J. Boyd (KG4VCF), with AI-assisted transformation
-//               via Claude Code.
+//   2026-10-22: iqSequenceGap, lost I/Q datagrams, sent before the samples
+//               after them, so the display FFTs drop their window in
+//               progress. After Longpath src/core/RadioConnection.h:533-548
+//               [@383f058] (PR 62, caddf95b), which declares the same
+//               signal; AetherSDR PR 5744 (a449dee4) had the idea first.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
+//   2026-10-23: kIqSequenceGapMinIntervalMs, Longpath's 20 ms throttle on
+//               iqSequenceGap, ported from Longpath
+//               src/core/P1RadioConnection.cpp:2717-2722 [@383f058]; the
+//               signal is sent on forward loss only, as Longpath sends it.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -192,6 +199,11 @@ public:
     /// it to this figure (packaging/nereusd-receive-buffer.conf, which
     /// tests/release/test_core_receive_buffer_limit.py holds to it).
     static constexpr int kRadioSocketReceiveBufferBytes = 0x400000;
+    /// The least time between two iqSequenceGap signals from one
+    /// connection. From Longpath src/core/P1RadioConnection.cpp:2717-2722
+    /// and src/core/P2RadioConnection.cpp:3236-3241 [@383f058], where it is
+    /// the literal 20 in `nowGap - m_lastGapSignalMs >= 20`.
+    static constexpr qint64 kIqSequenceGapMinIntervalMs = 20;
     /// The receive buffer the system granted, from the size a socket
     /// reports. Linux doubles a request to leave room for its own
     /// bookkeeping and reports the doubled figure (socket(7), SO_RCVBUF), so
@@ -1041,15 +1053,18 @@ signals:
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
 
-    // A sequence discontinuity in the I/Q datagrams (a lost, repeated or
-    // reordered packet), emitted on the connection thread just before the
-    // samples of the packet that showed it, so it reaches each consumer in
-    // order with those samples. hwReceiverIndex is the hardware receiver
-    // the gap belongs to, as iqDataReceived names it, or -1 for every
-    // receiver (a Protocol 1 EP6 frame carries all of them interleaved).
-    // The display FFTs discard their window in progress on it; the audio
-    // path does not listen. Idea from Longpath PR 62 (caddf95b,
-    // RadioConnection::iqSequenceGap) and AetherSDR PR 5744 (a449dee4).
+    // Lost I/Q datagrams (a forward jump in the sequence number; a repeated
+    // or reordered packet sends nothing), emitted on the connection thread
+    // just before the samples of the packet that showed the loss, so it
+    // reaches each consumer in order with those samples, and at most once
+    // per kIqSequenceGapMinIntervalMs. hwReceiverIndex is the hardware
+    // receiver the gap belongs to, as iqDataReceived names it, or -1 for
+    // every receiver (a Protocol 1 EP6 frame carries all of them
+    // interleaved). The display FFTs discard their window in progress on
+    // it; the audio path does not listen. After Longpath
+    // src/core/RadioConnection.h:533-548 [@383f058] (PR 62, caddf95b),
+    // which declares the same signal with the same meaning of -1; the idea
+    // is AetherSDR PR 5744's (a449dee4).
     void iqSequenceGap(int hwReceiverIndex);
 
     // Bracket one socket drain on the connection thread (Protocol 2's

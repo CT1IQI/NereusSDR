@@ -6,6 +6,10 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23: aLossyLinkKeepsTheCoresSourceMakingFrames: the Core's
+//               spectrum source takes the same bounded gap reset as the
+//               desktop app's engines (JJ's ruling, option a). J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Claude Code.
 //   2026-10-22: An I/Q sequence gap from the radio resets the input of the
 //               sources of its stream only, or of every stream for -1
 //               (after Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
@@ -843,6 +847,7 @@ private slots:
     void aNewStartReplacesTheSessionsHalfOpenPeer();
     void aKeyEdgeResetsEveryActiveSourceOnce();
     void aSequenceGapResetsTheSourcesOfItsStreamOnly();
+    void aLossyLinkKeepsTheCoresSourceMakingFrames();
     void staleRevisionAndWrongEpochPreserveTheActiveSource();
     void streamRemovalRetiresEndpointAndSource();
     void nonoverlappingCropIsRejectedBeforeSourceActivation();
@@ -4161,6 +4166,75 @@ void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
     QCOMPARE(resetsSince(0), quint64{2});
     QCOMPARE(resetsSince(1), quint64{2});
     harness.finish();
+}
+
+// NereusSDR, 2026-10-23, JJ's ruling (option a): the Core's spectrum source
+// on a link that loses a packet more often than once a window. Each gap
+// reaches the engine as in the desktop app (FFTEngine::requestWindowReset)
+// with the same stall bound: without it every gap drops the window before
+// it fills and the source publishes nothing; with it a gap after
+// FFTEngine::kGapResetStallFrameIntervals frame intervals with no frame is
+// let through, and frames keep coming at a steady rate. A 1024 FFT at
+// 48 kHz and 60 frames a second advances 800 pairs a frame.
+void TstDaemonMediaController::aLossyLinkKeepsTheCoresSourceMakingFrames()
+{
+    RadioModel radio;
+    DaemonSpectrumSource source;
+    source.setRadioModel(&radio);
+    const MediaSourceKey key{0, FftTier::Wide};
+    constexpr int kFftSize = 1024;
+    constexpr int kIntervalPairs = 800;
+    DaemonSpectrumSourceConfig config;
+    config.fft.fftSize = kFftSize;
+    config.fft.fps = 60;
+    config.fft.windowType = static_cast<int>(WindowFunction::Hann);
+    config.centreHz = 7100000.0;
+    config.sampleRateHz = 48000.0;
+    config.maxPendingIqFloats = 8192;
+    QVERIFY(source.activate(key, config));
+    QTRY_VERIFY(source.isActive(key));
+
+    constexpr int kBatchPairs = 400;   // a gap every 400 pairs
+    constexpr int kRounds = 60;
+    constexpr int kMaxRoundsApart =
+        (NereusSDR::FFTEngine::kGapResetStallFrameIntervals * kIntervalPairs + kFftSize
+         + kBatchPairs - 1) / kBatchPairs + 1;
+    const QVector<float> batch = syntheticIq(kBatchPairs, 0.125);
+    const quint64 framesBefore = source.publishedFrames(key);
+    quint64 frames = framesBefore;
+    int lastFrameRound = -1;
+    int longestApart = 0;
+    for (int round = 0; round < kRounds; ++round) {
+        const quint64 handoffs = source.completedInputHandoffs(key);
+        emit radio.iqSequenceGapForStream(key.streamIndex);
+        emit radio.rawIqDataForStream(key.streamIndex, batch);
+        QTRY_COMPARE(source.completedInputHandoffs(key), handoffs + 1);
+        // The frame is published on the engine's thread inside the feed,
+        // before the handoff is counted.
+        const quint64 now = source.publishedFrames(key);
+        if (now > frames) {
+            longestApart = std::max(longestApart, round - lastFrameRound);
+            lastFrameRound = round;
+            frames = now;
+        }
+        // Past the engine's 5 ms minimum frame gap (a lower bound).
+        QTest::qWait(6);
+    }
+    longestApart = std::max(longestApart, kRounds - 1 - lastFrameRound);
+
+    const quint64 made = frames - framesBefore;
+    QVERIFY2(made >= quint64(kRounds / kMaxRoundsApart),
+             qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link")
+                            .arg(made).arg(kRounds)));
+    QVERIFY2(longestApart <= kMaxRoundsApart,
+             qPrintable(QStringLiteral("%1 rounds without a frame (bound %2)")
+                            .arg(longestApart).arg(kMaxRoundsApart)));
+    QVERIFY(source.engineWindowResetsSkipped(key) > 0);
+    QVERIFY(source.engineWindowResets(key) > 0);
+    QCOMPARE(source.engineWindowResets(key) + source.engineWindowResetsSkipped(key),
+             quint64(kRounds));
+    // Only a dropped window restarts the input history's clock.
+    QCOMPARE(source.inputHistoryResets(key), source.engineWindowResets(key));
 }
 
 void TstDaemonMediaController::staleRevisionAndWrongEpochPreserveTheActiveSource()

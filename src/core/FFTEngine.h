@@ -39,6 +39,13 @@
 //               entry, so it is not copied; the project-level LICENSE
 //               applies. Ported by J.J. Boyd (KG4VCF), with AI-assisted
 //               transformation via Claude Code.
+//   2026-10-23: NereusSDR-original bound on the stall those resets can
+//               cause: a reset is skipped once the engine has produced no
+//               frame for kGapResetStallFrameIntervals frame intervals
+//               (windowResetsSkipped(), applyPendingWindowReset()). JJ's
+//               ruling (option a) after the frozen waterfall on lossy
+//               Wi-Fi and HL2 links. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -275,6 +282,13 @@ public slots:
     /// tail) is dropped at the next feedIQ(). The callers deliver it on
     /// this engine's thread, queued in order with the samples, so the
     /// flag is always taken by the first batch after the gap.
+    ///
+    /// NereusSDR-original (2026-10-23): the reset is bounded. When the
+    /// engine has produced no frame for kGapResetStallFrameIntervals frame
+    /// intervals, the gap is let through: the window keeps its samples and
+    /// windowResetsSkipped() counts it, so a link that loses packets more
+    /// often than once a window shows a slightly smeared line instead of a
+    /// frozen display.
     void requestWindowReset() { m_windowResetPending.store(true); }
 
     /// Wie oft ein Fenster deshalb verworfen wurde (Diagnose).
@@ -294,6 +308,27 @@ public slots:
     void purgeInputForGeneration(quint64 generation);
 
 public:
+    /// NereusSDR-original (2026-10-23): requested resets let through
+    /// without dropping the window, because the engine had produced no
+    /// frame for kGapResetStallFrameIntervals frame intervals.
+    quint64 windowResetsSkipped() const { return m_windowResetsSkipped.load(); }
+
+    /// NereusSDR-original (2026-10-23). This engine's worker thread only.
+    /// Takes a pending requestWindowReset() now rather than at the next
+    /// feedIQ(), which takes it the same way. Returns true when the window
+    /// was dropped, false when no reset was pending or the stall bound let
+    /// the gap through. The daemon's spectrum source uses the answer to
+    /// restart its sample clock only when the samples really restart.
+    bool applyPendingWindowReset();
+
+    /// NereusSDR-original (2026-10-23): the gap-reset stall bound, in frame
+    /// intervals. NereusSDR's own value: neither Longpath (which resets on
+    /// every throttled gap) nor AetherSDR (which resets on every gap) bounds
+    /// the stall. A frame interval is what paces this engine's output: the
+    /// window advance processFrame() takes, sampleRate / outputFps samples,
+    /// no more than the FFT size unless transforms follow the frame rate.
+    static constexpr int kGapResetStallFrameIntervals = 3;
+
     /// The generation frames are stamped with now. 0 until the first
     /// purgeInputForGeneration() or setInputGeneration().
     quint64 inputGeneration() const { return m_inputGeneration.load(); }
@@ -445,6 +480,13 @@ private:
     // From Longpath src/core/FFTEngine.h:343-344 [@383f058] (PR 62).
     std::atomic<bool>    m_windowResetPending{false};  // von requestWindowReset()
     std::atomic<quint64> m_windowResets{0};            // nur Diagnose
+    // NereusSDR-original (2026-10-23): the stall bound. Resets the bound
+    // let through, and the decimated input pairs (written to the window or
+    // skipped between windows) since the last frame (worker thread only).
+    std::atomic<quint64> m_windowResetsSkipped{0};
+    qint64 m_pairsSinceFrame{0};
+    // The input pairs one frame interval spans (kGapResetStallFrameIntervals).
+    qint64 frameIntervalPairs() const;
 
     // Output rate limiting
     QElapsedTimer m_frameTimer;

@@ -35,9 +35,10 @@
 //                 NereusSDR-original synchronization logic.
 //   2026-10-22 - noteIqSequenceGap / iqSequenceGapForReceiver: an I/Q
 //                 sequence gap routed through the hardware-to-logical map
-//                 the samples take, after Longpath ReceiverManager.cpp:359
-//                 [@383f058] (PR 62 follow-up 7eccc204). J.J. Boyd
-//                 (KG4VCF), with AI-assisted transformation via Claude Code.
+//                 the samples take, after Longpath
+//                 src/core/ReceiverManager.cpp:359 [@383f058] (PR 62
+//                 follow-up 7eccc204). J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
 //   2026-10-22 - I/Q level log (IqLevelMonitor): RMS and peak dBFS per
 //                 hardware DDC at most every 10 s, with its receiver, ADC,
 //                 the ADC overload flag and the DDC map; noteAdcOverflow and
@@ -226,9 +227,10 @@ public:
     // index, or -1 when hwReceiverIndex is -1 (every receiver). A hardware
     // receiver with no logical receiver says nothing: its samples are
     // dropped too. After Longpath ReceiverManager::logischerEmpfaengerFuer
-    // (ReceiverManager.cpp:359 [@383f058]), which MainWindow uses for the
+    // (src/core/ReceiverManager.cpp:359 [@383f058]), which MainWindow uses for the
     // same mapping. NereusSDR, 2026-10-22.
     void noteIqSequenceGap(int hwReceiverIndex);
+
     // An ADC reported an overload (RadioConnection::adcOverflow, any
     // thread); the next I/Q level line says so.
     void noteAdcOverflow(int adc);
