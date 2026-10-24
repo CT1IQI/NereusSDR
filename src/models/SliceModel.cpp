@@ -2424,7 +2424,7 @@ void SliceModel::setRttyShiftHz(int hz)
 
 namespace {
 
-// Porting from Thetis console.cs:18212-18266 [v2.10.3.15] — the CWPitch
+// Porting from Thetis console.cs:18238-18245 and 18256-18263 [v2.10.3.15] — the CWPitch
 // setter's loop body, original C# logic: each CWL/CWU preset keeps its
 // width and is recentered on the pitch; when that would put an edge across
 // zero, the passband slides so the edge sits at zero instead.
@@ -2461,9 +2461,9 @@ void slideCwPresetAtImageLimit(DSPMode mode, int& low, int& high)
 // LSB: negative offsets (passband below carrier)
 // USB: positive offsets (passband above carrier)
 // AM/SAM/DSB: symmetric around carrier
-// CW: centered on cw_pitch (600 Hz from Thetis display.cs:1023)
-// DIGU: centered on digu_click_tune_offset (1500 Hz from Thetis console.cs:14636)
-// DIGL: centered on -digl_click_tune_offset (-2210 Hz from Thetis console.cs:14671)
+// CW: centered on cw_pitch (600 Hz from Thetis display.cs:1029 [v2.10.3.15])
+// DIGU: centered on digu_click_tune_offset (1500 Hz from Thetis console.cs:14658 [v2.10.3.15])
+// DIGL: centered on -digl_click_tune_offset (-2210 Hz from Thetis console.cs:14693 [v2.10.3.15])
 std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
 {
     // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
@@ -2471,18 +2471,20 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
     // Thetis (Setup → Keyboard / DSP → CW pitch slider; default 600 Hz);
     // the dedicated NereusSDR setter lands with Phase 3M-2 CW TX, but the
     // read path needs to be in place now so the filter center moves with
-    // the setting once that UI ships.  Range matches Thetis udCWPitch
-    // (Setup.designer.cs CW pitch up-down: 100..2000 Hz).
+    // the setting once that UI ships.  Thetis's CW pitch range is 200..2250 Hz
+    // (setup.designer.cs:38264-38273 udDSPCWPitch, console.Designer.cs:1378-1388
+    // udCWPitch [v2.10.3.15]); the clamp below still uses 100..2000 and is a
+    // later change.
     //
-    // From Thetis display.cs:1023 [v2.10.3.13] — cw_pitch default 600.
+    // From Thetis display.cs:1029 [v2.10.3.15] — cw_pitch default 600.
     auto& s = AppSettings::instance();
     int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
     if (cwPitch < 100)  { cwPitch = 100;  }
     if (cwPitch > 2000) { cwPitch = 2000; }
     const int kCwPitch = cwPitch;
-    // From Thetis console.cs:14636
+    // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
-    // From Thetis console.cs:14671
+    // From Thetis console.cs:14693 [v2.10.3.15]
     // Upstream inline attribution preserved verbatim:
     //   :14669  //reset preset filter's center frequency - W4TME
     static constexpr int kDiglOffset = 2210;
@@ -2523,7 +2525,7 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         return {-5000, 5000};
     case DSPMode::DIGU:
         // Phase 3J-1 closeout Item 4 (2026-05-12): reverted to Thetis F5
-        // default (kDiguOffset ± 500 = 1000..2000 Hz).  The Phase 3J-1
+        // default (kDiguOffset ± 600 = 900..2100 Hz).  The Phase 3J-1
         // bench fix (commit 624b51c6) widened this to F1 (3 kHz) because
         // setDspMode slammed the default on EVERY mode change, which
         // chopped FT8/FT4 audio when WSJT-X drove band switches via
@@ -2587,20 +2589,20 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
 // d5eb90b4) reached the same finding. Thetis's button names ("1.0k", "800")
 // are not carried here; FilterPresetStore names the slots F1..F10.
 // Returns (low_hz, high_hz) pairs in Thetis F1→F10 order. The full list drives
-// RxApplet's 10-button filter grid; VfoWidget uses commonPresetsForMode() (a subset).
+// RxApplet's 10-button filter grid.
 QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
 {
     // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
     // AppSettings — see defaultFilterForMode() above for the full
-    // rationale.  Default 600 Hz from Thetis display.cs:1023.
+    // rationale.  Default 600 Hz from Thetis display.cs:1029 [v2.10.3.15].
     auto& s = AppSettings::instance();
     int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
     if (cwPitch < 100)  { cwPitch = 100;  }
     if (cwPitch > 2000) { cwPitch = 2000; }
     const int kCwPitch = cwPitch;
-    // From Thetis console.cs:14636 [v2.10.3.13]
+    // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
-    // From Thetis console.cs:14671 [v2.10.3.13]
+    // From Thetis console.cs:14693 [v2.10.3.15]
     // Upstream tags preserved: //W4TME (from cited console.cs:14669) [v2.10.3.15]
     static constexpr int kDiglOffset = 2210;
 
@@ -2724,7 +2726,7 @@ QList<std::pair<int, int>> SliceModel::commonPresetsForMode(DSPMode mode)
     case DSPMode::CWL: {
         // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
         // AppSettings.  See defaultFilterForMode() for the full rationale.
-        // From Thetis display.cs:1023 [v2.10.3.13] — default 600.
+        // From Thetis display.cs:1029 [v2.10.3.15] — default 600.
         auto& s = AppSettings::instance();
         int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
         if (cwPitch < 100)  { cwPitch = 100;  }
