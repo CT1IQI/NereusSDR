@@ -7,8 +7,17 @@
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //
+// Ported from Longpath sources:
+//   src/models/RadioModel.h (setConnectionRateForTest), Longpath banner included below
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - setConnectionRateForTest, a test seam standing in for
+//                connectToRadio()'s write of the connection's sample rate
+//                and active RX count.
+//                Ported from Longpath PR 37 (fd894ded, Martin Fischer
+//                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - setAgcGain / agcGain comment: TCI agc_gain is the AGC-T
 //                (rfGain), after Longpath f1d0c181 (Martin Fischer,
 //                OE5SOS). J.J. Boyd (KG4VCF), with AI-assisted
@@ -694,6 +703,11 @@
 //                noise-reduction calls over 50 ms with the stages that ran,
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - inputSizeMismatchLogLine: the Core log counts I/Q chunks a
+//                slice's channel silenced because their size was not its
+//                WDSP input block, with the sizes the guard saw; info for
+//                up to 100 ms of audio per interval, a warning above. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -746,6 +760,27 @@
 //============================================================================================//
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
+
+// --- From RadioModel.h (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte. The Thetis licence blocks it names are the
+// ones above.
+// =================================================================
+// src/models/RadioModel.h  (Longpath)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
+//                 GPLv3).
+//   2026-09-27 -- cwPitch()/setCwPitch()/cwPitchChanged(int) (Martin
+//                 Fischer, OE5SOS, AI-assisted via Anthropic Claude).
+// =================================================================
 
 #include "core/MoxController.h"
 #include "core/NereusCoreExport.h"
@@ -2295,6 +2330,27 @@ public:
 
     /// The non-finite output line reportDspDiagnostics logs (lcDsp).
     static QString outputNonFiniteLogLine(int sliceIndex, qint64 samples);
+
+    /// 2026-10-23: the line reportDspDiagnostics logs (lcDsp), at most every
+    /// kOutputNonFiniteLogIntervalMs per slice, for I/Q chunks processIq
+    /// silenced because their size was not the channel's WDSP input block
+    /// (RxChannel::takeInputSizeMismatch). chunkSize and wdspInputSize are
+    /// the pair the guard saw, not the channel's block at log time.
+    static QString inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize);
+
+    /// 2026-10-23: the audio silenced chunks stood for, in ms. Every stream
+    /// is drained in chunks of its own block, bufferSizeForRate(rate), which
+    /// is kBufferBaseSize samples at kBufferBaseRate scaled to the rate, so
+    /// each chunk is kBufferBaseSize / kBufferBaseRate s (1.33 ms) whatever
+    /// the rate (SampleRateCatalog.h).
+    static double inputSizeMismatchAudioMs(qint64 chunks);
+
+    /// 2026-10-23: up to this much silenced audio per log interval is the
+    /// expected short window of a slice moving to a stream at another rate
+    /// and logs at info; more means a lasting mismatch and logs a warning.
+    static constexpr double kInputSizeMismatchInfoMaxMs = 100.0;
+    static bool inputSizeMismatchIsLasting(qint64 chunks);
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
@@ -4902,6 +4958,13 @@ public:
     // a fake RadioConnection. Production transitions go through the
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
+    // From Longpath src/models/RadioModel.h:1685-1690 [@383f058]
+    // Stands in for the connectToRadio() write of the wire rate / RX count
+    // so a test can replay the state sequence around it without a radio.
+    void setConnectionRateForTest(int rateHz, int activeRxCount) {
+        m_connectionSampleRateHz = rateHz;
+        m_connectionActiveRxCount = activeRxCount;
+    }
 
     // Test-only: walk the FULL Connected/Disconnected handler so tests
     // can drive the peripherals lifecycle (applyPeripheralsForCurrentMac
@@ -7780,6 +7843,15 @@ private:
         qint64 lastLogMs{-1};
     };
     QHash<int, OutputNonFiniteLog> m_outputNonFiniteLog;
+    // 2026-10-23: the same, for chunks silenced by RxChannel's input-size
+    // guard (pending counts chunks), with the last mismatched pair taken.
+    struct InputSizeMismatchLog {
+        qint64 pending{0};
+        qint64 lastLogMs{-1};
+        int chunkSize{0};
+        int wdspInputSize{0};
+    };
+    QHash<int, InputSizeMismatchLog> m_inputSizeMismatchLog;
     QThread*         m_dspThread{nullptr};
     std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
     int m_waveformTxSlice = -1;
