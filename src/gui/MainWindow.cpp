@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23: A slice placed on a pan only as a marker redraws its marker
+//               when its mode or filter changes (refreshSliceFlags), now that
+//               the pan's overlay is rebuilt only on a change. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -5680,8 +5684,14 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // pan hosting this slice rather than on whichever pan is active.
     hostHooks.modeChanged = [this, slice](DSPMode mode) {
         // The pan's passband and TX mode belong to the pan's VFO, which a
-        // slice placed there only as a marker never takes.
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        // slice placed there only as a marker never takes. Its own marker
+        // (drawn from the flag's filter) still moves.
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             // TX filter overlay maps audio Hz to the right sideband from this.
             host->setTxMode(mode);
@@ -5691,7 +5701,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         }
     };
     hostHooks.filterChanged = [this, slice](int low, int high) {
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             host->setFilterOffset(low, high);
         }

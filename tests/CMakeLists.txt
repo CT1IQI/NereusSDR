@@ -10836,6 +10836,11 @@ nereus_add_test(tst_spectrum_dynamic_overlay_rows)
 # Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
 nereus_add_test(tst_dss_dbm_scale)
 
+# The GPU static overlay (grid, scales, band plan, text) is rebuilt only when
+# something it draws changes: steady local, remote and transmit frames leave
+# it clean, and each audited input marks it. NereusSDR-original.
+nereus_add_test(tst_spectrum_overlay_dirty)
+
 # ── 3D stacked-trace spectrum plan, Task 12: slice shadow decals ─────────
 # Pins buildDssShadowBands(): maps each visible slice's passband (and its
 # own carrier frequency, as the shadow's cue position) into the same [0,1]
