@@ -139,6 +139,17 @@ QString closedBeforeHelloText(SessionTransport* transport, bool closeFrame)
     return words;
 }
 
+// The racer's connections to a transport, and its close-frame note on a
+// WebSocket's socket, dropped when the transport leaves the racer.
+void disconnectTransport(SessionTransport* transport, const QObject* racer)
+{
+    QObject::disconnect(transport, nullptr, racer, nullptr);
+    if (auto* webSocket = qobject_cast<WebSocketTransport*>(transport);
+        webSocket != nullptr && webSocket->socket() != nullptr) {
+        QObject::disconnect(webSocket->socket(), &QWebSocket::aboutToClose, racer, nullptr);
+    }
+}
+
 // For the log only: a rank as its number and its name.
 QString rankText(int rank)
 {
@@ -633,7 +644,7 @@ void PathRacer::onHello(int index, const QByteArray& wire)
             ready.url = direct->url();
         }
         // Handed over: the session's from here.
-        disconnect(entry.transport, nullptr, this, nullptr);
+        disconnectTransport(entry.transport, this);
         entry.transport->setParent(nullptr);
         entry.transport = nullptr;
         qCInfo(lcPathRacer) << "Reached the Core at" << ready.address << "rank" << rank;
@@ -677,7 +688,7 @@ void PathRacer::releaseTransport(Entry& entry, bool close)
     if (transport == nullptr) {
         return;
     }
-    disconnect(transport, nullptr, this, nullptr);
+    disconnectTransport(transport, this);
     if (close) {
         transport->closeLink(QStringLiteral("another path connected first"));
     }
@@ -810,7 +821,7 @@ std::optional<PathRacer::Ready> PathRacer::takeStandby()
         if (const auto* direct = qobject_cast<const DirectPathRung*>(entry->rung.data())) {
             ready.url = direct->url();
         }
-        disconnect(entry->transport, nullptr, this, nullptr);
+        disconnectTransport(entry->transport, this);
         entry->transport->setParent(nullptr);
         entry->transport = nullptr;
         return ready;
