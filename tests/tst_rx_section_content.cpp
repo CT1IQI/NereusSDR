@@ -9,20 +9,36 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-23 - Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - The attenuator and RX1 preamp copies, AUTO AGC and
+//                 Shift-click on a copy, inert previews, the shared face
+//                 defaults. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QLayout>
+#include <QPointer>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QSignalSpy>
+#include <QSpinBox>
+#include <QVBoxLayout>
 
+#include "core/HpsdrModel.h"
+#include "core/P2RadioConnection.h"
+#include "core/StepAttenuatorFacade.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/RxControlSections.h"
 #include "gui/applets/RxSectionContent.h"
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/meters/NereusBandButtonItem.h"
+#include "gui/meters/NereusButtonFace.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -41,6 +57,17 @@ const char* const kTitles[] = {
     "RX Squelch", "RX Attenuator", "RX AGC", "RX RIT", "RX XIT",
 };
 
+QList<QPushButton*> appletPresets(RxApplet& applet)
+{
+    QList<QPushButton*> presets;
+    for (QPushButton* b : applet.findChildren<QPushButton*>()) {
+        if (b->isCheckable() && b->toolTip().contains(QStringLiteral(" Hz to "))) {
+            presets.append(b);
+        }
+    }
+    return presets;
+}
+
 QPushButton* appletSql(RxApplet& applet)
 {
     for (QPushButton* button : applet.findChildren<QPushButton*>()) {
@@ -57,10 +84,6 @@ class TestRxSectionContent : public QObject {
 private slots:
     void initTestCase()
     {
-        if (!qApp) {
-            static int argc = 0;
-            new QApplication(argc, nullptr);
-        }
         WorkspacePreview::setEnabledForTest(true);
     }
 
@@ -268,6 +291,231 @@ private slots:
         QPushButton* own = appletSql(applet);
         QVERIFY(own);
         QVERIFY(own->isChecked());
+    }
+
+    // A copy's RX1 preamp is the applet's own toggle: ticking it in the
+    // copy ticks the applet's box and reaches the radio, and a later
+    // refresh does not put the stale state back.
+    void theRx1PreampCopyIsTheAppletsToggle()
+    {
+        P2RadioConnection connection;
+        connection.setBoardForTest(HPSDRHW::OrionMKII);
+        RadioModel model;
+        model.injectConnectionForTest(&connection);
+        const auto uninject = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &model);
+        applet.setSlice(&slice);
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        applet.setBoardCapabilities(model.boardCapabilities());
+        auto* own = applet.findChild<QCheckBox*>(QStringLiteral("RxRx1PreampToggle"));
+        QVERIFY(own);
+        QVERIFY(!own->isChecked());
+
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAttenuatorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.attenuator")), &host));
+        QVERIFY(copy);
+        QCheckBox* preamp = copy->rx1Preamp();
+        QVERIFY(preamp);
+        QVERIFY(!preamp->isChecked());
+
+        preamp->click();
+        QVERIFY(preamp->isChecked());
+        QVERIFY(own->isChecked());
+        QTRY_VERIFY(([&] {
+            quint8 packet[1444]{};
+            connection.composeCmdHighPriorityForTest(packet);
+            return (packet[1403] & 0x02) != 0;
+        })());
+
+        // Any later refresh of the copies keeps the shared state.
+        slice.setSsqlEnabled(true);
+        QVERIFY(preamp->isChecked());
+
+        own->click();
+        QVERIFY(!own->isChecked());
+        QVERIFY(!preamp->isChecked());
+        QCoreApplication::processEvents();
+        quint8 after[1444]{};
+        connection.composeCmdHighPriorityForTest(after);
+        QCOMPARE(after[1403] & 0x02, 0);
+    }
+
+    // A copy's step attenuator and preamp choice reach the Core through
+    // the applet's own handlers and show on the applet's row.
+    void theAttenuatorCopyEditsThroughTheApplet()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.setBoardForTest(HPSDRHW::Hermes);
+        RxApplet applet(nullptr, &remote);
+        StepAttenuatorFacade* stepAtt = remote.stepAttFacade();
+        QVERIFY(stepAtt);
+        stepAtt->setWindowAvailability(true, QString());
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAttenuatorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.attenuator")), &host));
+        QVERIFY(copy);
+        QComboBox* preamp = copy->preampCombo();
+        QCOMPARE(preamp->count(), applet.preampComboItemCountForTest());
+        QVERIFY(preamp->count() > 5);
+        QVERIFY(preamp->isEnabled());
+
+        preamp->setCurrentIndex(5);
+        QCOMPARE(stepAtt->preampMode(), preamp->itemData(5).toInt());
+        // The Core's echo comes back to the copy through the applet.
+        stepAtt->setPreampMode(preamp->itemData(3).toInt());
+        QCOMPARE(preamp->currentIndex(), 3);
+
+        QSpinBox* spin = copy->stepSpin();
+        QVERIFY(spin);
+        QVERIFY(spin->maximum() >= 10);
+        spin->setValue(10);
+        QCOMPARE(stepAtt->attenuationDbForSlice(0), 10);
+        stepAtt->setAttenuationDb(4);
+        QCOMPARE(spin->value(), 4);
+    }
+
+    void autoAgcOnACopy()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAgcSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.agc")), &host));
+        QVERIFY(copy);
+        QSignalSpy toggled(&applet, &RxApplet::autoAgcToggled);
+        QVERIFY(!slice.autoAgcEnabled());
+
+        copy->autoButton()->click();
+        QCOMPARE(slice.autoAgcEnabled(), true);
+        QCOMPARE(toggled.count(), 1);
+        QCOMPARE(toggled.at(0).at(0).toBool(), true);
+    }
+
+    // Shift-click on a copied preset sets the RX filter and matches the TX
+    // passband, as the applet's own preset does.
+    void shiftClickOnACopiedPreset()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        slice.setDspMode(DSPMode::LSB);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxFilterSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.filter")), &host));
+        QVERIFY(copy);
+        auto* column = new QVBoxLayout(&host);
+        column->addWidget(copy);
+        host.resize(400, 300);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        QVERIFY(copy->buttons().size() > 1);
+        QCOMPARE(copy->buttons().size(), appletPresets(applet).size());
+
+        QPushButton* preset = copy->buttons().at(1);
+        const QString tip = preset->toolTip();
+        TransmitModel& tx = radio.transmitModel();
+        QSignalSpy txFilter(&tx, &TransmitModel::filterChanged);
+        QTest::mouseClick(preset, Qt::LeftButton, Qt::ShiftModifier);
+
+        const int low = slice.filterLow();
+        const int high = slice.filterHigh();
+        QVERIFY2(tip.contains(QStringLiteral(": %1 Hz to %2 Hz").arg(low).arg(high)),
+                 qPrintable(tip));
+        QVERIFY(txFilter.count() > 0);
+        QCOMPARE(tx.filterLow(), qMin(qAbs(low), qAbs(high)));
+        QCOMPARE(tx.filterHigh(), qMax(qAbs(low), qAbs(high)));
+        QVERIFY(preset->isChecked());
+    }
+
+    // A preview (ContentRenderMode::Preview) is inert: it changes nothing,
+    // takes no focus, follows no slice and never rebuilds the applet's own
+    // filter buttons.
+    void aPreviewIsInert()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+
+        const QList<QPushButton*> before = appletPresets(applet);
+        QVERIFY(!before.isEmpty());
+        const QPointer<QPushButton> firstOwn(before.first());
+
+        for (const char* type : kTypes) {
+            QWidget* preview = registry.createWidget(
+                registry.makeEntry(QString::fromLatin1(type)), &host, ContentRenderMode::Preview);
+            QVERIFY2(preview, type);
+            QVERIFY2(!preview->isEnabled(), type);
+            for (QWidget* child : preview->findChildren<QWidget*>()) {
+                QVERIFY2(child->focusPolicy() == Qt::NoFocus, type);
+            }
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(firstOwn);
+        QCOMPARE(appletPresets(applet), before);
+
+        auto* filter = qobject_cast<RxFilterSection*>(registry.createWidget(
+            registry.makeEntry(QStringLiteral("rx.filter")), &host, ContentRenderMode::Preview));
+        QVERIFY(filter);
+        QCOMPARE(filter->buttons().size(), before.size());
+
+        auto* squelch = registry.createWidget(
+            registry.makeEntry(QStringLiteral("rx.squelch")), &host, ContentRenderMode::Preview);
+        auto* sql = squelch->findChild<QPushButton*>(QStringLiteral("RxCopySqlButton"));
+        QVERIFY(sql);
+        QVERIFY(!sql->isChecked());
+        slice.setSsqlEnabled(true);
+        QVERIFY(appletSql(applet)->isChecked());
+        QVERIFY(!sql->isChecked());
+
+        // A preview is not one of the applet's copies: listening does not
+        // touch its tooltip.
+        const QString tipBefore = sql->toolTip();
+        VfoWidget::SliceAccess access;
+        access.state = VfoWidget::SliceAccess::State::Listening;
+        access.heldReason = QStringLiteral("Another device controls this slice");
+        applet.setSliceAccess(access);
+        QCOMPARE(sql->toolTip(), tipBefore);
+    }
+
+    // The band buttons and the RX Filter copy share one set of face
+    // defaults.
+    void theFaceDefaultsHaveOneSource()
+    {
+        NereusBandButtonItem bands;
+        QCOMPARE(bands.buttonTextColor(), QColor(NereusButtonFace::kText));
+        QCOMPARE(bands.backgroundTopColor(), QColor(NereusButtonFace::kRestingTop));
+        QCOMPARE(bands.backgroundBottomColor(), QColor(NereusButtonFace::kRestingBottom));
+        QCOMPARE(bands.selectedTopColor(), QColor(NereusButtonFace::kSelectedTop));
+        QCOMPARE(bands.selectedBottomColor(), QColor(NereusButtonFace::kSelectedBottom));
+
+        RadioModel radio;
+        RxApplet applet(nullptr, &radio);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("rx.filter"));
+        QCOMPARE(properties.size(), 8);
+        QCOMPARE(properties.at(3).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kText));
+        QCOMPARE(properties.at(4).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kRestingTop));
+        QCOMPARE(properties.at(5).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kRestingBottom));
+        QCOMPARE(properties.at(6).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kSelectedTop));
+        QCOMPARE(properties.at(7).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kSelectedBottom));
     }
 };
 

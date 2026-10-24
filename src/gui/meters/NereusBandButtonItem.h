@@ -22,6 +22,9 @@
 //                 AI-assisted via xAI Grok.
 //   2026-10-22 - Corner radius and border match the PureSignal button.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - Default colors from NereusButtonFace.h, shared with the
+//                 RX Filter copy. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -65,6 +68,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "BandButtonItem.h"
+#include "NereusButtonFace.h"
 
 namespace NereusSDR {
 
@@ -97,13 +101,12 @@ private:
     void applyChrome();
     static QColor lighten(const QColor& color);
 
-    // PureSignal raised button: #222227 over #141417.
-    QColor m_textColor{0xdc, 0xdc, 0xe1};
-    QColor m_backgroundTop{0x22, 0x22, 0x27};
-    QColor m_backgroundBottom{0x14, 0x14, 0x17};
-    // PureSignal checked green: raised ends of shiftL(#1c3a2a, +14).
-    QColor m_selectedTop{0x30, 0x62, 0x47};
-    QColor m_selectedBottom{0x1d, 0x3d, 0x2c};
+    // The Nereus button face defaults (NereusButtonFace.h).
+    QColor m_textColor{QColor(NereusButtonFace::kText)};
+    QColor m_backgroundTop{QColor(NereusButtonFace::kRestingTop)};
+    QColor m_backgroundBottom{QColor(NereusButtonFace::kRestingBottom)};
+    QColor m_selectedTop{QColor(NereusButtonFace::kSelectedTop)};
+    QColor m_selectedBottom{QColor(NereusButtonFace::kSelectedBottom)};
 };
 
 } // namespace NereusSDR

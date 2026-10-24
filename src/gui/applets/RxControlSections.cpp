@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - The mode combo takes its items from the applet only;
+//                 Thetis headers byte for byte and the tooltip cites
+//                 stamped at v2.10.3.15. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-23 - RX Filter can hide its width readout and its passband.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-23 - RX applet jobs as container sections. Brian Sutton,
@@ -25,7 +29,7 @@
 // console.cs
 //=================================================================
 // Thetis is a C# implementation of a Software Defined Radio.
-// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2004-2009  FlexRadio Systems 
 // Copyright (C) 2010-2020  Doug Wigley
 // Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
 //
@@ -44,7 +48,7 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to:
+// Paper mail may be sent to: 
 //    FlexRadio Systems
 //    8900 Marybank Dr.
 //    Austin, TX 78750
@@ -52,10 +56,11 @@
 //
 //=================================================================
 // Modifications to support the Behringer Midi controllers
-// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines.
+// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines. 
 // Modifications for using the new database import function.  W2PA, 29 May 2017
-// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019
+// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
 // Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
@@ -69,6 +74,11 @@
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Final modifictions by MW0LGE Richard Samphire - 19th April 2026
+// Nothing further added by him after this date, and his repo is now in archive https://github.com/ramdor/Thetis
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
@@ -98,7 +108,7 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to:
+// Paper mail may be sent to: 
 //    FlexRadio Systems
 //    8900 Marybank Dr.
 //    Austin, TX 78750
@@ -253,7 +263,7 @@ RxAntennasSection::RxAntennasSection(QWidget* parent)
     m_rx = new QPushButton(QStringLiteral("ANT1"), this);
     m_rx->setObjectName(QStringLiteral("RxCopyRxAntButton"));
     raisedMomentary(m_rx);
-    // From Thetis console.resx:8277 — chkRxAnt.ToolTip
+    // From Thetis console.resx:8277 [v2.10.3.15] — chkRxAnt.ToolTip
     m_rx->setToolTip(QStringLiteral("Toggles receive antenna between RX and TX antennas for RX1"));
     m_tx = new QPushButton(QStringLiteral("ANT1"), this);
     m_tx->setObjectName(QStringLiteral("RxCopyTxAntButton"));
@@ -270,20 +280,8 @@ RxModeSection::RxModeSection(QWidget* parent)
     column(this);
     m_combo = new QComboBox(this);
     m_combo->setObjectName(QStringLiteral("RxCopyModeCombo"));
-    m_combo->addItems({
-        QStringLiteral("USB"), QStringLiteral("LSB"),
-        QStringLiteral("CWU"), QStringLiteral("CWL"),
-        QStringLiteral("AM"),  QStringLiteral("SAM"),
-        QStringLiteral("FM"),  QStringLiteral("DSB"),
-        QStringLiteral("DIGU"), QStringLiteral("DIGL"),
-        QStringLiteral("DRM"),
-        QStringLiteral("RADE-U"), QStringLiteral("RADE-L"),
-        QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")
-    });
-    for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
-        m_combo->setItemData(m_combo->findText(name),
-            QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
-    }
+    // The items, their tooltips and the choice come from the applet's own
+    // mode combo (RxApplet::syncCopy).
     workspaceCombo(m_combo);
     m_combo->setToolTip(QStringLiteral("Select operating mode"));
     rows(this)->addWidget(m_combo);
@@ -479,7 +477,7 @@ RxAgcSection::RxAgcSection(QWidget* parent)
         m_combo->addItem(QString::fromLatin1(item.label), item.id);
     }
     workspaceCombo(m_combo);
-    // From Thetis console.resx:4554 — comboAGC.ToolTip
+    // From Thetis console.resx:4554 [v2.10.3.15] — comboAGC.ToolTip
     m_combo->setToolTip(QStringLiteral("Automatic Gain Control Mode Setting"));
     header->addWidget(m_combo);
     auto* name = new QLabel(QStringLiteral("AGC-T"), this);
@@ -494,7 +492,7 @@ RxAgcSection::RxAgcSection(QWidget* parent)
     m_auto->setObjectName(QStringLiteral("RxCopyAgcAuto"));
     m_auto->setCheckable(true);
     raisedButton(m_auto, Style::greenCheckedStyle());
-    // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
+    // From Thetis setup.designer.cs:38795 [v2.10.3.15] — chkAutoAGCRX1.ToolTip
     m_auto->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
     header->addWidget(m_auto);
     rows(this)->addLayout(header);
@@ -505,7 +503,7 @@ RxAgcSection::RxAgcSection(QWidget* parent)
     m_slider->setSingleStep(ControlRanges::kAgcThresholdStepDb);
     m_slider->setValue(-20);
     workspaceSlider(m_slider);
-    // From Thetis console.resx:8397 — ptbRF.ToolTip (ptbRF is the AGC-T slider)
+    // From Thetis console.resx:8397 [v2.10.3.15] — ptbRF.ToolTip (ptbRF is the AGC-T slider)
     m_slider->setToolTip(QStringLiteral(
         "AGC Max Gain - Operates similarly to traditional RF Gain. Right click AUTO based on noise floor."));
     rows(this)->addWidget(m_slider);
@@ -527,7 +525,7 @@ RxRitSection::RxRitSection(QWidget* parent)
     m_on->setObjectName(QStringLiteral("RxCopyRitOn"));
     m_on->setCheckable(true);
     raisedButton(m_on, Style::amberCheckedStyle());
-    // From Thetis console.resx:4335 — chkRIT.ToolTip
+    // From Thetis console.resx:4335 [v2.10.3.15] — chkRIT.ToolTip
     m_on->setToolTip(QStringLiteral(
         "Receive Incremental Tuning - offset RX frequency by value below in Hz."));
     row->addWidget(m_on, 1);
@@ -558,7 +556,7 @@ RxXitSection::RxXitSection(QWidget* parent)
     m_on->setObjectName(QStringLiteral("RxCopyXitOn"));
     m_on->setCheckable(true);
     raisedButton(m_on, Style::amberCheckedStyle());
-    // From Thetis console.resx:4416 — chkXIT.ToolTip
+    // From Thetis console.resx:4416 [v2.10.3.15] — chkXIT.ToolTip
     m_on->setToolTip(QStringLiteral(
         "Transmit Incremental Tuning - offset TX frequency by the value below in Hz."));
     row->addWidget(m_on, 1);

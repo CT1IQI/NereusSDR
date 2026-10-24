@@ -16,6 +16,9 @@
 //                 AI-assisted via xAI Grok.
 //   2026-10-22 - Corner radius and border match the PureSignal button.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - Default colors from NereusButtonFace.h, shared with the
+//                 RX Filter copy. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -83,13 +86,6 @@ QColor shifted(const QColor& color, int delta)
     return QColor(Workspace::shiftL(color, delta));
 }
 
-// The checked PureSignal button (Auto, 2-Tone): raisedFill of the lit green.
-QColor selectedStop(int extraLift)
-{
-    const QColor base = shifted(fromHex(Workspace::kGreenBg), 14);
-    return shifted(base, extraLift);
-}
-
 // Same radius rule as the PureSignal button: round(height * 7 / 26).
 qreal pureSignalRadius(const QRectF& rect)
 {
@@ -126,8 +122,6 @@ void strokeRoundedBorder(QPainter& painter, const QRectF& box, qreal radius,
 NereusBandButtonItem::NereusBandButtonItem(QObject* parent)
     : BandButtonItem(parent)
 {
-    m_selectedTop = selectedStop(16);
-    m_selectedBottom = selectedStop(-12);
     applyChrome();
 }
 

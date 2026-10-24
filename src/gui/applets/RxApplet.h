@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Review fixes for the container copies: a preview copy
+//                 is inert; the section classes are forward-declared.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - The RX applet's jobs as container copies. The applet's
 //                 own panel is unchanged; the applet wires each copy.
 //                 Brian Sutton, AI-assisted via xAI Grok.
@@ -153,8 +156,6 @@
 #include "models/Band.h"
 #include "gui/NereusGuiExport.h"
 
-#include "gui/applets/RxControlSections.h"
-
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
@@ -186,6 +187,16 @@ enum class HPSDRModel : int;
 class FilterPassbandWidget;
 class PanadapterModel;
 class SliceModel;
+class RxAntennasSection;
+class RxModeSection;
+class RxStepSection;
+class RxFilterSection;
+class RxPanSection;
+class RxSquelchSection;
+class RxAttenuatorSection;
+class RxAgcSection;
+class RxRitSection;
+class RxXitSection;
 
 // RxApplet — per-slice RX controls applet.
 //
@@ -219,16 +230,20 @@ public:
 
     // Container copies of this applet's jobs. The applet makes and wires
     // each one. The panel above is not rebuilt from these objects.
-    QWidget* createAntennasSection(QWidget* parent);
-    QWidget* createModeSection(QWidget* parent);
-    QWidget* createStepSection(QWidget* parent);
-    QWidget* createFilterSection(QWidget* parent, const QJsonObject& config = {});
-    QWidget* createPanSection(QWidget* parent);
-    QWidget* createSquelchSection(QWidget* parent);
-    QWidget* createAttenuatorSection(QWidget* parent);
-    QWidget* createAgcSection(QWidget* parent);
-    QWidget* createRitSection(QWidget* parent);
-    QWidget* createXitSection(QWidget* parent);
+    // With `preview` (a container's ContentRenderMode::Preview) the copy
+    // shows the applet's state once and is inert: not wired, not one of
+    // the applet's copies, following no slice.
+    QWidget* createAntennasSection(QWidget* parent, bool preview = false);
+    QWidget* createModeSection(QWidget* parent, bool preview = false);
+    QWidget* createStepSection(QWidget* parent, bool preview = false);
+    QWidget* createFilterSection(QWidget* parent, const QJsonObject& config = {},
+                                 bool preview = false);
+    QWidget* createPanSection(QWidget* parent, bool preview = false);
+    QWidget* createSquelchSection(QWidget* parent, bool preview = false);
+    QWidget* createAttenuatorSection(QWidget* parent, bool preview = false);
+    QWidget* createAgcSection(QWidget* parent, bool preview = false);
+    QWidget* createRitSection(QWidget* parent, bool preview = false);
+    QWidget* createXitSection(QWidget* parent, bool preview = false);
 
     // Attach to a different slice (or nullptr to detach).
     void setSlice(SliceModel* slice);
@@ -353,7 +368,14 @@ private:
     void disconnectSlice(SliceModel* s);
     void updateFilterLabel();
     void rebuildFilterButtons(DSPMode mode);
-    void fillWorkspaceFilterButtons(RxFilterSection* section, DSPMode mode);
+    // A copy's preset buttons from the applet's current presets; `wire`
+    // false (a preview) leaves them inert.
+    void fillWorkspaceFilterButtons(RxFilterSection* section, DSPMode mode, bool wire = true);
+    // One preset button's click and edit/reset menu, shared by the
+    // applet's own row and its copies.
+    void wireFilterPresetButton(QPushButton* btn, int slot, int low, int high, DSPMode mode);
+    // The mode m_filterPresets was last built for.
+    DSPMode m_filterPresetsMode = DSPMode::USB;
     void updateFilterButtons();
     void applyFilterPreset(int low, int high);
 
@@ -403,6 +425,32 @@ private:
     void wireAgcSection(RxAgcSection* section);
     void wireRitSection(RxRitSection* section);
     void wireXitSection(RxXitSection* section);
+    void wireCopy(RxAntennasSection* section);
+    void wireCopy(RxModeSection* section);
+    void wireCopy(RxStepSection* section);
+    void wireCopy(RxFilterSection* section);
+    void wireCopy(RxPanSection* section);
+    void wireCopy(RxSquelchSection* section);
+    void wireCopy(RxAttenuatorSection* section);
+    void wireCopy(RxAgcSection* section);
+    void wireCopy(RxRitSection* section);
+    void wireCopy(RxXitSection* section);
+    // The applet's state onto one copy (the caller holds the echo guards).
+    void syncCopy(RxAntennasSection* section);
+    void syncCopy(RxModeSection* section);
+    void syncCopy(RxStepSection* section);
+    void syncCopy(RxFilterSection* section);
+    void syncCopy(RxPanSection* section);
+    void syncCopy(RxSquelchSection* section);
+    void syncCopy(RxAttenuatorSection* section);
+    void syncCopy(RxAgcSection* section);
+    void syncCopy(RxRitSection* section);
+    void syncCopy(RxXitSection* section);
+    template <typename Section> void showStateOn(Section* section);
+    template <typename Section>
+    void trackCopy(QList<QPointer<Section>>& copies, Section* section);
+    template <typename Section>
+    Section* finishCopy(Section* section, QList<QPointer<Section>>& copies, bool preview);
     void onRx1PreampToggled(bool on);
     bool m_pushingCopies = false;
     QList<QPointer<RxAntennasSection>> m_antennaCopies;

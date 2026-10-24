@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: A remote window's slice access changes reach the container
+//               instruments (sliceAccessChanged, watchSliceAccess). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23: A slice placed on a pan only as a marker redraws its marker
 //               when its mode or filter changes (refreshSliceFlags), now that
 //               the pan's overlay is rebuilt only on a change. J.J. Boyd
@@ -4409,6 +4412,10 @@ void MainWindow::ensureRemoteSession()
                 // A marker's owner words come from the access entry.
                 refreshForeignMarkers();
             });
+            // A container instrument that follows the window's slice asks
+            // for it again (LongpathContent::Sources::watchSliceAccess).
+            connect(access, &SliceAccessMirror::changed,
+                    this, &MainWindow::sliceAccessChanged);
         }
         if (RemoteDevicesState* devices = m_stationClient->remoteDevices()) {
             connect(devices, &RemoteDevicesState::markersChanged, this,
@@ -11698,6 +11705,13 @@ void MainWindow::populateDefaultMeter()
                 windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId());
         };
         sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
+        // A remote window finds its slice through the Core's slice access,
+        // which arrives after the snapshot's slices; the instruments rebind
+        // on it. The station client comes later than these instruments.
+        sources.watchSliceAccess = [this](QObject* context, std::function<void()> changed) {
+            connect(this, &MainWindow::sliceAccessChanged, context,
+                    [changed = std::move(changed)](int) { changed(); });
+        };
         LongpathContent::registerAll(*registry, sources);
         SMeterDialContent::registerDial(*registry, sources);
         // The TX applet's rows as independent container content, so a

@@ -74,6 +74,10 @@
 //                 not emit activeSliceChanged when the slice is already
 //                 active, so the frequency stayed on the empty reading.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - The slice follower also rebinds when a remote window's
+//                 slice access changes (Sources::watchSliceAccess), so a
+//                 remote window's frequency shows its digits too.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -141,6 +145,10 @@ QString sliceLabel(const SliceModel* slice)
 // ask for the slice again on SliceOwnership::activeChanged, or it stays
 // on the empty reading. activeRxChanged covers a receive-focus move that
 // does not change which slice is active.
+//
+// A remote window does not keep its own SliceOwnership. It finds its
+// slice through the Core's slice access, whose entries arrive after the
+// snapshot's slices, so it rebinds on that access too (watchSliceAccess).
 class SliceFollower : public QObject {
 public:
     SliceFollower(QWidget* owner, const Sources& sources, QJsonObject context)
@@ -162,6 +170,9 @@ public:
                 connect(ownership, &SliceOwnership::activeRxChanged, this,
                         [this](const QByteArray&) { rebind(); });
             }
+        }
+        if (m_sources.watchSliceAccess) {
+            m_sources.watchSliceAccess(this, [this] { rebind(); });
         }
         rebind();
     }

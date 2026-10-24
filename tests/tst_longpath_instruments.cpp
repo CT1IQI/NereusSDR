@@ -32,6 +32,8 @@
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-23 - frequencyShowsAfterTheStationAdoptsTheSlice. Brian Sutton,
 //                 AI-assisted via xAI Grok.
+//   2026-10-24 - frequencyShowsWhenRemoteSliceAccessArrives. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -625,6 +627,44 @@ private slots:
         QCOMPARE(model.sliceOwnership()->mark(slice->sliceIndex()).owner, station);
         QCOMPARE(freq->frequency(), 14225000.0);
 
+        slice->setFrequency(7240000.0);
+        QCOMPARE(freq->frequency(), 7240000.0);
+    }
+
+    void frequencyShowsWhenRemoteSliceAccessArrives()
+    {
+        // A remote window: the snapshot's slice arrives first, and the
+        // window finds its slice only once the Core's slice access entry
+        // for it is in (SliceAccessMirror::changed). No RadioModel or
+        // SliceOwnership signal fires then, so the instrument follows the
+        // access change through Sources::watchSliceAccess.
+        RadioModel model;
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 1);
+        SliceModel* slice = model.slices().at(0);
+        bool accessIn = false;
+        QObject access;  // objectNameChanged stands in for SliceAccessMirror::changed
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [&accessIn, slice](const QJsonObject&) -> SliceModel* {
+            return accessIn ? slice : nullptr;
+        };
+        sources.watchSliceAccess = [&access](QObject* context, std::function<void()> changed) {
+            QObject::connect(&access, &QObject::objectNameChanged, context,
+                             [changed = std::move(changed)](const QString&) { changed(); });
+        };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        QCOMPARE(freq->frequency(), 0.0);
+
+        accessIn = true;
+        access.setObjectName(QStringLiteral("entry for slice 0"));
+        QCOMPARE(freq->frequency(), 14225000.0);
         slice->setFrequency(7240000.0);
         QCOMPARE(freq->frequency(), 7240000.0);
     }

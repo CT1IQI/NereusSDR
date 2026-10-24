@@ -16,6 +16,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - The RX Filter face defaults come from NereusButtonFace.h;
+//                 the mode list comes from the applet only; Thetis headers
+//                 byte for byte at v2.10.3.15. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - RX Filter can hide its width readout and its passband.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-23 - RX applet jobs as container sections. Brian Sutton,
@@ -26,7 +30,7 @@
 // console.cs
 //=================================================================
 // Thetis is a C# implementation of a Software Defined Radio.
-// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2004-2009  FlexRadio Systems 
 // Copyright (C) 2010-2020  Doug Wigley
 // Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
 //
@@ -45,7 +49,7 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to:
+// Paper mail may be sent to: 
 //    FlexRadio Systems
 //    8900 Marybank Dr.
 //    Austin, TX 78750
@@ -53,10 +57,11 @@
 //
 //=================================================================
 // Modifications to support the Behringer Midi controllers
-// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines.
+// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines. 
 // Modifications for using the new database import function.  W2PA, 29 May 2017
-// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019
+// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
 // Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
@@ -70,6 +75,11 @@
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Final modifictions by MW0LGE Richard Samphire - 19th April 2026
+// Nothing further added by him after this date, and his repo is now in archive https://github.com/ramdor/Thetis
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
@@ -99,7 +109,7 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to:
+// Paper mail may be sent to: 
 //    FlexRadio Systems
 //    8900 Marybank Dr.
 //    Austin, TX 78750
@@ -134,6 +144,7 @@
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
 
 #include "gui/NereusGuiExport.h"
+#include "gui/meters/NereusButtonFace.h"
 
 #include <QColor>
 #include <QJsonObject>
@@ -216,13 +227,12 @@ private:
     QVector<QPushButton*> m_buttons;
     FilterPassbandWidget* m_passband = nullptr;
     int m_columns = 3;
-    // Nereus band button defaults: text #dcdce1, resting #222227 over
-    // #141417, selected #306247 over #1d3d2c.
-    QColor m_textColor{0xdc, 0xdc, 0xe1};
-    QColor m_backgroundTop{0x22, 0x22, 0x27};
-    QColor m_backgroundBottom{0x14, 0x14, 0x17};
-    QColor m_selectedTop{0x30, 0x62, 0x47};
-    QColor m_selectedBottom{0x1d, 0x3d, 0x2c};
+    // The Nereus band button defaults (NereusButtonFace.h).
+    QColor m_textColor{QColor(NereusButtonFace::kText)};
+    QColor m_backgroundTop{QColor(NereusButtonFace::kRestingTop)};
+    QColor m_backgroundBottom{QColor(NereusButtonFace::kRestingBottom)};
+    QColor m_selectedTop{QColor(NereusButtonFace::kSelectedTop)};
+    QColor m_selectedBottom{QColor(NereusButtonFace::kSelectedBottom)};
 };
 
 class NEREUS_GUI_EXPORT RxPanSection : public QWidget {
