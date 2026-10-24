@@ -800,6 +800,12 @@ nereus_add_test(tst_rotator_item_drag)
 # RotorDialWidget): the mockup's states, the hold dead man, turn on release,
 # Stop the only red control. A fake command sink; no rotor.
 nereus_add_test(tst_rotor_applet)
+# Longpath bug-fix ports (2026-10-22): right-click and drop-down menus are
+# no longer built on the stack. ScopedChildWidget (after Longpath's, which
+# came from AetherSDR) frees a menu once whether its scope or its dying
+# parent ends it; two cases close a real widget's window while its menu is
+# open, which freed the stack menu twice before.
+nereus_add_test(tst_scoped_child_widget)
 nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──

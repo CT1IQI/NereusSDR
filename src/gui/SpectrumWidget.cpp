@@ -399,6 +399,11 @@
 //                 change, hands it to the pan menu, and setCtunEnabled then
 //                 changes neither the pan nor its saved setting. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 // =================================================================
@@ -548,6 +553,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "SpectrumWidget.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/PureSignalViewStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
@@ -13271,9 +13277,14 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         if (my < specH && mx <= specRect.right()) {
             const int hitNotch = notchAtPixel(mx, specRect);
             if (hitNotch >= 0) {
-                QMenu menu(this);
+                // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+                ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+                QMenu& menu = *menuOwner.get();
                 buildNotchContextMenu(hitNotch, menu);
                 menu.exec(event->globalPosition().toPoint());
+                // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+                // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+                if (!menuOwner) { return; }
                 event->accept();
                 return;
             }
@@ -13306,9 +13317,14 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             if (hitMarkerIdx >= 0 && hitMarkerIdx < m_spotMarkers.size()) {
                 // Rotor control plan Task 8: the menu is built by
                 // buildSpotContextMenu, so a test can read it.
-                QMenu menu(this);
+                // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+                ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+                QMenu& menu = *menuOwner.get();
                 buildSpotContextMenu(hitMarkerIdx, menu);
                 menu.exec(event->globalPosition().toPoint());
+                // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+                // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+                if (!menuOwner) { return; }
                 event->accept();
                 return;
             }
