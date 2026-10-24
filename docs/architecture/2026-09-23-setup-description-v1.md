@@ -1404,9 +1404,12 @@ row is: `kind:"toggle"`, `binding:{"setting":"LimitFiltersToSidebands"}`,
 Core applies it to every slice when a window's write lands in its settings,
 the same path the desktop box uses. A Core that refuses the write hands back
 its own value and reason as for any setting row. The Core sends only the
-settings it has stored, so a Core on which the box was never changed has no
-value to send and the row shows the missing-value reason until one is
-written from the desktop. A V3 to V29 peer receives General at version 3
+settings it has stored, with one exception for this key: a Core that never
+stored `LimitFiltersToSidebands` (a headless Core, or one whose box was
+never changed) still applies RadioModel's default, off, to its slices, so
+its settings snapshot carries `LimitFiltersToSidebands` `"False"` to every
+session and the row is live and off. A stored value is sent as stored; no
+other unstored setting is added to the snapshot. A V3 to V29 peer receives General at version 3
 exactly as before, without the page. This version adds no mirror field,
 ordinal, verb or capability; the Core caps a declaration at 30.
 

@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
+//               effective value (RadioModel's default, False) when the Core
+//               never stored it, so a headless Core's phone row is live.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Setup description cap 30, General > Filters' Limit filter
 //               edges to sidebands row. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -7930,8 +7934,19 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
     // radio therefore needs a fresh snapshot even though the mirror objects
     // already exist on the GUI; SettingsProxy merges this authoritative scope
     // into its in-memory cache without touching local GUI storage.
-    const QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
+    QMap<QString, QString> snapshot = m_settingsServer->buildSnapshot(
         m_radioModel.isNull() ? QString() : m_radioModel->currentRadioMac());
+    // General > Filters' Limit filter edges to sidebands: a Core that never
+    // stored the setting (a headless Core with no desktop window) still
+    // applies RadioModel's default to its slices, so the snapshot carries
+    // that effective value and a phone's row reads it instead of showing
+    // no value. Only this key; every other unstored setting stays absent.
+    const QString limitFiltersKey = QLatin1String(RadioModel::kLimitFiltersToSidebandsKey);
+    if (!snapshot.contains(limitFiltersKey)) {
+        snapshot.insert(limitFiltersKey, RadioModel::kLimitFiltersToSidebandsDefault
+                                             ? QStringLiteral("True")
+                                             : QStringLiteral("False"));
+    }
     QList<MirrorUpdate> entries;
     entries.reserve(snapshot.size());
     for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {

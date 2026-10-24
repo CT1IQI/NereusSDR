@@ -4,10 +4,14 @@
 // 2026-10-24: General V30's Limit filter edges to sidebands row: its value,
 //   an edit's round trip, a refusal and a Core that never stored the key.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: a fresh Core's snapshot (read from the conformance fixture the
+//   Core is checked against) gives the row its effective value, off, and the
+//   row is live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
 import LinkSessionTestSupport
+import LinkTestSupport
 import NereusLink
 import Testing
 @testable import NereusMirror
@@ -626,8 +630,46 @@ private final class PhoneKeys: SetupPhoneKeys {
         #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
     }
 
-    /// A Core that never stored the key sends no value for it: the row is
-    /// shown, disabled with the missing-value reason, and sends nothing.
+    /// The settings snapshot a fresh Core sends, as the conformance suite
+    /// records it (the Core's own session run is checked against this file).
+    static func freshCoreSettings() throws -> [String: String] {
+        let url = LinkFixtureLoader.root.appendingPathComponent("sessions/settings-write.json")
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let steps = try #require(object["steps"] as? [[String: Any]])
+        let snapshot = try #require(steps.lazy.compactMap { $0["message"] as? [String: Any] }
+            .first { $0["type"] as? String == "settings.snapshot" })
+        let properties = try #require(snapshot["properties"] as? [[String: Any]])
+        var settings: [String: String] = [:]
+        for property in properties {
+            settings[try #require(property["name"] as? String)] = try #require(property["value"] as? String)
+        }
+        return settings
+    }
+
+    /// A Core that never stored the key (a headless Core) still sends its
+    /// effective value, off: the row is live and off, and a toggle writes True.
+    @Test func generalV30LimitFilterEdgesRowOnAFreshCoreIsLiveAndOff() async throws {
+        let fresh = try Self.freshCoreSettings()
+        #expect(fresh[Self.limitKey] == "False")
+        let rig = Rig()
+        await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30, extraSettings: fresh)
+        let row = try Self.limitRow(rig)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(false), editable: true, reason: nil))
+
+        let writing = Task { await rig.dispatcher.edit(row, in: "general", to: .bool(true)) }
+        try #require(await rig.route.waitForCount(1, unless: writing))
+        guard case .settingsWrite(let write) = rig.route.sent[0].message else {
+            Issue.record("no settings write"); return
+        }
+        #expect(write.key == Self.limitKey && write.properties.first?.value == .utf8("True"))
+        rig.settings.apply(.settingsValue(.init(key: write.key, origin: write.origin, properties: write.properties)))
+        #expect(await writing.value == .applied)
+        #expect(rig.dispatcher.state(of: row, in: "general") == .init(value: .bool(true), editable: true, reason: nil))
+    }
+
+    /// A Core that sends no value for the key (one built before its snapshot
+    /// carried it): the row is shown, disabled with the missing-value
+    /// reason, and sends nothing.
     @Test func generalV30LimitFilterEdgesRowWithoutAStoredValueIsDisabledWithAReason() async throws {
         let rig = Rig()
         await rig.connect(session: 1, general: try Self.liveGeneral(), setupDescription: 30)

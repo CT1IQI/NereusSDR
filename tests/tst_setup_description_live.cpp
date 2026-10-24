@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original live-apply checks for described settings.
+// 2026-10-24: a Core that never stored LimitFiltersToSidebands sends its
+// effective value, False, in the settings snapshot; a stored value is sent
+// as stored. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-24: the cap is 30; a version 30 phone reads and writes General >
 // Filters' Limit filter edges to sidebands. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
@@ -869,6 +872,52 @@ private slots:
             SessionMessages::settingsWrite(key, QStringLiteral("True"), QStringLiteral("phone"))));
         QTRY_COMPARE(core.settings->value(key).toString(), QStringLiteral("True"));
         QTRY_VERIFY(core.model->limitFiltersToSidebands());
+    }
+
+    // A headless Core never stores LimitFiltersToSidebands, yet applies
+    // RadioModel's default to its slices: the settings snapshot carries that
+    // effective value, False, so a phone's row is live. A stored value goes
+    // as stored, and other unstored settings stay out of the snapshot.
+    void freshCoreSendsLimitFilterEdgesEffectiveValue()
+    {
+        const QString key = QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey);
+        const auto snapshotOf = [](LoopbackTransport* peer) {
+            QMap<QString, QString> settings;
+            for (const QByteArray& wire : peer->received()) {
+                SessionMessage message;
+                if (SessionMessages::decode(wire, &message)
+                    && message.kind == SessionMessageKind::SettingsSnapshot) {
+                    settings.clear();
+                    for (const MirrorUpdate& update : message.updates) {
+                        settings.insert(QString::fromUtf8(update.name), update.value.toString());
+                    }
+                }
+            }
+            return settings;
+        };
+        QHash<QByteArray, int> v30 = kHolder;
+        v30.insert("setupDescription", 30);
+        {
+            Core core;
+            Device phone(QStringLiteral("Fresh Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            QVERIFY(!core.settings->contains(key));
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            const QMap<QString, QString> settings = snapshotOf(app);
+            QCOMPARE(settings.value(key), QStringLiteral("False"));
+            QVERIFY(!settings.contains(QStringLiteral("DisableHfPa")));
+            QVERIFY(!core.settings->contains(key));
+        }
+        {
+            Core core;
+            core.settings->setValue(key, QStringLiteral("True"));
+            Device phone(QStringLiteral("Stored Core iPhone"), QStringLiteral("phone"));
+            core.pair(phone);
+            auto* app = core.signIn(phone, v30);
+            QVERIFY(admitted(app));
+            QCOMPARE(snapshotOf(app).value(key), QStringLiteral("True"));
+        }
     }
 
     // Version 24 (radio codec lane): on the HL2 Core a version 24 phone
