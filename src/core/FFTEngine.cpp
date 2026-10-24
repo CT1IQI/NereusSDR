@@ -53,6 +53,13 @@
 //               i): a lossy link keeps its full frame rate with a slight
 //               smear. J.J. Boyd (KG4VCF), with AI-assisted implementation
 //               via Claude Code.
+//   2026-10-24: JJ's ruling (option c) replaces that one-window rule
+//               (m_lettingGapsThrough is gone): a gap less than
+//               kGapLossyLinkWindows windows after the last gap of any kind
+//               is let through once a frame has come since the last reset
+//               (m_pairsSinceGap, m_refillingAfterReset), so gaps one to
+//               four windows apart no longer crawl. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -381,11 +388,9 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
         // the gap-reset stall bound; skipped pairs count too, as they pass
         // in time between frames.
         ++m_pairsSinceFrame;
-        // NereusSDR-original (2026-10-24), option i: a whole window with no
-        // gap ends the run of gaps let through.
-        if (m_lettingGapsThrough && ++m_pairsSinceGap >= m_currentFftSize) {
-            m_lettingGapsThrough = false;
-        }
+        // NereusSDR-original (2026-10-24), option c: input since the last
+        // gap, for the lossy-link rule.
+        ++m_pairsSinceGap;
         if (m_skipPending > 0) {
             // Between two transforms' windows: not analysed.
             --m_skipPending;
@@ -448,21 +453,26 @@ bool FFTEngine::applyPendingWindowReset()
     // frame. After kGapResetStallFrameIntervals frame intervals with no
     // frame, the gap is let through: the window keeps what it has, and the
     // next frame shows a slightly smeared line instead.
-    // 2026-10-24, JJ's ruling (option i): from then on every gap is let
-    // through until a whole window of samples passes with no gap (counted
-    // in feedIQ), so a lossy link keeps its normal frame rate, each frame
-    // slightly smeared. On a healthy link a single gap still drops the
-    // window below.
-    if (m_lettingGapsThrough
-        || m_pairsSinceFrame
-            >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs()) {
-        m_lettingGapsThrough = true;
-        m_pairsSinceGap = 0;
+    // 2026-10-24, JJ's ruling (option c): a link that lost a packet within
+    // the last kGapLossyLinkWindows windows (counted in feedIQ from the
+    // last gap, let through or reset) is lossy, and its gap is let through
+    // too, so gaps up to that many windows apart keep the normal frame
+    // rate, each frame slightly smeared. While the window refills after a
+    // reset, with no frame since, the stall bound alone decides. On a
+    // healthy link a single gap still drops the window below.
+    const bool lossyLink = !m_refillingAfterReset
+        && m_pairsSinceGap
+            < static_cast<qint64>(kGapLossyLinkWindows) * m_currentFftSize;
+    const bool stalled = m_pairsSinceFrame
+        >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs();
+    m_pairsSinceGap = 0;
+    if (lossyLink || stalled) {
         m_windowResetsSkipped.fetch_add(1);
         return false;
     }
     // From Longpath src/core/FFTEngine.cpp:246-249 [@383f058] (PR 62).
     m_iqWritePos = 0;
+    m_refillingAfterReset = true;
     m_windowResets.fetch_add(1);
     return true;
 }
@@ -852,6 +862,9 @@ void FFTEngine::processFrame()
     // NereusSDR-original (2026-10-23): the gap-reset stall bound counts
     // from here.
     m_pairsSinceFrame = 0;
+    // NereusSDR-original (2026-10-24, option c): a frame after a reset ends
+    // the refill, so the lossy-link rule applies again.
+    m_refillingAfterReset = false;
 
     // Emit both signals in lock-step.  fftReady serves chrome / AGC
     // consumers that need full-band dBm (ClarityController, NoiseFloorTracker);

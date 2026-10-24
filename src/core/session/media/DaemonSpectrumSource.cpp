@@ -42,6 +42,10 @@
 // on a lossy link until a whole window passes with none (JJ's ruling,
 // option i). J.J. Boyd (KG4VCF), with AI-assisted implementation via
 // Claude Code.
+// 2026-10-24: the engine's rule is now option c (JJ's ruling): a gap
+// within four windows of the last one is let through once a frame has
+// come since the last reset; the drain's comment says so. J.J. Boyd
+// (KG4VCF), with AI-assisted implementation via Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -744,10 +748,12 @@ void DaemonSpectrumSource::drainInput(FFTEngine* engine,
     // when the engine thread lags). The samples before a gap go in first,
     // then the engine takes the gap as the desktop app's engines do
     // (FFTEngine::requestWindowReset): it drops its window on a healthy
-    // link, and lets the gap through on a lossy one (no frame for
-    // FFTEngine::kGapResetStallFrameIntervals frame intervals, or a gap let
-    // through less than a window before). Only a dropped window restarts
-    // the sample clock, before the samples after the gap make a frame.
+    // link, and lets the gap through on a lossy one (the last gap, let
+    // through or reset, less than FFTEngine::kGapLossyLinkWindows windows
+    // before, once a frame has come since the last reset; or no frame for
+    // FFTEngine::kGapResetStallFrameIntervals frame intervals). Only a
+    // dropped window restarts the sample clock, before the samples after
+    // the gap make a frame.
     int fedTo = 0;
     for (const int gapAt : std::as_const(gapsAtFloat)) {
         const int split = std::clamp(gapAt, fedTo, static_cast<int>(iq.size())) & ~1;

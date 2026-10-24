@@ -867,8 +867,9 @@
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
 //   2026-10-24 - The gap wiring's comment names the engine's bound on that
-//                reset (JJ's ruling, option i). J.J. Boyd (KG4VCF), with
-//                AI-assisted implementation via Claude Code.
+//                reset (JJ's ruling, option i), and then option c, a gap
+//                within four windows of the last one let through. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -6086,10 +6087,11 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     // healthy link the engine drops its window in progress, so the jump at
     // the seam does not paint a line across the spectrum (NereusSDR,
     // 2026-10-22, after Longpath PR 62, MainWindow::onIqSequenceGap). On a
-    // lossy link the engine lets gaps through instead (no frame for
-    // FFTEngine::kGapResetStallFrameIntervals frame intervals, then every
-    // gap until a whole window passes with none; 2026-10-24, JJ's ruling,
-    // option i), so frames keep their normal rate with a slight smear.
+    // lossy link the engine lets gaps through instead (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, 2026-10-24, JJ's ruling, option c; or
+    // no frame for FFTEngine::kGapResetStallFrameIntervals frame
+    // intervals), so frames keep their normal rate with a slight smear.
     // Engine-scoped like the samples above: both are queued from the
     // Connection thread onto the FFT thread, in the order they were sent,
     // so the reset lands after the samples before the gap and before the

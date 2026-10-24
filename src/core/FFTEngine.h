@@ -52,6 +52,12 @@
 //               keeps its full frame rate with a slight smear; a single gap
 //               on a healthy link still drops the window. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Claude Code.
+//   2026-10-24: JJ's ruling (option c) replaces that one-window rule: a
+//               gap less than kGapLossyLinkWindows windows after the last
+//               gap of any kind is let through, once a frame has come since
+//               the last reset. Gaps one to four windows apart keep the
+//               full frame rate too. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -106,6 +112,7 @@
 #include <QElapsedTimer>
 
 #include <atomic>
+#include <limits>
 
 #ifdef HAVE_FFTW3
 #include <fftw3.h>
@@ -289,16 +296,20 @@ public slots:
     /// this engine's thread, queued in order with the samples, so the
     /// flag is always taken by the first batch after the gap.
     ///
-    /// NereusSDR-original (2026-10-23, option i 2026-10-24): the reset is
+    /// NereusSDR-original (2026-10-23, option c 2026-10-24): the reset is
     /// bounded. On a healthy link a single gap still drops the window, as
-    /// above. When the engine has produced no frame for
-    /// kGapResetStallFrameIntervals frame intervals, the gap is let through
-    /// instead: the window keeps its samples and windowResetsSkipped()
-    /// counts it. From then on every gap is let through, until one whole
-    /// window of samples (the FFT size, in input pairs) has passed with no
-    /// gap; then the engine resets on a gap again. So on a lossy link, one
-    /// that loses packets more often than once a window, frames keep their
-    /// normal rate and show a slight smear instead of a frozen display.
+    /// above. A gap is let through instead (the window keeps its samples
+    /// and windowResetsSkipped() counts it) when either holds:
+    ///   - the link is lossy: the last gap, let through or reset, came less
+    ///     than kGapLossyLinkWindows windows of samples (the FFT size, in
+    ///     input pairs) before, and a frame has come since the last reset;
+    ///   - the engine has produced no frame for
+    ///     kGapResetStallFrameIntervals frame intervals (while the window
+    ///     refills after a reset, this alone decides).
+    /// So a link that loses packets up to kGapLossyLinkWindows windows
+    /// apart keeps its normal frame rate with a slight smear instead of a
+    /// frozen or crawling display, and a gap after that many clean windows
+    /// drops the window again.
     void requestWindowReset() { m_windowResetPending.store(true); }
 
     /// Wie oft ein Fenster deshalb verworfen wurde (Diagnose).
@@ -320,16 +331,17 @@ public slots:
 public:
     /// NereusSDR-original (2026-10-23): requested resets let through
     /// without dropping the window: the engine had produced no frame for
-    /// kGapResetStallFrameIntervals frame intervals, or (2026-10-24) a gap
-    /// had been let through less than a window of samples before.
+    /// kGapResetStallFrameIntervals frame intervals, or (2026-10-24) the
+    /// link was lossy (requestWindowReset() says when).
     quint64 windowResetsSkipped() const { return m_windowResetsSkipped.load(); }
 
     /// NereusSDR-original (2026-10-23). This engine's worker thread only.
     /// Takes a pending requestWindowReset() now rather than at the next
     /// feedIQ(), which takes it the same way. Returns true when the window
     /// was dropped, false when no reset was pending or the bound let the
-    /// gap through (requestWindowReset() says when). The daemon's spectrum source uses the answer to
-    /// restart its sample clock only when the samples really restart.
+    /// gap through (requestWindowReset() says when). The daemon's spectrum
+    /// source uses the answer to restart its sample clock only when the
+    /// samples really restart.
     bool applyPendingWindowReset();
 
     /// NereusSDR-original (2026-10-23): the gap-reset stall bound, in frame
@@ -341,6 +353,18 @@ public:
     /// takes, sampleRate / outputFps samples, no more than the FFT size
     /// unless transforms follow the frame rate.
     static constexpr int kGapResetStallFrameIntervals = 3;
+
+    /// NereusSDR-original (2026-10-24, JJ's ruling, option c): how recent
+    /// a gap makes a link lossy, in windows of samples (the FFT size, in
+    /// input pairs), counted from the last gap, let through or reset. A
+    /// gap within this many windows of the one before is let through once
+    /// a frame has come since the last reset (requestWindowReset()). Why
+    /// 4: gaps up to 4 windows apart all smear, so the waterfall keeps its
+    /// full rate where a reset each time would cost a window of frames per
+    /// gap, and a healthy link that drops one packet now and then, more
+    /// than 4 windows apart, still drops the window. NereusSDR's own value:
+    /// neither Longpath nor AetherSDR has one.
+    static constexpr int kGapLossyLinkWindows = 4;
 
     /// The generation frames are stamped with now. 0 until the first
     /// purgeInputForGeneration() or setInputGeneration().
@@ -498,12 +522,14 @@ private:
     // skipped between windows) since the last frame (worker thread only).
     std::atomic<quint64> m_windowResetsSkipped{0};
     qint64 m_pairsSinceFrame{0};
-    // NereusSDR-original (2026-10-24), JJ's ruling (option i): set when a
-    // gap is let through, cleared once m_pairsSinceGap (decimated input
-    // pairs since the last gap let through) reaches the FFT size. While
-    // set, every gap is let through (worker thread only).
-    bool m_lettingGapsThrough{false};
-    qint64 m_pairsSinceGap{0};
+    // NereusSDR-original (2026-10-24), JJ's ruling (option c): decimated
+    // input pairs since the last gap, let through or reset (counted like
+    // m_pairsSinceFrame), and whether the window is refilling after a
+    // reset, with no frame since (worker thread only). Before the first
+    // gap the count stands further back than any kGapLossyLinkWindows
+    // windows, and adding a pair at a time cannot overflow it.
+    qint64 m_pairsSinceGap{std::numeric_limits<qint64>::max() / 2};
+    bool m_refillingAfterReset{false};
     // The input pairs one frame interval spans (kGapResetStallFrameIntervals).
     qint64 frameIntervalPairs() const;
 

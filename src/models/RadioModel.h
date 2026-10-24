@@ -694,8 +694,10 @@
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - iqSequenceGapForStream's comment names the engine's bound
-//                on the window reset (JJ's ruling, option i). J.J. Boyd
-//                (KG4VCF), with AI-assisted implementation via Claude Code.
+//                on the window reset (JJ's ruling, option i), and then
+//                option c, a gap within four windows of the last one let
+//                through. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6435,12 +6437,13 @@ signals:
     // samples after the gap. A display FFT fed by rawIqDataForStream takes
     // it on the engine's thread in order with the samples
     // (FFTEngine::requestWindowReset): on a healthy link it discards its
-    // window in progress; on a lossy link (no frame for
-    // FFTEngine::kGapResetStallFrameIntervals frame intervals, then every
-    // gap until a whole window passes with none) it keeps the window, so
-    // frames keep their normal rate with a slight smear.
+    // window in progress; on a lossy link (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, or no frame for
+    // FFTEngine::kGapResetStallFrameIntervals frame intervals) it keeps
+    // the window, so frames keep their normal rate with a slight smear.
     // NereusSDR, 2026-10-22, after Longpath PR 62; bound 2026-10-23,
-    // option i 2026-10-24.
+    // option c 2026-10-24.
     void iqSequenceGapForStream(int streamIndex);
 
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
