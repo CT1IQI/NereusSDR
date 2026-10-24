@@ -389,6 +389,10 @@ private slots:
         SliceModel* slice = radio.slices().first();
         QVERIFY(slice);
         QVERIFY(slice->streamIndex() >= 0);
+        // Only the explicit tick below may run: a timed tick while the lane
+        // is awaited would land the tick's RF gain before the flush.
+        QVERIFY(radio.autoAgcTimer());
+        radio.autoAgcTimer()->stop();
         // The station's AGC source measures the slice's stream noise floor.
         DaemonAgcSource source(&radio);
         QTRY_VERIFY(source.activeStreamCount() >= 1);
