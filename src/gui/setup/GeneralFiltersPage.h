@@ -58,6 +58,7 @@
 // the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
 
 #pragma once
 
