@@ -199,6 +199,10 @@
 //                forward loss only (delta > 0), at most once per 20 ms
 //                (kIqSequenceGapMinIntervalMs). J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
+//   2026-10-24 - The throttle reads iqSequenceGapClockMs(), the wall clock
+//                or a test's (RadioConnection::setIqSequenceGapClockForTest).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Claude Code.
 // =================================================================
 
 //
@@ -4926,7 +4930,10 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
             // Gedrosselt wie in P1 (20 ms), sonst flutet ein schlechter
             // Funkweg die Ereignisschlange. Ein Umsortieren oder ein
             // Doppelpaket (delta < 0) laesst das Fenster in Ruhe.
-            const qint64 nowGap = QDateTime::currentMSecsSinceEpoch();
+            // NereusSDR (2026-10-24): Longpath reads
+            // QDateTime::currentMSecsSinceEpoch() here; iqSequenceGapClockMs()
+            // is that clock, or a test's (setIqSequenceGapClockForTest).
+            const qint64 nowGap = iqSequenceGapClockMs();
             if (nowGap - m_lastGapSignalMs >= kIqSequenceGapMinIntervalMs) {
                 m_lastGapSignalMs = nowGap;
                 gapSignal = true;

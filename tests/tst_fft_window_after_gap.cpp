@@ -28,6 +28,12 @@
 //               frames, a single gap on a healthy link still drops the
 //               window. J.J. Boyd (KG4VCF), with AI-assisted implementation
 //               via Claude Code.
+//   2026-10-24: JJ's ruling (option i): a lossy link keeps the healthy
+//               link's frame rate at the smallest and the largest FFT, and
+//               a whole window with no gap ends the gaps let through. The
+//               throttle tests (P1, and now P2) hold the throttle's clock
+//               still instead of racing the wall clock. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Claude Code.
 //
 // --- From tst_fft_window_after_gap.cpp (Longpath) ---
 //
@@ -67,6 +73,7 @@
 #include "fakes/P2FakeRadio.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <vector>
@@ -157,6 +164,10 @@ constexpr int kPastMinimumFrameGapMs = 6;
 // (skipEp6Sequence and skipDdcSequence add, modulo 2^32).
 constexpr quint32 kBackOne = 0xFFFFFFFFu;
 constexpr quint32 kBackThree = 0xFFFFFFFDu;
+// Where the throttle tests start the clock they hold
+// (setIqSequenceGapClockForTest): any time well past 0, the throttle's
+// "never sent".
+constexpr qint64 kGapClockStartMs = 1'000'000;
 
 RadioInfo p1Info(const P1FakeRadio& fake)
 {
@@ -511,9 +522,11 @@ private slots:
     }
 
     // NereusSDR, 2026-10-23: Longpath's throttle
-    // (src/core/P1RadioConnection.cpp:2721-2723 [@383f058]). Two losses
-    // read one after the other, well inside 20 ms, send one gap; a loss
-    // after the throttle has run out sends the next.
+    // (src/core/P1RadioConnection.cpp:2721-2723 [@383f058]). 2026-10-24: the
+    // throttle reads a clock this test holds still
+    // (setIqSequenceGapClockForTest), so it does not depend on how fast the
+    // datagrams are read. Two losses at one time send one gap; a loss 1 ms
+    // short of the throttle sends none; one at the throttle sends the next.
     void twoLossesWithinTheThrottleSendOneGap()
     {
         P1FakeRadio fake;
@@ -521,6 +534,8 @@ private slots:
         fake.start();
 
         P1RadioConnection conn;
+        std::atomic<qint64> nowMs{kGapClockStartMs};
+        conn.setIqSequenceGapClockForTest([&nowMs] { return nowMs.load(); });
         conn.init();
         QStringList events;
         QObject ctx;
@@ -537,9 +552,9 @@ private slots:
 
         fake.sendEp6Frames(3);
         QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 3, 3000);
-        // Both losses are on the socket before this thread reads either.
         fake.skipEp6Sequence(4);
         fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 4, 3000);
         fake.skipEp6Sequence(4);
         fake.sendEp6Frames(1);
         QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 5, 3000);
@@ -547,64 +562,152 @@ private slots:
                                       QStringLiteral("iq"), QStringLiteral("gap-1"),
                                       QStringLiteral("iq"), QStringLiteral("iq")}));
 
-        // A lower bound: a busy machine only waits longer.
-        QTest::qWait(static_cast<int>(RadioConnection::kIqSequenceGapMinIntervalMs) + 10);
+        nowMs += RadioConnection::kIqSequenceGapMinIntervalMs - 1;
         fake.skipEp6Sequence(4);
         fake.sendEp6Frames(1);
         QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 6, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap-1")), 1);
+
+        nowMs += 1;
+        fake.skipEp6Sequence(4);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq")), 7, 3000);
         QCOMPARE(events.count(QStringLiteral("gap-1")), 2);
         QCOMPARE(events.at(events.size() - 2), QStringLiteral("gap-1"));
         conn.disconnect();
         fake.stop();
     }
 
-    // NereusSDR, 2026-10-23, JJ's ruling (option a): a link that loses a
-    // packet more often than once a window. Without the stall bound every
+    // NereusSDR, 2026-10-24: the same throttle on Protocol 2
+    // (src/core/P2RadioConnection.cpp:3236-3241 [@383f058]), on the clock
+    // this test holds still.
+    void p2TwoLossesWithinTheThrottleSendOneGap()
+    {
+        P2FakeRadio fake;
+        QVERIFY(fake.start());
+        P2RadioConnection conn;
+        conn.setPortBasesForTest(fake.outboundPortBase(), fake.inputRolePortBase());
+        std::atomic<qint64> nowMs{kGapClockStartMs};
+        conn.setIqSequenceGapClockForTest([&nowMs] { return nowMs.load(); });
+        conn.init();
+        QStringList events;
+        QObject ctx;
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &ctx,
+                         [&events](int ddc, const QVector<float>&) {
+                             events << QStringLiteral("iq%1").arg(ddc);
+                         });
+        QObject::connect(&conn, &RadioConnection::iqSequenceGap, &ctx,
+                         [&events](int ddc) {
+                             events << QStringLiteral("gap%1").arg(ddc);
+                         });
+        conn.connectToRadio(fake.radioInfo());
+        QTRY_VERIFY_WITH_TIMEOUT(fake.hasClient(), 3000);
+
+        for (int i = 0; i < 3; ++i) {
+            fake.sendDdc(2);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 3, 3000);
+        fake.skipDdcSequence(3);
+        fake.sendDdc(2);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 4, 3000);
+        fake.skipDdcSequence(3);
+        fake.sendDdc(2);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 5, 3000);
+        QCOMPARE(events, (QStringList{QStringLiteral("iq2"), QStringLiteral("iq2"),
+                                      QStringLiteral("iq2"), QStringLiteral("gap2"),
+                                      QStringLiteral("iq2"), QStringLiteral("iq2")}));
+
+        nowMs += RadioConnection::kIqSequenceGapMinIntervalMs - 1;
+        fake.skipDdcSequence(3);
+        fake.sendDdc(2);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 6, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap2")), 1);
+
+        nowMs += 1;
+        fake.skipDdcSequence(3);
+        fake.sendDdc(2);
+        QTRY_COMPARE_WITH_TIMEOUT(events.count(QStringLiteral("iq2")), 7, 3000);
+        QCOMPARE(events.count(QStringLiteral("gap2")), 2);
+        QCOMPARE(events.at(events.size() - 2), QStringLiteral("gap2"));
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // NereusSDR, 2026-10-23, JJ's ruling (option a), and 2026-10-24 (option
+    // i): a link that loses a packet more often than once a window, at the
+    // smallest and the largest FFT the engine takes. Without the bound every
     // gap drops the window before it fills and no frame ever comes out (the
-    // frozen waterfall). With it, a gap after kGapResetStallFrameIntervals
-    // frame intervals with no frame is let through, and frames keep coming
-    // at a steady rate: never more rounds apart than the bound plus one
-    // window takes to pass.
+    // frozen waterfall). With it, the first gap after
+    // kGapResetStallFrameIntervals frame intervals with no frame is let
+    // through, and so is every gap after it while gaps come more often than
+    // once a window. After the first frame, frames come at the healthy
+    // link's rate, one each frame interval (rounds * batch / interval),
+    // within one frame. Without option i the window is wiped after every
+    // frame, and the largest FFT makes no frame at all in the rounds
+    // measured.
+    void aLossyLinkKeepsProducingFrames_data()
+    {
+        QTest::addColumn<int>("fftSize");
+        QTest::addColumn<double>("sampleRateHz");
+        QTest::addColumn<int>("fps");
+        QTest::addColumn<int>("batchPairs");
+        // 800 pairs a frame; a gap every 400.
+        QTest::newRow("smallest FFT") << kFftSize << kBoundRateHz << kBoundFps << 400;
+        // 6400 pairs a frame; a gap every 3200, 82 a window.
+        QTest::newRow("largest FFT") << FFTEngine::maximumFftSize() << 192000.0 << 30 << 3200;
+    }
+
     void aLossyLinkKeepsProducingFrames()
     {
+        QFETCH(int, fftSize);
+        QFETCH(double, sampleRateHz);
+        QFETCH(int, fps);
+        QFETCH(int, batchPairs);
+        const int intervalPairs = static_cast<int>(std::lround(sampleRateHz / fps));
+        QVERIFY(intervalPairs < fftSize);
+
         FFTEngine engine(0);
-        engine.setFftSize(kFftSize);
-        engine.setSampleRate(kBoundRateHz);
-        engine.setOutputFps(kBoundFps);
+        engine.setFftSize(fftSize);
+        engine.setSampleRate(sampleRateHz);
+        engine.setOutputFps(fps);
         QSignalSpy frames(&engine, &FFTEngine::fftReadyLinear);
 
-        constexpr int kBatchPairs = kFftSize / 2 - 112;   // 400: a gap every 400
-        constexpr int kRounds = 60;
-        constexpr int kMaxRoundsApart =
-            (FFTEngine::kGapResetStallFrameIntervals * kBoundIntervalPairs + kFftSize
-             + kBatchPairs - 1) / kBatchPairs + 1;
         qint64 first = 0;
-        int lastFrameRound = -1;
-        int longestApart = 0;
-        for (int round = 0; round < kRounds; ++round) {
-            const int before = frames.count();
+        const auto lossyRound = [&] {
             engine.requestWindowReset();
-            engine.feedIQ(tone(first, kBatchPairs));
-            first += kBatchPairs + kGapPairs;
-            if (frames.count() > before) {
-                longestApart = std::max(longestApart, round - lastFrameRound);
-                lastFrameRound = round;
-            }
-            QTest::qWait(kPastMinimumFrameGapMs);
+            engine.feedIQ(tone(first, batchPairs));
+            first += batchPairs + kGapPairs;
+        };
+        // Lossy from the start: the gaps drop the window until the bound
+        // lets one through, and the window then fills to the first frame.
+        const int maxWarmupRounds =
+            (FFTEngine::kGapResetStallFrameIntervals * intervalPairs + fftSize) / batchPairs + 4;
+        int warmupRounds = 0;
+        while (frames.isEmpty() && warmupRounds < maxWarmupRounds) {
+            lossyRound();
+            ++warmupRounds;
         }
-        longestApart = std::max(longestApart, kRounds - 1 - lastFrameRound);
+        QVERIFY2(frames.count() == 1,
+                 qPrintable(QStringLiteral("no first frame in %1 rounds").arg(warmupRounds)));
 
-        QVERIFY2(frames.count() >= kRounds / kMaxRoundsApart,
-                 qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link")
-                                .arg(frames.count()).arg(kRounds)));
-        QVERIFY2(longestApart <= kMaxRoundsApart,
-                 qPrintable(QStringLiteral("%1 rounds without a frame (bound %2)")
-                                .arg(longestApart).arg(kMaxRoundsApart)));
-        QVERIFY(engine.windowResetsSkipped() > 0);
-        // The gaps the bound did not let through still dropped the window.
+        constexpr int kRounds = 80;
+        const int framesAtStart = frames.count();
+        for (int round = 0; round < kRounds; ++round) {
+            QTest::qWait(kPastMinimumFrameGapMs);
+            lossyRound();
+        }
+        const int made = frames.count() - framesAtStart;
+        const int healthy = kRounds * batchPairs / intervalPairs;
+        QVERIFY2(made >= healthy - 1 && made <= healthy + 1,
+                 qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link; a healthy "
+                                           "link makes %3")
+                                .arg(made).arg(kRounds).arg(healthy)));
+        // Every gap after the first frame was let through; the first gaps
+        // dropped the window.
+        QVERIFY(engine.windowResetsSkipped() >= quint64(kRounds));
         QVERIFY(engine.windowResets() > 0);
         QCOMPARE(engine.windowResets() + engine.windowResetsSkipped(),
-                 quint64(kRounds));
+                 quint64(warmupRounds + kRounds));
     }
 
     // NereusSDR, 2026-10-23: the other side of the bound. On a link making
@@ -645,6 +748,67 @@ private slots:
         const double floorDb = floorBelowToneDb(frameBins(frames, 5));
         QVERIFY2(floorDb < kCleanFloorDb,
                  qPrintable(QStringLiteral("the frame after a gap has a floor at %1 dB")
+                                .arg(floorDb)));
+    }
+
+    // NereusSDR, 2026-10-24, JJ's ruling (option i): how a run of gaps let
+    // through ends. Once one is let through, a gap less than a window of
+    // samples after it is let through too, even with frames coming. A whole
+    // window with no gap (kFftSize pairs exactly) ends the run: the next
+    // single gap drops the window again, and the frame after it is clean.
+    void aWholeWindowWithNoGapEndsTheGapsLetThrough()
+    {
+        FFTEngine engine(0);
+        engine.setFftSize(kFftSize);
+        engine.setSampleRate(kBoundRateHz);
+        engine.setOutputFps(kBoundFps);
+        QSignalSpy frames(&engine, &FFTEngine::fftReadyLinear);
+
+        // Lossy from the start until the bound lets a gap through: the
+        // gaps at 0, 400, ... 2000 pairs drop the window, the one at 2400
+        // does not.
+        qint64 first = 0;
+        constexpr int kBatchPairs = kBoundIntervalPairs / 2;
+        while (engine.windowResetsSkipped() == 0 && engine.windowResets() < 20) {
+            engine.requestWindowReset();
+            engine.feedIQ(tone(first, kBatchPairs));
+            first += kBatchPairs + kGapPairs;
+        }
+        QCOMPARE(engine.windowResets(), quint64(6));
+        QCOMPARE(engine.windowResetsSkipped(), quint64(1));
+
+        // 400 more pairs: a frame, so the stall bound no longer applies;
+        // 800 since the gap let through, short of a window.
+        engine.feedIQ(tone(first, kBatchPairs));
+        first += kBatchPairs + kGapPairs;
+        QCOMPARE(frames.count(), 1);
+        engine.requestWindowReset();
+        engine.feedIQ(tone(first, 1));
+        first += 1;
+        QCOMPARE(engine.windowResets(), quint64(6));
+        QCOMPARE(engine.windowResetsSkipped(), quint64(2));
+
+        // A whole window with no gap, the pair above included, fed a frame
+        // interval at most at a time so no frame is held back.
+        for (int left = kFftSize - 1; left > 0;) {
+            QTest::qWait(kPastMinimumFrameGapMs);
+            const int n = std::min(left, kBatchPairs);
+            engine.feedIQ(tone(first, n));
+            first += n;
+            left -= n;
+        }
+        QVERIFY(frames.count() >= 2);
+        const int framesBefore = frames.count();
+        first += kGapPairs;
+        engine.requestWindowReset();
+        QTest::qWait(kPastMinimumFrameGapMs);
+        engine.feedIQ(tone(first, kFftSize + 1));
+        QCOMPARE(engine.windowResets(), quint64(7));
+        QCOMPARE(engine.windowResetsSkipped(), quint64(2));
+        QCOMPARE(frames.count(), framesBefore + 1);
+        const double floorDb = floorBelowToneDb(frameBins(frames, framesBefore));
+        QVERIFY2(floorDb < kCleanFloorDb,
+                 qPrintable(QStringLiteral("the frame after the gap has a floor at %1 dB")
                                 .arg(floorDb)));
     }
 };

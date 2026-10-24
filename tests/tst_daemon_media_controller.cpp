@@ -6,18 +6,24 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: aLossyLinkKeepsTheCoresSourceMakingFrames at the smallest
+//               and the largest FFT, held to the healthy link's frame rate
+//               (JJ's ruling, option i); samplesQueuedAheadOfAGapAreFedBeforeIt
+//               and twoGapsQueuedBeforeOneDrainAreEachApplied; the gap test's
+//               comment names the engine's window reset. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Claude Code.
 //   2026-10-23: aLossyLinkKeepsTheCoresSourceMakingFrames: the Core's
 //               spectrum source takes the same bounded gap reset as the
 //               desktop app's engines (JJ's ruling, option a). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Claude Code.
-//   2026-10-22: An I/Q sequence gap from the radio resets the input of the
-//               sources of its stream only, or of every stream for -1
-//               (after Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
-//               transformation via Claude Code.
 //   2026-10-23: NSDC v2 sender: a split frame of a pan with a wide row
 //               shorter than 768 samples carries the wide plane in its row
 //               part. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-22: An I/Q sequence gap from the radio resets the input of the
+//               sources of its stream only, or of every stream for -1
+//               (after Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 //   2026-10-22: the over-cost test's comment names the wide plane, not the
 //               extras. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -117,6 +123,7 @@
 #include <QJsonDocument>
 #include <QPointer>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -131,7 +138,9 @@
 #include <mutex>
 #include <numbers>
 #include <numeric>
+#include <optional>
 #include <thread>
+#include <vector>
 #include <atomic>
 #include <utility>
 #include "fakes/UpgradedCoreToken.h"
@@ -847,7 +856,10 @@ private slots:
     void aNewStartReplacesTheSessionsHalfOpenPeer();
     void aKeyEdgeResetsEveryActiveSourceOnce();
     void aSequenceGapResetsTheSourcesOfItsStreamOnly();
+    void aLossyLinkKeepsTheCoresSourceMakingFrames_data();
     void aLossyLinkKeepsTheCoresSourceMakingFrames();
+    void samplesQueuedAheadOfAGapAreFedBeforeIt();
+    void twoGapsQueuedBeforeOneDrainAreEachApplied();
     void staleRevisionAndWrongEpochPreserveTheActiveSource();
     void streamRemovalRetiresEndpointAndSource();
     void nonoverlappingCropIsRejectedBeforeSourceActivation();
@@ -4112,9 +4124,10 @@ void TstDaemonMediaController::aKeyEdgeResetsEveryActiveSourceOnce()
 }
 
 // A lost I/Q packet (RadioModel::iqSequenceGapForStream, after Longpath PR
-// 62): every source of that stream drops its window in progress, through
-// the dropped-packet path, on its own worker thread when the samples after
-// the gap are drained. A gap on another stream resets nothing; -1 (a
+// 62): every source of that stream drops its window in progress, on its own
+// worker thread when the samples after the gap are drained, through the
+// engine's window reset (FFTEngine::applyPendingWindowReset; a healthy link,
+// so no gap is let through). A gap on another stream resets nothing; -1 (a
 // Protocol 1 gap) resets every stream.
 void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
 {
@@ -4168,73 +4181,284 @@ void TstDaemonMediaController::aSequenceGapResetsTheSourcesOfItsStreamOnly()
     harness.finish();
 }
 
-// NereusSDR, 2026-10-23, JJ's ruling (option a): the Core's spectrum source
-// on a link that loses a packet more often than once a window. Each gap
-// reaches the engine as in the desktop app (FFTEngine::requestWindowReset)
-// with the same stall bound: without it every gap drops the window before
-// it fills and the source publishes nothing; with it a gap after
-// FFTEngine::kGapResetStallFrameIntervals frame intervals with no frame is
-// let through, and frames keep coming at a steady rate. A 1024 FFT at
-// 48 kHz and 60 frames a second advances 800 pairs a frame.
+namespace {
+
+// The Core gap cases (2026-10-24): a complex tone exactly on bin
+// kGapToneBin of a 1024 FFT, from sample `first`, so a gap is a jump in
+// `first` and a window of unbroken tone has a floor near the float floor.
+constexpr int kGapFftSize = 1024;
+constexpr int kGapToneBin = 100;
+constexpr int kGapLostPairs = 37;
+// Below this, a frame holds no seam (a seam lifts the floor to about
+// -50 dB; an unbroken tone leaves it near -150 dB).
+constexpr double kGapCleanFloorDb = -110.0;
+
+QVector<float> gapTone(qint64 first, int pairs)
+{
+    QVector<float> v;
+    v.reserve(pairs * 2);
+    for (int i = 0; i < pairs; ++i) {
+        const double phase = 2.0 * std::numbers::pi * kGapToneBin
+            * static_cast<double>(first + i) / static_cast<double>(kGapFftSize);
+        v << static_cast<float>(0.5 * std::cos(phase))
+          << static_cast<float>(0.5 * std::sin(phase));
+    }
+    return v;
+}
+
+// The median of the bins more than 32 from the peak, in dB below it.
+double gapFloorBelowPeakDb(const QVector<float>& binsLinear)
+{
+    const int n = static_cast<int>(binsLinear.size());
+    const auto peakIt = std::max_element(binsLinear.cbegin(), binsLinear.cend());
+    const int peak = static_cast<int>(peakIt - binsLinear.cbegin());
+    std::vector<double> far;
+    for (int i = 0; i < n; ++i) {
+        const int d = std::abs(i - peak);
+        if (std::min(d, n - d) > 32) {
+            far.push_back(std::max(static_cast<double>(binsLinear[i]), 1e-30));
+        }
+    }
+    std::nth_element(far.begin(), far.begin() + static_cast<std::ptrdiff_t>(far.size() / 2),
+                     far.end());
+    return 10.0 * std::log10(far[far.size() / 2] / static_cast<double>(*peakIt));
+}
+
+// A Core spectrum source at a 1024 FFT, 48 kHz and 60 frames a second
+// (800 pairs a frame), whose engine thread a test can hold inside the
+// frame wake of a frame, so the samples and gaps it queues meanwhile are
+// taken by one drain. Every frame's bins are kept.
+struct HeldGapSource {
+    // Declared before the source, so they outlive its engine threads.
+    std::mutex framesMutex;
+    QList<QVector<float>> frames;
+    std::atomic<bool> holdNext{false};
+    QSemaphore entered;
+    QSemaphore gate;
+    const MediaSourceKey key{0, FftTier::Wide};
+    RadioModel radio;
+    DaemonSpectrumSource source;
+
+    bool start()
+    {
+        source.setRadioModel(&radio);
+        DaemonSpectrumSourceConfig config;
+        config.fft.fftSize = kGapFftSize;
+        config.fft.fps = 60;
+        config.fft.windowType = static_cast<int>(WindowFunction::Hann);
+        config.centreHz = 7100000.0;
+        config.sampleRateHz = 48000.0;
+        config.maxPendingIqFloats = 16384;
+        source.setFrameWake([this] {
+            // On the engine's thread, just after it published a frame.
+            const std::optional<DaemonSpectrumFrame> frame = source.takeLatest(key);
+            if (frame) {
+                const std::lock_guard<std::mutex> lock(framesMutex);
+                frames.append(frame->binsLinear);
+            }
+            if (holdNext.exchange(false)) {
+                entered.release();
+                gate.acquire();
+            }
+        });
+        return source.activate(key, config);
+    }
+    void release() { gate.release(100); }
+    int frameCount()
+    {
+        const std::lock_guard<std::mutex> lock(framesMutex);
+        return static_cast<int>(frames.size());
+    }
+    QVector<float> frame(int index)
+    {
+        const std::lock_guard<std::mutex> lock(framesMutex);
+        return frames.value(index);
+    }
+    void feed(const QVector<float>& iq) { emit radio.rawIqDataForStream(key.streamIndex, iq); }
+    void gap() { emit radio.iqSequenceGapForStream(key.streamIndex); }
+};
+
+} // namespace
+
+// NereusSDR, 2026-10-23, JJ's ruling (option a), and 2026-10-24 (option i):
+// the Core's spectrum source on a link that loses a packet more often than
+// once a window, at the smallest and the largest FFT the engine takes. Each
+// gap reaches the engine as in the desktop app (FFTEngine::requestWindowReset)
+// under the same rule: once a gap is let through, every gap is, until a
+// whole window passes with none. So after the first frame the source
+// publishes at the healthy link's rate, one frame each frame interval
+// (rounds * batch / interval), within one frame. Without option i the
+// window is wiped after every frame and the largest FFT makes no frame at
+// all in the rounds measured.
+void TstDaemonMediaController::aLossyLinkKeepsTheCoresSourceMakingFrames_data()
+{
+    QTest::addColumn<int>("fftSize");
+    QTest::addColumn<double>("sampleRateHz");
+    QTest::addColumn<int>("fps");
+    QTest::addColumn<int>("batchPairs");
+    // 800 pairs a frame; a gap every 400.
+    QTest::newRow("smallest FFT") << 1024 << 48000.0 << 60 << 400;
+    // 6400 pairs a frame; a gap every 3200, 82 a window.
+    QTest::newRow("largest FFT") << NereusSDR::FFTEngine::maximumFftSize() << 192000.0
+                                 << 30 << 3200;
+}
+
 void TstDaemonMediaController::aLossyLinkKeepsTheCoresSourceMakingFrames()
 {
+    QFETCH(int, fftSize);
+    QFETCH(double, sampleRateHz);
+    QFETCH(int, fps);
+    QFETCH(int, batchPairs);
+    const int intervalPairs = static_cast<int>(std::lround(sampleRateHz / fps));
+    QVERIFY(intervalPairs < fftSize);
+
     RadioModel radio;
     DaemonSpectrumSource source;
     source.setRadioModel(&radio);
     const MediaSourceKey key{0, FftTier::Wide};
-    constexpr int kFftSize = 1024;
-    constexpr int kIntervalPairs = 800;
     DaemonSpectrumSourceConfig config;
-    config.fft.fftSize = kFftSize;
-    config.fft.fps = 60;
+    config.fft.fftSize = fftSize;
+    config.fft.fps = fps;
     config.fft.windowType = static_cast<int>(WindowFunction::Hann);
     config.centreHz = 7100000.0;
-    config.sampleRateHz = 48000.0;
-    config.maxPendingIqFloats = 8192;
+    config.sampleRateHz = sampleRateHz;
+    config.maxPendingIqFloats = std::max(8192, batchPairs * 2 * 4);
     QVERIFY(source.activate(key, config));
     QTRY_VERIFY(source.isActive(key));
 
-    constexpr int kBatchPairs = 400;   // a gap every 400 pairs
-    constexpr int kRounds = 60;
-    constexpr int kMaxRoundsApart =
-        (NereusSDR::FFTEngine::kGapResetStallFrameIntervals * kIntervalPairs + kFftSize
-         + kBatchPairs - 1) / kBatchPairs + 1;
-    const QVector<float> batch = syntheticIq(kBatchPairs, 0.125);
-    const quint64 framesBefore = source.publishedFrames(key);
-    quint64 frames = framesBefore;
-    int lastFrameRound = -1;
-    int longestApart = 0;
-    for (int round = 0; round < kRounds; ++round) {
+    const QVector<float> batch = syntheticIq(batchPairs, 0.125);
+    // One round of the lossy link: a gap, then a batch, drained.
+    const auto lossyRound = [&] {
         const quint64 handoffs = source.completedInputHandoffs(key);
         emit radio.iqSequenceGapForStream(key.streamIndex);
         emit radio.rawIqDataForStream(key.streamIndex, batch);
-        QTRY_COMPARE(source.completedInputHandoffs(key), handoffs + 1);
         // The frame is published on the engine's thread inside the feed,
         // before the handoff is counted.
-        const quint64 now = source.publishedFrames(key);
-        if (now > frames) {
-            longestApart = std::max(longestApart, round - lastFrameRound);
-            lastFrameRound = round;
-            frames = now;
-        }
+        return QTest::qWaitFor(
+            [&] { return source.completedInputHandoffs(key) == handoffs + 1; }, 10'000);
+    };
+
+    // Lossy from the start: the gaps drop the window until the bound lets
+    // one through, and the window then fills to the first frame.
+    const quint64 framesBefore = source.publishedFrames(key);
+    const int maxWarmupRounds =
+        (NereusSDR::FFTEngine::kGapResetStallFrameIntervals * intervalPairs + fftSize)
+        / batchPairs + 4;
+    int warmupRounds = 0;
+    while (source.publishedFrames(key) == framesBefore && warmupRounds < maxWarmupRounds) {
+        QVERIFY(lossyRound());
+        ++warmupRounds;
+    }
+    QVERIFY2(source.publishedFrames(key) == framesBefore + 1,
+             qPrintable(QStringLiteral("no first frame in %1 rounds").arg(warmupRounds)));
+
+    constexpr int kRounds = 80;
+    const quint64 framesAtStart = source.publishedFrames(key);
+    for (int round = 0; round < kRounds; ++round) {
         // Past the engine's 5 ms minimum frame gap (a lower bound).
         QTest::qWait(6);
+        QVERIFY(lossyRound());
     }
-    longestApart = std::max(longestApart, kRounds - 1 - lastFrameRound);
-
-    const quint64 made = frames - framesBefore;
-    QVERIFY2(made >= quint64(kRounds / kMaxRoundsApart),
-             qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link")
-                            .arg(made).arg(kRounds)));
-    QVERIFY2(longestApart <= kMaxRoundsApart,
-             qPrintable(QStringLiteral("%1 rounds without a frame (bound %2)")
-                            .arg(longestApart).arg(kMaxRoundsApart)));
-    QVERIFY(source.engineWindowResetsSkipped(key) > 0);
+    const qint64 made = static_cast<qint64>(source.publishedFrames(key) - framesAtStart);
+    const qint64 healthy = static_cast<qint64>(kRounds) * batchPairs / intervalPairs;
+    QVERIFY2(made >= healthy - 1 && made <= healthy + 1,
+             qPrintable(QStringLiteral("%1 frames in %2 rounds of a lossy link; a healthy "
+                                       "link makes %3")
+                            .arg(made).arg(kRounds).arg(healthy)));
+    // Every gap after the first frame was let through; the first gaps
+    // dropped the window.
+    QVERIFY(source.engineWindowResetsSkipped(key) >= quint64(kRounds));
     QVERIFY(source.engineWindowResets(key) > 0);
     QCOMPARE(source.engineWindowResets(key) + source.engineWindowResetsSkipped(key),
-             quint64(kRounds));
+             quint64(warmupRounds + kRounds));
     // Only a dropped window restarts the input history's clock.
     QCOMPARE(source.inputHistoryResets(key), source.engineWindowResets(key));
+}
+
+// NereusSDR, 2026-10-24 (re-review N3): samples queued ahead of a gap when
+// the drain runs go in before the gap is applied. The engine thread is held
+// after the first frame while the radio sends A, a gap, B; one drain takes
+// all three. A completes a frame of unbroken tone before the gap, the gap
+// drops the window (a healthy link), and B alone makes the next frame.
+// Had the gap been applied first, the frame after A would span the seam.
+void TstDaemonMediaController::samplesQueuedAheadOfAGapAreFedBeforeIt()
+{
+    HeldGapSource held;
+    QVERIFY(held.start());
+    QTRY_VERIFY(held.source.isActive(held.key));
+    const auto releaseOnExit = qScopeGuard([&] { held.release(); });
+
+    held.holdNext.store(true);
+    held.feed(gapTone(0, kGapFftSize + 1));
+    QVERIFY(held.entered.tryAcquire(1, 10'000));
+    // Past the engine's 5 ms minimum frame gap before the held drain ends.
+    QTest::qWait(10);
+    const quint64 handoffs = held.source.completedInputHandoffs(held.key);
+    held.feed(gapTone(kGapFftSize + 1, 800));          // A: ends the next frame
+    held.gap();
+    const qint64 afterGap = kGapFftSize + 1 + 800 + kGapLostPairs;
+    held.feed(gapTone(afterGap, kGapFftSize + 1));     // B: a whole window
+    held.release();
+    // The held drain, then the one that took A, the gap and B.
+    QVERIFY(QTest::qWaitFor([&] {
+        return held.source.completedInputHandoffs(held.key) == handoffs + 2;
+    }, 10'000));
+    QCOMPARE(held.frameCount(), 2);
+    QCOMPARE(held.source.engineWindowResets(held.key), quint64{1});
+    QCOMPARE(held.source.engineWindowResetsSkipped(held.key), quint64{0});
+    QCOMPARE(held.source.inputHistoryResets(held.key), quint64{1});
+    const double beforeGapDb = gapFloorBelowPeakDb(held.frame(1));
+    QVERIFY2(beforeGapDb < kGapCleanFloorDb,
+             qPrintable(QStringLiteral("the frame of the samples before the gap has a "
+                                       "floor at %1 dB").arg(beforeGapDb)));
+
+    // B's frame came within 5 ms of A's, so it waits for the next packet.
+    QTest::qWait(10);
+    held.feed(gapTone(afterGap + kGapFftSize + 1, 2));
+    QTRY_COMPARE(held.frameCount(), 3);
+    const double afterGapDb = gapFloorBelowPeakDb(held.frame(2));
+    QVERIFY2(afterGapDb < kGapCleanFloorDb,
+             qPrintable(QStringLiteral("the frame after the gap has a floor at %1 dB")
+                            .arg(afterGapDb)));
+}
+
+// NereusSDR, 2026-10-24 (re-review N2): two gaps queued before one drain
+// are each applied at their own place, under the same rule as the desktop
+// app. On a healthy link each drops the window: two resets. Keeping only
+// the last gap would feed A and B as if they joined and reset once.
+void TstDaemonMediaController::twoGapsQueuedBeforeOneDrainAreEachApplied()
+{
+    HeldGapSource held;
+    QVERIFY(held.start());
+    QTRY_VERIFY(held.source.isActive(held.key));
+    const auto releaseOnExit = qScopeGuard([&] { held.release(); });
+
+    held.holdNext.store(true);
+    held.feed(gapTone(0, kGapFftSize + 1));
+    QVERIFY(held.entered.tryAcquire(1, 10'000));
+    QTest::qWait(10);
+    const quint64 handoffs = held.source.completedInputHandoffs(held.key);
+    qint64 first = kGapFftSize + 1;
+    held.feed(gapTone(first, 300));                    // A
+    first += 300 + kGapLostPairs;
+    held.gap();
+    held.feed(gapTone(first, 300));                    // B
+    first += 300 + kGapLostPairs;
+    held.gap();
+    held.feed(gapTone(first, kGapFftSize + 1));        // C: a whole window
+    held.release();
+    QVERIFY(QTest::qWaitFor([&] {
+        return held.source.completedInputHandoffs(held.key) == handoffs + 2;
+    }, 10'000));
+    QCOMPARE(held.source.engineWindowResets(held.key), quint64{2});
+    QCOMPARE(held.source.engineWindowResetsSkipped(held.key), quint64{0});
+    QCOMPARE(held.source.inputHistoryResets(held.key), quint64{2});
+    // C alone makes the next frame, with no seam.
+    QCOMPARE(held.frameCount(), 2);
+    const double floorDb = gapFloorBelowPeakDb(held.frame(1));
+    QVERIFY2(floorDb < kGapCleanFloorDb,
+             qPrintable(QStringLiteral("the frame after two gaps has a floor at %1 dB")
+                            .arg(floorDb)));
 }
 
 void TstDaemonMediaController::staleRevisionAndWrongEpochPreserveTheActiveSource()

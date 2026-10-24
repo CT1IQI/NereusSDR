@@ -250,6 +250,10 @@
 //                forward loss only, at most once per 20 ms
 //                (kIqSequenceGapMinIntervalMs). J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
+//   2026-10-24 - The throttle reads iqSequenceGapClockMs(), the wall clock
+//                or a test's (RadioConnection::setIqSequenceGapClockForTest).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Claude Code.
 // =================================================================
 
 /*
@@ -4766,7 +4770,11 @@ void P1RadioConnection::onReadyRead()
                         // Gedrosselt, sonst flutet ein schlechter Funkweg die
                         // Ereignisschlange: ein Fenster dauert bei 768 kHz
                         // gut 5 ms, 20 ms Abstand verliert also nichts.
-                        const qint64 nowGap = QDateTime::currentMSecsSinceEpoch();
+                        // NereusSDR (2026-10-24): Longpath reads
+                        // QDateTime::currentMSecsSinceEpoch() here;
+                        // iqSequenceGapClockMs() is that clock, or a
+                        // test's (setIqSequenceGapClockForTest).
+                        const qint64 nowGap = iqSequenceGapClockMs();
                         if (nowGap - m_lastGapSignalMs >= kIqSequenceGapMinIntervalMs) {
                             m_lastGapSignalMs = nowGap;
                             // -1: die EP6-Folge traegt alle Empfaenger verschachtelt, eine

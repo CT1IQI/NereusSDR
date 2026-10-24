@@ -25,6 +25,9 @@
 //               desktop app's engines do; engineWindowResets and
 //               engineWindowResetsSkipped. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Claude Code.
+//   2026-10-24: engineWindowResetsSkipped's doc names the engine's rule as
+//               it now stands (JJ's ruling, option i). J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -187,9 +190,11 @@ public:
     /// source.
     quint64 inputHistoryResets(const MediaSourceKey& key) const;
     /// The engine's windows dropped for an I/Q sequence gap
-    /// (FFTEngine::windowResets), and the gaps it let through because it
-    /// had made no frame for FFTEngine::kGapResetStallFrameIntervals frame
-    /// intervals (FFTEngine::windowResetsSkipped). 0 for an unknown source.
+    /// (FFTEngine::windowResets), and the gaps it let through
+    /// (FFTEngine::windowResetsSkipped): with no frame for
+    /// FFTEngine::kGapResetStallFrameIntervals frame intervals, and then
+    /// every gap until a whole window passes with none
+    /// (FFTEngine::requestWindowReset). 0 for an unknown source.
     quint64 engineWindowResets(const MediaSourceKey& key) const;
     quint64 engineWindowResetsSkipped(const MediaSourceKey& key) const;
 

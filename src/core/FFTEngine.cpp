@@ -47,6 +47,12 @@
 //               let through and counted in windowResetsSkipped(). JJ's
 //               ruling (option a). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Claude Code.
+//   2026-10-24: Once a gap has been let through, every gap is let through
+//               until a whole window of samples passes with no gap
+//               (m_lettingGapsThrough, m_pairsSinceGap). JJ's ruling (option
+//               i): a lossy link keeps its full frame rate with a slight
+//               smear. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -339,7 +345,7 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
     // Fenster gehoert.
     // NereusSDR: the flag is taken in applyPendingWindowReset(), which
     // drops the window as Longpath does (m_iqWritePos = 0 and the count)
-    // unless the stall bound lets the gap through.
+    // unless the bound lets the gap through (see requestWindowReset()).
     applyPendingWindowReset();
 
     // Apply any pending FFT size change (coalesces rapid slider drags)
@@ -375,6 +381,11 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
         // the gap-reset stall bound; skipped pairs count too, as they pass
         // in time between frames.
         ++m_pairsSinceFrame;
+        // NereusSDR-original (2026-10-24), option i: a whole window with no
+        // gap ends the run of gaps let through.
+        if (m_lettingGapsThrough && ++m_pairsSinceGap >= m_currentFftSize) {
+            m_lettingGapsThrough = false;
+        }
         if (m_skipPending > 0) {
             // Between two transforms' windows: not analysed.
             --m_skipPending;
@@ -437,8 +448,16 @@ bool FFTEngine::applyPendingWindowReset()
     // frame. After kGapResetStallFrameIntervals frame intervals with no
     // frame, the gap is let through: the window keeps what it has, and the
     // next frame shows a slightly smeared line instead.
-    if (m_pairsSinceFrame
-        >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs()) {
+    // 2026-10-24, JJ's ruling (option i): from then on every gap is let
+    // through until a whole window of samples passes with no gap (counted
+    // in feedIQ), so a lossy link keeps its normal frame rate, each frame
+    // slightly smeared. On a healthy link a single gap still drops the
+    // window below.
+    if (m_lettingGapsThrough
+        || m_pairsSinceFrame
+            >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs()) {
+        m_lettingGapsThrough = true;
+        m_pairsSinceGap = 0;
         m_windowResetsSkipped.fetch_add(1);
         return false;
     }

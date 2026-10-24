@@ -57,6 +57,11 @@
 //               signal is sent on forward loss only, as Longpath sends it.
 //               J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //               Claude Code.
+//   2026-10-24: setIqSequenceGapClockForTest and iqSequenceGapClockMs, a
+//               test seam for the clock that throttle reads, so a test
+//               holds it still instead of racing the wall clock.
+//               NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -75,6 +80,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -204,6 +210,15 @@ public:
     /// and src/core/P2RadioConnection.cpp:3236-3241 [@383f058], where it is
     /// the literal 20 in `nowGap - m_lastGapSignalMs >= 20`.
     static constexpr qint64 kIqSequenceGapMinIntervalMs = 20;
+    /// Test seam, NereusSDR-original (2026-10-24): the clock, in ms, the
+    /// iqSequenceGap throttle reads in place of
+    /// QDateTime::currentMSecsSinceEpoch(). Empty (the default) restores
+    /// the wall clock. Set before connectToRadio(); the clock is called on
+    /// the thread that reads the radio's datagrams.
+    void setIqSequenceGapClockForTest(std::function<qint64()> clock)
+    {
+        m_iqSequenceGapClockForTest = std::move(clock);
+    }
     /// The receive buffer the system granted, from the size a socket
     /// reports. Linux doubles a request to leave room for its own
     /// bookkeeping and reports the doubled figure (socket(7), SO_RCVBUF), so
@@ -992,6 +1007,14 @@ public slots:
     void clearTransmitCut();
 
 protected:
+    // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
+    // in ms: the test clock when one is set, the wall clock otherwise.
+    qint64 iqSequenceGapClockMs() const
+    {
+        return m_iqSequenceGapClockForTest ? m_iqSequenceGapClockForTest()
+                                           : QDateTime::currentMSecsSinceEpoch();
+    }
+
     // This object's thread. The default unkeys as the emergency stop does:
     // setMox(false); setTrxRelay(false). P1 then puts bank 0 on its next
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
@@ -1237,6 +1260,9 @@ signals:
     void alexLpfBitsComposed(quint8 bits);
 
 private:
+    // setIqSequenceGapClockForTest's clock (2026-10-24); empty in use.
+    std::function<qint64()> m_iqSequenceGapClockForTest;
+
     // Radio codec (2026-09-30): pushRadioAudio's ring, 16384 stereo frames
     // (341 ms at 48 kHz), and its counters. m_radioAudioFlowing belongs to
     // the consumer thread alone.

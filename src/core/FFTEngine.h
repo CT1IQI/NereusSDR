@@ -46,6 +46,12 @@
 //               ruling (option a) after the frozen waterfall on lossy
 //               Wi-Fi and HL2 links. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Claude Code.
+//   2026-10-24: The bound holds once a gap has been let through (JJ's
+//               ruling, option i): later gaps are let through too, until a
+//               whole window of samples passes with no gap. A lossy link
+//               keeps its full frame rate with a slight smear; a single gap
+//               on a healthy link still drops the window. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -283,12 +289,16 @@ public slots:
     /// this engine's thread, queued in order with the samples, so the
     /// flag is always taken by the first batch after the gap.
     ///
-    /// NereusSDR-original (2026-10-23): the reset is bounded. When the
-    /// engine has produced no frame for kGapResetStallFrameIntervals frame
-    /// intervals, the gap is let through: the window keeps its samples and
-    /// windowResetsSkipped() counts it, so a link that loses packets more
-    /// often than once a window shows a slightly smeared line instead of a
-    /// frozen display.
+    /// NereusSDR-original (2026-10-23, option i 2026-10-24): the reset is
+    /// bounded. On a healthy link a single gap still drops the window, as
+    /// above. When the engine has produced no frame for
+    /// kGapResetStallFrameIntervals frame intervals, the gap is let through
+    /// instead: the window keeps its samples and windowResetsSkipped()
+    /// counts it. From then on every gap is let through, until one whole
+    /// window of samples (the FFT size, in input pairs) has passed with no
+    /// gap; then the engine resets on a gap again. So on a lossy link, one
+    /// that loses packets more often than once a window, frames keep their
+    /// normal rate and show a slight smear instead of a frozen display.
     void requestWindowReset() { m_windowResetPending.store(true); }
 
     /// Wie oft ein Fenster deshalb verworfen wurde (Diagnose).
@@ -309,24 +319,27 @@ public slots:
 
 public:
     /// NereusSDR-original (2026-10-23): requested resets let through
-    /// without dropping the window, because the engine had produced no
-    /// frame for kGapResetStallFrameIntervals frame intervals.
+    /// without dropping the window: the engine had produced no frame for
+    /// kGapResetStallFrameIntervals frame intervals, or (2026-10-24) a gap
+    /// had been let through less than a window of samples before.
     quint64 windowResetsSkipped() const { return m_windowResetsSkipped.load(); }
 
     /// NereusSDR-original (2026-10-23). This engine's worker thread only.
     /// Takes a pending requestWindowReset() now rather than at the next
     /// feedIQ(), which takes it the same way. Returns true when the window
-    /// was dropped, false when no reset was pending or the stall bound let
-    /// the gap through. The daemon's spectrum source uses the answer to
+    /// was dropped, false when no reset was pending or the bound let the
+    /// gap through (requestWindowReset() says when). The daemon's spectrum source uses the answer to
     /// restart its sample clock only when the samples really restart.
     bool applyPendingWindowReset();
 
     /// NereusSDR-original (2026-10-23): the gap-reset stall bound, in frame
-    /// intervals. NereusSDR's own value: neither Longpath (which resets on
-    /// every throttled gap) nor AetherSDR (which resets on every gap) bounds
-    /// the stall. A frame interval is what paces this engine's output: the
-    /// window advance processFrame() takes, sampleRate / outputFps samples,
-    /// no more than the FFT size unless transforms follow the frame rate.
+    /// intervals: with no frame for this long, the next gap is the first
+    /// one let through (requestWindowReset()). NereusSDR's own value:
+    /// neither Longpath (which resets on every throttled gap) nor AetherSDR
+    /// (which resets on every gap) bounds the stall. A frame interval is
+    /// what paces this engine's output: the window advance processFrame()
+    /// takes, sampleRate / outputFps samples, no more than the FFT size
+    /// unless transforms follow the frame rate.
     static constexpr int kGapResetStallFrameIntervals = 3;
 
     /// The generation frames are stamped with now. 0 until the first
@@ -485,6 +498,12 @@ private:
     // skipped between windows) since the last frame (worker thread only).
     std::atomic<quint64> m_windowResetsSkipped{0};
     qint64 m_pairsSinceFrame{0};
+    // NereusSDR-original (2026-10-24), JJ's ruling (option i): set when a
+    // gap is let through, cleared once m_pairsSinceGap (decimated input
+    // pairs since the last gap let through) reaches the FFT size. While
+    // set, every gap is let through (worker thread only).
+    bool m_lettingGapsThrough{false};
+    qint64 m_pairsSinceGap{0};
     // The input pairs one frame interval spans (kGapResetStallFrameIntervals).
     qint64 frameIntervalPairs() const;
 
