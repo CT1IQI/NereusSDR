@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-24: Setup description cap 30, General > Filters' Limit filter
+//               edges to sidebands row. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: "Limit filter edges to sidebands" (LimitFiltersToSidebands)
 //               reaches the Core's slices when a window's change or a
 //               removal lands in its settings. J.J. Boyd (KG4VCF),
@@ -1528,12 +1531,13 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
-// The highest Setup description version the Core sends (29: the accepted
+// The highest Setup description version the Core sends (30: General's
+// Filters page with Limit filter edges to sidebands; 29: the accepted
 // eight Display pages and scoped picture controls; 28: Display's FFT
 // sizing rows and the averaging times from 1 ms; 27: Appearance's Trace
 // Color row beside Fill Color; 26: Display's Waterfall Defaults level gates
 // and the allOf form of enabledWhen).
-constexpr int kSetupDescriptionCap = 29;
+constexpr int kSetupDescriptionCap = 30;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -9697,7 +9701,8 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
             // speaker rows; TX Input titled Microphone. 26: Display >
             // Waterfall Defaults' level rows grey out as the desktop page's
-            // do (the allOf form of enabledWhen).
+            // do (the allOf form of enabledWhen). 30: General > Filters'
+            // Limit filter edges to sidebands row.
             const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;

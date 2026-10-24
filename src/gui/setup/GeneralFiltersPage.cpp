@@ -13,6 +13,10 @@
 //                setup.cs:22378-22381 [v2.10.3.15]), the Core's
 //                LimitFiltersToSidebands setting. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
+//   2026-10-24 - The checkbox carries the Setup description id
+//                general.filters.limitFilterEdgesToSidebands, the phone's
+//                Filters row. J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -85,6 +89,8 @@ GeneralFiltersPage::GeneralFiltersPage(RadioModel* model, QWidget* parent)
         QStringLiteral("chkLimitFilterEdgesToSidebands"));
     m_chkLimitFilterEdgesToSidebands->setToolTip(
         tr("Prevents crossing the 0 point with certain filters"));
+    m_chkLimitFilterEdgesToSidebands->setProperty(
+        "nereusSetupId", "general.filters.limitFilterEdgesToSidebands");
     syncLimitFromModel();
     connect(m_chkLimitFilterEdgesToSidebands, &QCheckBox::toggled, this, [this](bool on) {
         if (m_lblLimitCore) {
