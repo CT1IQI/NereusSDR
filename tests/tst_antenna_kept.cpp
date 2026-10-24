@@ -173,6 +173,28 @@ private slots:
         QCOMPARE(bench.a()->rxAntenna(), QStringLiteral("ANT1"));
     }
 
+    // PR 637: a slice tuned onto the station's band while the receive
+    // antenna is kept takes only that band's transmit label. Its receive
+    // label is left alone, as at a crossing: writing it would store the
+    // kept antenna as the band's own.
+    void aSliceTunedOntoTheStationsBandWhileKeptTakesOnlyItsTransmitLabel()
+    {
+        Bench bench;
+        bench.a()->setFrequency(7074000.0);
+        QCOMPARE(bench.model.keptReceiveAntennaBandForTest(), std::optional<Band>(Band::Band20m));
+        SliceModel* const b = bench.model.sliceById(1);
+        QCOMPARE(b->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(b->txAntenna(), QStringLiteral("ANT1"));
+        b->setFrequency(7100000.0);   // onto 40 m, the station's band
+        QCOMPARE(bench.model.lastBand(), Band::Band40m);
+        QCOMPARE(b->txAntenna(), QStringLiteral("ANT2"));
+        QCOMPARE(b->rxAntenna(), QStringLiteral("ANT1"));
+        const AlexController& alex = bench.model.alexControllerMutable();
+        QCOMPARE(alex.rxAnt(Band::Band40m), 2);
+        QCOMPARE(alex.rxAnt(Band::Band15m), 1);
+        QVERIFY(bench.model.keptReceiveAntennaBandForTest().has_value());
+    }
+
     void theTransmitAntennaAppliesAtKeyDownAndTheKeptOneComesBack()
     {
         Bench bench;
@@ -374,7 +396,13 @@ private slots:
 
         // A's pick on its own slice; with B signed in the change may wait
         // for A's yes, which A gives.
+        // A write held for a question is answered by the question it raised:
+        // a confirm.request that arrived after the write, not the wording of
+        // its reason. With no new question the result stands, and the
+        // caller's QVERIFY2 reports it.
         const auto pick = [&](const char* property, quint32 id) {
+            const qsizetype questionsBefore =
+                ofType(appA->received(), QStringLiteral("confirm.request")).size();
             appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
                 "slice:0", {utf8(property, QStringLiteral("ANT3"))}, id)));
             const bool answered =
@@ -383,12 +411,12 @@ private slots:
             const QJsonArray results =
                 propertyResult(appA, id).value(QStringLiteral("results")).toArray();
             QJsonObject result = results.isEmpty() ? QJsonObject{} : results.first().toObject();
-            if (result.value(QStringLiteral("reason")).toString()
-                == QStringLiteral("Waiting for you to confirm.")) {
-                const QJsonObject question =
-                    ofType(appA->received(), QStringLiteral("confirm.request")).last();
+            const QList<QJsonObject> questions =
+                ofType(appA->received(), QStringLiteral("confirm.request"));
+            if (!result.value(QStringLiteral("accepted")).toBool(false)
+                && questions.size() > questionsBefore) {
                 result = core.invoke(appA, "confirm.proceed",
-                    {int64("id", question.value(QStringLiteral("id")).toInteger()),
+                    {int64("id", questions.last().value(QStringLiteral("id")).toInteger()),
                      int64("choice", -1)});
             }
             return result;
