@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - rxAntennaLabelFor: refreshAntennasFromAlex's receive-label
+//                rule on its own, so the Core can compare the label a slice
+//                will have on a new band before it gets there. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - refreshAntennasFromAlex names RX-only 4 and 5 by the XVTR
 //                label. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
@@ -853,6 +857,18 @@ void SliceModel::setTxAntenna(const QString& ant)
     }
 }
 
+namespace {
+// ANT1..ANT3 by number, as the Alex grid names them.
+QString antennaName(int n)
+{
+    switch (n) {
+        case 2:  return QStringLiteral("ANT2");
+        case 3:  return QStringLiteral("ANT3");
+        default: return QStringLiteral("ANT1");
+    }
+}
+} // namespace
+
 // Phase 3P-I-a T13 — reverse sync: AlexController write → slice cache refresh.
 // Reads the current per-band RX and TX antenna values from AlexController
 // and refreshes the slice's cached m_rxAntenna / m_txAntenna via the public
@@ -869,37 +885,36 @@ void SliceModel::setTxAntenna(const QString& ant)
 // "ANT1" in the popup gets no-op'd by setRxAntenna's equality guard,
 // trapping the user on the bypass path. With the SkuUiProfile in hand
 // we resolve rxOnlyAnt (1..3) to the per-SKU label trio (BYPS/EXT1/XVTR
-// for ANAN-7000D, EXT2/EXT1/XVTR for ANAN-100D, etc).
-void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
-                                         Band band,
-                                         const SkuUiProfile* sku)
+// for ANAN-7000D, EXT2/EXT1/XVTR for ANAN-100D, etc). rxAntennaLabelFor is
+// the receive half of that rule on its own.
+QString SliceModel::rxAntennaLabelFor(const AlexController& alex,
+                                      Band band,
+                                      const SkuUiProfile* sku)
 {
     const int rxOnly = alex.rxOnlyAnt(band);  // 0=none, 1..5 (checkbox sum)
     const int rx     = alex.rxAnt(band);      // 1..3
-    const int tx     = alex.txAnt(band);      // 1..3
-    auto name = [](int n) {
-        switch (n) {
-            case 2:  return QStringLiteral("ANT2");
-            case 3:  return QStringLiteral("ANT3");
-            default: return QStringLiteral("ANT1");
-        }
-    };
 
     // Issue #257: prefer the SKU-specific RX-only label when the bypass mux
     // is engaged. Fall back to the ANT* label when sku is null, when the
     // mux is disengaged (rxOnly == 0), or when the indexed slot in the SKU
     // is empty (defensive — should never happen because rxOnlyLabels is
     // always-3 in SkuUiProfile.h).
-    QString rxLabel;
     // 4 and 5 (XVTR with an input, Thetis's checkbox sum) are named by the
     // XVTR box, as Thetis names the winning box (rxOnlyLabelSlot).
     const int rxOnlySlot = AlexController::rxOnlyLabelSlot(rxOnly);
     if (sku && rxOnlySlot >= 0) {
         const QString& slot = sku->rxOnlyLabels[static_cast<size_t>(rxOnlySlot)];
-        rxLabel = slot.isEmpty() ? name(rx) : slot;
-    } else {
-        rxLabel = name(rx);
+        return slot.isEmpty() ? antennaName(rx) : slot;
     }
+    return antennaName(rx);
+}
+
+void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
+                                         Band band,
+                                         const SkuUiProfile* sku)
+{
+    const int tx = alex.txAnt(band);  // 1..3
+    const QString rxLabel = rxAntennaLabelFor(alex, band, sku);
 
     // Use the public setters so rxAntennaChanged / txAntennaChanged
     // signals fire — VFO Flag and RxApplet listen. The loop back to
@@ -907,7 +922,7 @@ void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
     // setRxAnt/setTxAnt returns early on equal value, so no signal is
     // emitted.
     setRxAntenna(rxLabel);
-    setTxAntenna(name(tx));
+    setTxAntenna(antennaName(tx));
 }
 
 // ---------------------------------------------------------------------------

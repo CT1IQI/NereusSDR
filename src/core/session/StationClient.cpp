@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: declares
+//                                    displayCodec 2. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  Declares radioAntennaRows 2 (RX-only
 //                                    antennas 0..5) and takes version 1 or
 //                                    2. AI-assisted via Anthropic Claude
@@ -579,6 +582,9 @@
 //   2026-10-12: a held change is logged as a confirmation request rather
 //               than a refusal. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-22: a typed Core name's addresses raced in dialStation
+//               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -587,6 +593,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationClient.h"
 #include "core/session/RemoteStationOptions.h"
@@ -1067,6 +1074,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // R-DISP-RETUNE: this client reads the picture a spectrum context
     // continues, when the Core states it.
     m_declaredFeatures.insert(QByteArrayLiteral("spectrumPicture"), 1);
+    // Display codec v2 (NSDC v2): this client reads version 2 display
+    // frames, so the Core may state displayCodecVersion; the connection
+    // uses them only when its media start asks for them.
+    m_declaredFeatures.insert(QByteArrayLiteral("displayCodec"), 2);
     // This client words the firmware release of the Core's radio with its
     // second number, when the Core sends it (the model reads it from the
     // capabilities).
@@ -1961,7 +1972,8 @@ void StationClient::dialStation(const QUrl& url, const QString& token,
     // Task 29 step 2b (options survey B.5): the computer's own proxy
     // settings (SystemProxy), for a network that reaches out only through
     // one. The Core's identity check at its hello is unchanged.
-    socket->setProxy(SystemProxy::forUrl(url));
+    // 2026-10-22: a typed name's addresses raced (HappyEyeballs.h).
+    socket->setProxy(HappyEyeballs::proxyForWebSocket(url, socket));
     socket->open(url);
 }
 
