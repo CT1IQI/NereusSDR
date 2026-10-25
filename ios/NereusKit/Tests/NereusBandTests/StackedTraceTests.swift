@@ -232,6 +232,21 @@ import Testing
     /// Match divides the waterfall's height in points by 96, as the
     /// desktop divides its logical pixels: an iPhone 18 Pro Max's waterfall
     /// of about 960 pixel rows at 3x makes a row of three lines, not ten.
+    @Test func theGlideRunsOnTheCoresRowPeriodLikeTheDesktop() {
+        // The Core sends 30 frames a second, a line a frame: a line every 33.3 ms, not the 30 ms setting.
+        let period = StackedTrace.rowPeriodSeconds(fps: 30, framesPerLine: 1, fallbackMs: 30)
+        #expect(abs(period - 1.0 / 30) < 1e-12)
+        #expect(StackedTrace.rowPeriodSeconds(fps: 30, framesPerLine: 2, fallbackMs: 30) == 2.0 / 30)
+        // 90 ms into a row of three lines, the stack is 9/10 of the way, still moving.
+        let glide = StackedTrace.glide(since: 0.09, rowPeriod: period, divider: 3)
+        #expect(abs(glide - 0.9) < 1e-9, "on the 30 ms setting it reached 1 at 90 ms and stood still until the next row")
+        #expect(StackedTrace.glide(since: 0.2, rowPeriod: period, divider: 3) == 1)
+        #expect(StackedTrace.glide(since: -0.01, rowPeriod: period, divider: 3) == 0)
+        // Before the Core says, the Update period setting stands.
+        #expect(StackedTrace.rowPeriodSeconds(fps: 0, framesPerLine: 0, fallbackMs: 30) == 0.03)
+        #expect(StackedTrace.rowPeriodSeconds(fps: 0, framesPerLine: 0, fallbackMs: 0) == 0.001)
+    }
+
     @Test func matchCountsTheWaterfallInPointsLikeTheDesktop() {
         // 1014 pixels less the 54-pixel frequency scale: a waterfall of 960 pixel rows, 320 points.
         let layout = BandLayout(size: CGSize(width: 1320, height: 1014), scale: 3, showsStrip: false, spectrumShare: 0)
