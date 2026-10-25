@@ -217,6 +217,13 @@ public struct WaterfallHistory: Equatable, Sendable {
         storage[(row * columns)..<((row + 1) * columns)]
     }
 
+    /// Calls `body` with the whole storage, `columns` bytes a row from row
+    /// 0, rows that hold no line yet all zeros: the renderer uploads it in
+    /// one copy after a layout change.
+    func withStorageBytes<Result>(_ body: (UnsafeRawBufferPointer) throws -> Result) rethrows -> Result {
+        try storage.withUnsafeBytes(body)
+    }
+
     /// The frequencies storage row `row` covers, nil when not known.
     public func coverage(storageRow row: Int) -> BandCoverage? {
         row >= 0 && row < coverages.count ? coverages[row] : nil
