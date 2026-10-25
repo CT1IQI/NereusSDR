@@ -35,9 +35,10 @@ public struct BandState: Equatable, Sendable {
     public var transmittingWaterfall = false
     private var blanker = WaterfallBlanker()
     public var stackRowDivider = 0
-    /// Visible waterfall geometry, independent of retained rewind capacity:
-    /// its height in points (``BandLayout/waterfallPoints``), as Match
-    /// counts it (``noteVisibleWaterfall(_:)``).
+    /// The waterfall height in points that Match counts, independent of
+    /// the retained rewind capacity. Upright it is the visible height
+    /// (``BandLayout/waterfallPoints``); sideways it is the upright height
+    /// the band last had, or an estimate of it (``noteVisibleWaterfall(_:)``).
     public var stackVisibleWaterfallRows = 0
     /// The waterfall's height in points the last time the band stood
     /// upright; nil before it has.
@@ -61,8 +62,9 @@ public struct BandState: Equatable, Sendable {
     /// 2026-10-25: smooth both ways with no setting changed). The desktop
     /// follows its pane's height as it is.
     ///
-    /// Before the band has stood upright, the sideways waterfall's share of
-    /// the band's height, taken over the band's width (its height upright).
+    /// Before the band has stood upright, Match estimates the upright height
+    /// as the sideways waterfall's share of the band's height, taken over
+    /// the band's width, which is its height upright.
     public mutating func noteVisibleWaterfall(_ layout: BandLayout) {
         // A band not laid out yet (no size, or no waterfall) says nothing.
         if layout.size.width > 0, layout.size.height >= layout.size.width, layout.waterfallPoints > 0 {

@@ -288,7 +288,11 @@ import Testing
         var fresh = BandState(waterfallLines: 10)
         fresh.noteVisibleWaterfall(sideways)
         #expect(fresh.stackUprightWaterfallPoints == nil)
-        #expect(fresh.effectiveStackRowDivider > wasSideways)
+        // Sideways at 3x: the 54-pixel scale leaves 936 rows, the spectrum takes
+        // 40% (374), so the waterfall is 990 - 428 = 562 of the 990. That share
+        // of the 956-point width is 542.7 points, and 543 / 96 rounds to 6.
+        #expect(fresh.stackVisibleWaterfallRows == 543)
+        #expect(fresh.effectiveStackRowDivider == 6, "the sideways waterfall alone gave Match \(wasSideways)")
         fresh.noteVisibleWaterfall(upright)
         #expect(fresh.effectiveStackRowDivider == uprightDivider)
     }

@@ -284,6 +284,9 @@ public struct WaterfallHistory: Equatable, Sendable {
         let rows = capacity
         let newest = head - 1
         var remapped = [UInt8](repeating: 0, count: capacity * newColumns)
+        // The loop below reads and writes through raw pointers: a storage of
+        // any other size would take it outside both buffers.
+        precondition(storage.count == capacity * oldColumns, "the waterfall's storage is not its capacity of lines")
         storage.withUnsafeBufferPointer { oldBuffer in
             remapped.withUnsafeMutableBufferPointer { newBuffer in
                 starts.withUnsafeBufferPointer { startBuffer in
