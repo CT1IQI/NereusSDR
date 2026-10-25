@@ -229,6 +229,21 @@ import Testing
         #expect(state.stack.count == 0, "2D keeps no rows")
     }
 
+    /// Match divides the waterfall's height in points by 96, as the
+    /// desktop divides its logical pixels: an iPhone 18 Pro Max's waterfall
+    /// of about 960 pixel rows at 3x makes a row of three lines, not ten.
+    @Test func matchCountsTheWaterfallInPointsLikeTheDesktop() {
+        // 1014 pixels less the 54-pixel frequency scale: a waterfall of 960 pixel rows, 320 points.
+        let layout = BandLayout(size: CGSize(width: 1320, height: 1014), scale: 3, showsStrip: false, spectrumShare: 0)
+        #expect(layout.waterfall.height == 960)
+        #expect(layout.waterfallLines == 960, "the waterfall keeps a line a pixel")
+        var state = BandState(waterfallLines: 10)
+        state.noteVisibleWaterfall(layout)
+        #expect(state.effectiveStackRowDivider == 3, "320 points over 96 rows, not 960 pixels")
+        state.stackRowDivider = 7
+        #expect(state.effectiveStackRowDivider == 7, "a chosen 3D speed stands")
+    }
+
     @Test func theStackKeepsNinetySevenRows() {
         var stack = StackedTraceHistory()
         let pan = BandCoverage(centerHz: 7_200_000, spanHz: 40_000)

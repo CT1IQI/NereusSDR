@@ -35,7 +35,8 @@ public struct BandState: Equatable, Sendable {
     public var transmittingWaterfall = false
     private var blanker = WaterfallBlanker()
     public var stackRowDivider = 0
-    /// Visible waterfall geometry, independent of retained rewind capacity.
+    /// Visible waterfall geometry, independent of retained rewind capacity:
+    /// its height in points (``BandLayout/waterfallPoints``).
     public var stackVisibleWaterfallRows = 0
     private var stackFold = StackTraceFold()
     /// Native Match is round(visible/96), clamped1...64; explicit1...10
@@ -43,6 +44,12 @@ public struct BandState: Equatable, Sendable {
     public var effectiveStackRowDivider: Int {
         if stackRowDivider > 0 { return min(stackRowDivider, 10) }
         return min(max(Int((Double(max(0, stackVisibleWaterfallRows)) / Double(StackedTrace.visibleRows)).rounded()), 1), 64)
+    }
+
+    /// The band's layout before a draw: Match's rows follow the waterfall's
+    /// height in points.
+    public mutating func noteVisibleWaterfall(_ layout: BandLayout) {
+        stackVisibleWaterfallRows = layout.waterfallPoints
     }
 
     /// The phone sets the waterfall's levels itself (Use spectrum min/max):

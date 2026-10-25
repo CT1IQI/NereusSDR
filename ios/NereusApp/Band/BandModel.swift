@@ -759,7 +759,7 @@ final class BandModel: ObservableObject {
         let layout = BandLayout(size: size, scale: scale, settings: shownSettings)
         state.resizeWaterfall(lines: Self.waterfallCapacity(size: size, scale: scale, settings: shownSettings))
         visibleLines = layout.waterfallLines
-        state.stackVisibleWaterfallRows = visibleLines
+        state.noteVisibleWaterfall(layout)
         state.commit(manualLevels: drawnSettings.phoneLevels)
         moveMarks()
         let pixels = BandGeometry.requestedPixels(forWidthPixels: Double(size.width))
