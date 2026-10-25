@@ -19,6 +19,7 @@
 #include "core/session/media/RemoteSpectrumContext.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/HpsdrModel.h"
+#include "core/ReceiverManager.h"
 #include "core/SliceOwnership.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -501,6 +502,75 @@ private slots:
         QCOMPARE(secondary->vfoWidget(1)->frequency(), 7'284'600.0);
         QVERIFY(!secondary->vfoWidget(1)->isHidden());
         QVERIFY(std::abs(secondary->centerFrequency() - 7'284'600.0) < secondary->bandwidth() / 2.0);
+    }
+
+    // Issue #648: with CTUN on and the view zoomed narrower than the DDC, a
+    // tune past the view but still inside the DDC window has to move the
+    // receiver as well as the view. It used to recentre only the widget and
+    // zero the shift, so the radio stayed put and demodulated the old centre.
+    // The on-screen row guards the unchanged path: the DDC stays, WDSP shifts.
+    void localCtunTunePastZoomedViewMovesTheReceiver_data()
+    {
+        QTest::addColumn<double>("offsetHz");
+        QTest::addColumn<bool>("receiverMoves");
+        QTest::newRow("off-view-inside-ddc") << -89'000.0 << true;
+        QTest::newRow("on-view") << 10'000.0 << false;
+    }
+
+    void localCtunTunePastZoomedViewMovesTheReceiver()
+    {
+        QFETCH(double, offsetHz);
+        QFETCH(bool, receiverMoves);
+        constexpr double kPanCentreHz = 3'899'000.0;
+        constexpr double kViewSpanHz = 48'000.0;
+        Test::markAudioFirstRunDone();
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        window.resize(1280, 800);
+        window.show();
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(model->addSlice(QStringLiteral("pan-0")) >= 0);
+        SliceModel* slice = model->sliceById(0);
+        QVERIFY(slice);
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        QVERIFY(model->receiverManager());
+
+        // Place the pan with CTUN off, so the DDC lands on the slice, then
+        // pin it and zoom in around it.
+        pan->setCtunEnabled(false);
+        slice->setFrequency(kPanCentreHz);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+        QCOMPARE(model->streamCentreHz(stream), kPanCentreHz);
+        pan->setCtunEnabled(true);
+        QVERIFY(model->receiverManager()->ddcFrequencyLocked());
+        pan->setFrequencyRange(kPanCentreHz, kViewSpanHz);
+        QCOMPARE(pan->centerFrequency(), kPanCentreHz);
+        QCOMPARE(pan->bandwidth(), kViewSpanHz);
+        QVERIFY(std::abs(offsetHz) < model->streamSampleRateHz(stream) / 2.0);
+        QCOMPARE(std::abs(offsetHz) > kViewSpanHz / 2.0, receiverMoves);
+
+        const double tunedHz = kPanCentreHz + offsetHz;
+        slice->setFrequency(tunedHz);
+
+        QCOMPARE(slice->frequency(), tunedHz);
+        QCOMPARE(slice->streamIndex(), stream);
+        const double expectedCentreHz = receiverMoves ? tunedHz : kPanCentreHz;
+        QCOMPARE(model->streamCentreHz(stream), expectedCentreHz);
+        QCOMPARE(double(model->receiverManager()->receiverConfig(stream).frequencyHz),
+                 expectedCentreHz);
+        QCOMPARE(pan->ddcCenterFrequency(), expectedCentreHz);
+        QCOMPARE(slice->shiftOffsetHz(), tunedHz - expectedCentreHz);
+        QCOMPARE(model->streamCentreHz(stream) + slice->shiftOffsetHz(), slice->frequency());
+        QVERIFY(std::abs(slice->frequency() - pan->centerFrequency()) <= pan->bandwidth() / 2.0);
+        QVERIFY(pan->ctunEnabled());
+        QVERIFY(model->receiverManager()->ddcFrequencyLocked());
     }
 
     void stack_starts_with_layout_single()

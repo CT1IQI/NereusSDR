@@ -5674,9 +5674,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         // afterwards, so a slice tuned to another band left its pan behind.
         //
         // Per pan now, and using this slice's own WDSP channel rather than the
-        // hardcoded rxChannel(0) the single-pan version used. The DDC retune
-        // itself lives in RadioModel::bindSliceToStream (Sub-Epic I) and is not
-        // duplicated here; this is the DISPLAY half.
+        // hardcoded rxChannel(0) the single-pan version used. Without CTUN the
+        // DDC retune itself lives in RadioModel::bindSliceToStream (Sub-Epic I)
+        // and is not duplicated here; this is the DISPLAY half. With CTUN on,
+        // bindSliceToStream keeps a pinned DDC put whenever the slice is still
+        // inside its window, so a tune past the zoomed VIEW moves the DDC here
+        // instead (issue #648).
         const double center = host->centerFrequency();
         const double halfBw = host->bandwidth() / 2.0;
         const bool offScreen = (hz < center - halfBw) || (hz > center + halfBw);
@@ -5684,7 +5687,29 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             followRemoteSliceFrequency(host, hz);
             return;
         }
-        if (!host->ctunEnabled() || offScreen) {
+        if (host->ctunEnabled() && offScreen && !foreignHost) {
+            // CTUN, off the view: the slice may still sit inside the pinned
+            // DDC window (the view is zoomed narrower than the DDC rate), and
+            // then nothing has moved the hardware. Move it through the model
+            // so the allocator, the radio and every shift on the stream agree;
+            // streamCentreChanged brings this pan's DDC centre with it. The
+            // CTUN pin stays as it is.
+            m_handlingBandJump = true;
+            const bool moved = m_radioModel->requestStreamCentre(
+                slice->sliceIndex(), std::round(hz));
+            host->setCenterFrequency(hz);
+            if (moved) {
+                host->setDdcCenterFrequency(
+                    m_radioModel->streamCentreHz(slice->streamIndex()));
+            } else {
+                // Refused: another slice on the stream would leave the moved
+                // window, so the DDC stays where it really is (a CTUN drag
+                // writes that into this widget, ahead of the allocator) and
+                // the shift is kept against it rather than zeroed.
+                m_radioModel->applySliceStreamCentre(slice, host->ddcCenterFrequency());
+            }
+            m_handlingBandJump = false;
+        } else if (!host->ctunEnabled() || offScreen) {
             m_handlingBandJump = true;
             const bool wasCtun = host->ctunEnabled();
             if (m_radioModel->receiverManager()) {
