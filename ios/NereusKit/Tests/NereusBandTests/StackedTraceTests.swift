@@ -249,7 +249,7 @@ import Testing
 
     @Test func matchCountsTheWaterfallInPointsLikeTheDesktop() {
         // 1014 pixels less the 54-pixel frequency scale: a waterfall of 960 pixel rows, 320 points.
-        let layout = BandLayout(size: CGSize(width: 1320, height: 1014), scale: 3, showsStrip: false, spectrumShare: 0)
+        let layout = BandLayout(size: CGSize(width: 900, height: 1014), scale: 3, showsStrip: false, spectrumShare: 0)
         #expect(layout.waterfall.height == 960)
         #expect(layout.waterfallLines == 960, "the waterfall keeps a line a pixel")
         var state = BandState(waterfallLines: 10)
@@ -257,6 +257,40 @@ import Testing
         #expect(state.effectiveStackRowDivider == 3, "320 points over 96 rows, not 960 pixels")
         state.stackRowDivider = 7
         #expect(state.effectiveStackRowDivider == 7, "a chosen 3D speed stands")
+    }
+
+    /// JJ, 2026-10-25, on build 7777: upright and sideways "feel like
+    /// different speeds". An iPhone 18 Pro Max's band, upright and turned,
+    /// at the desktop's default settings and a Core at 30 fps, a line a frame.
+    @Test func turningThePhoneKeepsMatchsRowsASecond() throws {
+        let settings = BandDisplaySettings.desktopDefaults
+        let upright = BandLayout(size: CGSize(width: 1320, height: 2319), scale: 3, settings: settings)
+        let sideways = BandLayout(size: CGSize(width: 2868, height: 990), scale: 3, settings: settings)
+        let wasSideways = min(max(Int((Double(sideways.waterfallPoints) / 96).rounded()), 1), 64)
+        let period = StackedTrace.rowPeriodSeconds(fps: 30, framesPerLine: 1, fallbackMs: 30)
+        func rowsASecond(_ state: BandState) -> Double { 1 / (period * Double(state.effectiveStackRowDivider)) }
+
+        var state = BandState(waterfallLines: 10)
+        state.noteVisibleWaterfall(upright)
+        let uprightDivider = state.effectiveStackRowDivider
+        let uprightRows = rowsASecond(state)
+        let uprightGlide = StackedTrace.glide(since: 0.05, rowPeriod: period, divider: uprightDivider)
+        #expect(uprightDivider > wasSideways, "the sideways waterfall alone gave Match \(wasSideways)")
+        for layout in [sideways, upright, sideways] {
+            state.noteVisibleWaterfall(layout)
+            #expect(state.effectiveStackRowDivider == uprightDivider)
+            #expect(rowsASecond(state) == uprightRows)
+            #expect(StackedTrace.glide(since: 0.05, rowPeriod: period,
+                                       divider: state.effectiveStackRowDivider) == uprightGlide)
+        }
+
+        // Started sideways: the band's width stands in for its upright height.
+        var fresh = BandState(waterfallLines: 10)
+        fresh.noteVisibleWaterfall(sideways)
+        #expect(fresh.stackUprightWaterfallPoints == nil)
+        #expect(fresh.effectiveStackRowDivider > wasSideways)
+        fresh.noteVisibleWaterfall(upright)
+        #expect(fresh.effectiveStackRowDivider == uprightDivider)
     }
 
     @Test func theStackKeepsNinetySevenRows() {
