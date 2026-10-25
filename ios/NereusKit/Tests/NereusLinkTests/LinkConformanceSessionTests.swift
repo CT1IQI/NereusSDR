@@ -1,5 +1,10 @@
 // NereusSDR for iOS: the link's session fixtures, played against the app's session in the client's role
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: the app's features gain displayCodec 2 (NSDC v2).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -170,14 +175,14 @@ import Testing
             #expect(ids.contains(id), "\(id)")
         }
         #expect(LinkFeatures.app == ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                     "setupDescription": 29, "settingsHygiene": 2, "radioAntennaRows": 2, "vax": 1, "txEqCurve": 2,
+                                     "setupDescription": 30, "settingsHygiene": 2, "radioAntennaRows": 2, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1,
                                   "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1])
+                                  "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

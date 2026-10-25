@@ -56,6 +56,9 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Slice<N>/RfGain documented as -20..120, the AGC-T range
+//                SliceModel::setRfGain now keeps. J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -635,7 +638,7 @@ public:
     //   Slice<N>/XitEnabled — "True"/"False"
     //   Slice<N>/XitHz      — int Hz
     //   Slice<N>/AfGain     — int 0-100
-    //   Slice<N>/RfGain     — int 0-100
+    //   Slice<N>/RfGain     — int -20..120 (AGC-T, WDSP AGC top)
     //   (No antenna keys: Setup's per-band antenna table under
     //   hardware/<mac>/alex/antenna/ is the only antenna store. Older builds
     //   wrote Slice<N>/RxAntenna and TxAntenna; nothing reads them now.
