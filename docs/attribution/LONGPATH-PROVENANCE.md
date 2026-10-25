@@ -15,15 +15,16 @@ License section below.
 |---|---|
 | Project | Longpath |
 | Repository | https://github.com/oe5sos/Longpath |
-| Revision | 383f058991e9f6a2f5fdc8575a6476b530ab6081 (v0.8.0-1, main) |
+| Revision | bb9f675c1904cc791b32a907de6cb3b554ac31ea (v0.8.2-6, main) |
 | Lineage | a fork of NereusSDR, renamed; rotor work since 2026-08-07 |
 | Primary author | Martin Fischer (OE5SOS) |
-| Local reference clone | `../Longpath/`, pinned at `383f0589`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
+| Local reference clone | `../Longpath/`, pinned at `bb9f675c`. Never pulled mid-task; re-pinning is deliberate and re-verifies every cite. |
 | Language | C++20 / Qt6 |
 | License | GPLv3 at project level (the project's LICENSE file) |
 
 Line ranges in a row with no sha are at the Revision pin above; an older row
 names its own sha (`at @<sha>`) where its ranges no longer hold at the pin.
+Rows already recorded at `@551576e` (or `@383f058`) stay as they are, because they record the version that was read.
 
 Longpath grew out of NereusSDR. Some Longpath files carry
 a Longpath banner with AetherSDR attribution (for example
