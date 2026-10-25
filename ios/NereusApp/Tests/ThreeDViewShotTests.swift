@@ -175,6 +175,36 @@ struct ThreeDViewShotTests {
     ]
 
     static func feed(_ band: BandModel, width: Int, lines: Int) {
+        for (index, line) in boardLines(width: width, lines: lines).enumerated() {
+            let sequence = index + 1
+            let frame = DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: UInt32(sequence),
+                                     producerTimestamp: UInt64(sequence) * 33_000_000, isKeyframe: sequence == 1,
+                                     waterfallAdvance: true, minDbm: -160, maxDbm: 0, traceDbm: line.trace,
+                                     waterfallDbm: line.trace, wideDbm: line.wide)
+            band.receive(.displayFrame(frame))
+            band.receive(.displayExtras(DisplayExtras(endpointId: 1, contextGeneration: 1,
+                                                      encoderSequence: UInt32(sequence), peakBlobs: nil,
+                                                      peakHoldDbm: nil, noiseFloorDbm: boardFloorDbm,
+                                                      waterfallLevels: .init(lowDbm: -126, highDbm: -70))))
+        }
+    }
+
+    /// One line of the board's signals: the pan's trace and the wide row.
+    typealias BoardLine = (trace: [Float], wide: [Float])
+
+    /// The lines last made, and the width and count they were made for.
+    private static var madeLines: (width: Int, lines: Int, made: [BoardLine])?
+
+    /// The board's lines for a width and a count. They are the same for
+    /// every picture of that size, because the noise starts from the same
+    /// seed each time, so the last size's lines are kept for the next
+    /// picture. Made afresh, an upright picture's 2,622 lines took about
+    /// 11 s on the hosted simulator in a debug build (CI logs, 2026-10-25),
+    /// and most of `bandShots`'s pictures are upright, one after another.
+    static func boardLines(width: Int, lines: Int) -> [BoardLine] {
+        if let kept = madeLines, kept.width == width, kept.lines == lines {
+            return kept.made
+        }
         var seed: UInt64 = 7
         func random() -> Float {
             seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
@@ -201,22 +231,18 @@ struct ThreeDViewShotTests {
             return dbm
         }
         let wideLow = 0.5 - StackedTrace.widestRowSpan / 2
+        var made: [BoardLine] = []
+        made.reserveCapacity(lines)
         for sequence in 1...lines {
             let time = Double(sequence) * 0.055
             let trace = (0..<width).map { level((Double($0) + 0.5) / Double(width), time) }
             let wide = (0..<wideSamples).map {
                 level(wideLow + (Double($0) + 0.5) / Double(wideSamples) * StackedTrace.widestRowSpan, time)
             }
-            let frame = DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: UInt32(sequence),
-                                     producerTimestamp: UInt64(sequence) * 33_000_000, isKeyframe: sequence == 1,
-                                     waterfallAdvance: true, minDbm: -160, maxDbm: 0, traceDbm: trace,
-                                     waterfallDbm: trace, wideDbm: wide)
-            band.receive(.displayFrame(frame))
-            band.receive(.displayExtras(DisplayExtras(endpointId: 1, contextGeneration: 1,
-                                                      encoderSequence: UInt32(sequence), peakBlobs: nil,
-                                                      peakHoldDbm: nil, noiseFloorDbm: boardFloorDbm,
-                                                      waterfallLevels: .init(lowDbm: -126, highDbm: -70))))
+            made.append((trace: trace, wide: wide))
         }
+        madeLines = (width: width, lines: lines, made: made)
+        return made
     }
 
     private func shoot(_ name: String, size: CGSize, sheet: OpenSheet? = nil, app: AppModel, iPad: Bool = false,
