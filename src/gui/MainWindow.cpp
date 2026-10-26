@@ -5694,11 +5694,17 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             // so the allocator, the radio and every shift on the stream agree;
             // streamCentreChanged brings this pan's DDC centre with it. The
             // CTUN pin stays as it is.
+            //
+            // From Thetis console.cs:31418-31425 [v2.10.3.15]: when the
+            // passband leaves the display, Thetis sets CentreFrequency = freq
+            // (during a click-tune drag it scrolls by the overshoot instead).
+            // if (!m_bIgnoreLimitsForZTB) // MW0LGE_21k9  [original inline comment from console.cs:31418]
+            // // re-center if we've jumped far  [original inline comment from console.cs:31422]
             m_handlingBandJump = true;
             const bool moved = m_radioModel->requestStreamCentre(
                 slice->sliceIndex(), std::round(hz));
-            host->setCenterFrequency(hz);
             if (moved) {
+                host->setCenterFrequency(hz);
                 host->setDdcCenterFrequency(
                     m_radioModel->streamCentreHz(slice->streamIndex()));
             } else {
@@ -5706,7 +5712,20 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
                 // window, so the DDC stays where it really is (a CTUN drag
                 // writes that into this widget, ahead of the allocator) and
                 // the shift is kept against it rather than zeroed.
-                m_radioModel->applySliceStreamCentre(slice, host->ddcCenterFrequency());
+                const double ddcHz = host->ddcCenterFrequency();
+                m_radioModel->applySliceStreamCentre(slice, ddcHz);
+                // The view follows the slice only as far as the DDC has
+                // data: its span stays inside the DDC window, and a view
+                // wider than the window centres on the DDC.
+                const double halfWindow =
+                    m_radioModel->streamSampleRateHz(slice->streamIndex()) / 2.0;
+                const double halfView = host->bandwidth() / 2.0;
+                double viewHz = ddcHz;
+                if (halfWindow > 0.0 && halfView < halfWindow) {
+                    viewHz = std::clamp(hz, ddcHz - halfWindow + halfView,
+                                        ddcHz + halfWindow - halfView);
+                }
+                host->setCenterFrequency(viewHz);
             }
             m_handlingBandJump = false;
         } else if (!host->ctunEnabled() || offScreen) {

@@ -36,6 +36,58 @@
 
 using namespace NereusSDR;
 
+namespace {
+
+// Issue #648: a local window with one pan and slice 0 on it, placed at
+// `centreHz` with CTUN off (so the DDC lands on the slice), then pinned
+// with CTUN on and its view set to `spanHz` around the slice.
+struct CtunPan
+{
+    RadioModel* model{nullptr};
+    SliceModel* slice{nullptr};
+    SpectrumWidget* pan{nullptr};
+    int stream{-1};
+};
+
+void placeCtunPan(MainWindow& window, CtunPan& f, double centreHz, double spanHz)
+{
+    window.resize(1280, 800);
+    window.show();
+    f.model = window.radioModel();
+    f.model->setBoardForTest(HPSDRHW::Saturn);
+    f.model->configureStreamPool(5, 5, 192000);
+    f.model->setConnectionStateForTest(ConnectionState::Connected);
+    QVERIFY(f.model->addSlice(QStringLiteral("pan-0")) >= 0);
+    f.slice = f.model->sliceById(0);
+    QVERIFY(f.slice);
+    PanadapterStack* stack = window.findChild<PanadapterStack*>();
+    QVERIFY(stack);
+    f.pan = stack->spectrum(QStringLiteral("pan-0"));
+    QVERIFY(f.pan);
+    QVERIFY(f.model->receiverManager());
+    f.pan->setCtunEnabled(false);
+    f.slice->setFrequency(centreHz);
+    f.stream = f.slice->streamIndex();
+    QVERIFY(f.stream >= 0);
+    QCOMPARE(f.model->streamCentreHz(f.stream), centreHz);
+    f.pan->setCtunEnabled(true);
+    QVERIFY(f.model->receiverManager()->ddcFrequencyLocked());
+    f.pan->setFrequencyRange(centreHz, spanHz);
+    QCOMPARE(f.pan->centerFrequency(), centreHz);
+    QCOMPARE(f.pan->bandwidth(), spanHz);
+}
+
+// The frequency last sent to the stream's receiver.
+double hardwareHz(const CtunPan& f)
+{
+    return double(f.model->receiverManager()->receiverConfig(f.stream).frequencyHz);
+}
+
+constexpr double kCtunPanCentreHz = 3'899'000.0;
+constexpr double kCtunViewSpanHz = 48'000.0;
+
+}  // namespace
+
 class TestPanadapterStackLayouts : public QObject {
     Q_OBJECT
     QString m_isolatedSettingsPath;
@@ -513,7 +565,8 @@ private slots:
     {
         QTest::addColumn<double>("offsetHz");
         QTest::addColumn<bool>("receiverMoves");
-        QTest::newRow("off-view-inside-ddc") << -89'000.0 << true;
+        QTest::newRow("off-view-below-inside-ddc") << -89'000.0 << true;
+        QTest::newRow("off-view-above-inside-ddc") << 89'000.0 << true;
         QTest::newRow("on-view") << 10'000.0 << false;
     }
 
@@ -521,56 +574,115 @@ private slots:
     {
         QFETCH(double, offsetHz);
         QFETCH(bool, receiverMoves);
-        constexpr double kPanCentreHz = 3'899'000.0;
-        constexpr double kViewSpanHz = 48'000.0;
         Test::markAudioFirstRunDone();
         AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
         MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
-        window.resize(1280, 800);
-        window.show();
-        RadioModel* model = window.radioModel();
-        model->setBoardForTest(HPSDRHW::Saturn);
-        model->configureStreamPool(5, 5, 192000);
-        model->setConnectionStateForTest(ConnectionState::Connected);
-        QVERIFY(model->addSlice(QStringLiteral("pan-0")) >= 0);
-        SliceModel* slice = model->sliceById(0);
-        QVERIFY(slice);
-        PanadapterStack* stack = window.findChild<PanadapterStack*>();
-        QVERIFY(stack);
-        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-0"));
-        QVERIFY(pan);
-        QVERIFY(model->receiverManager());
+        CtunPan f;
+        placeCtunPan(window, f, kCtunPanCentreHz, kCtunViewSpanHz);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(std::abs(offsetHz) < f.model->streamSampleRateHz(f.stream) / 2.0);
+        QCOMPARE(std::abs(offsetHz) > kCtunViewSpanHz / 2.0, receiverMoves);
 
-        // Place the pan with CTUN off, so the DDC lands on the slice, then
-        // pin it and zoom in around it.
-        pan->setCtunEnabled(false);
-        slice->setFrequency(kPanCentreHz);
-        const int stream = slice->streamIndex();
-        QVERIFY(stream >= 0);
-        QCOMPARE(model->streamCentreHz(stream), kPanCentreHz);
-        pan->setCtunEnabled(true);
-        QVERIFY(model->receiverManager()->ddcFrequencyLocked());
-        pan->setFrequencyRange(kPanCentreHz, kViewSpanHz);
-        QCOMPARE(pan->centerFrequency(), kPanCentreHz);
-        QCOMPARE(pan->bandwidth(), kViewSpanHz);
-        QVERIFY(std::abs(offsetHz) < model->streamSampleRateHz(stream) / 2.0);
-        QCOMPARE(std::abs(offsetHz) > kViewSpanHz / 2.0, receiverMoves);
+        const double tunedHz = kCtunPanCentreHz + offsetHz;
+        f.slice->setFrequency(tunedHz);
 
-        const double tunedHz = kPanCentreHz + offsetHz;
-        slice->setFrequency(tunedHz);
+        QCOMPARE(f.slice->frequency(), tunedHz);
+        QCOMPARE(f.slice->streamIndex(), f.stream);
+        const double expectedCentreHz = receiverMoves ? tunedHz : kCtunPanCentreHz;
+        QCOMPARE(f.model->streamCentreHz(f.stream), expectedCentreHz);
+        QCOMPARE(hardwareHz(f), expectedCentreHz);
+        QCOMPARE(f.pan->ddcCenterFrequency(), expectedCentreHz);
+        QCOMPARE(f.slice->shiftOffsetHz(), tunedHz - expectedCentreHz);
+        QCOMPARE(f.model->streamCentreHz(f.stream) + f.slice->shiftOffsetHz(),
+                 f.slice->frequency());
+        QVERIFY(std::abs(f.slice->frequency() - f.pan->centerFrequency())
+                <= f.pan->bandwidth() / 2.0);
+        QVERIFY(f.pan->ctunEnabled());
+        QVERIFY(f.model->receiverManager()->ddcFrequencyLocked());
+    }
 
-        QCOMPARE(slice->frequency(), tunedHz);
-        QCOMPARE(slice->streamIndex(), stream);
-        const double expectedCentreHz = receiverMoves ? tunedHz : kPanCentreHz;
-        QCOMPARE(model->streamCentreHz(stream), expectedCentreHz);
-        QCOMPARE(double(model->receiverManager()->receiverConfig(stream).frequencyHz),
-                 expectedCentreHz);
-        QCOMPARE(pan->ddcCenterFrequency(), expectedCentreHz);
-        QCOMPARE(slice->shiftOffsetHz(), tunedHz - expectedCentreHz);
-        QCOMPARE(model->streamCentreHz(stream) + slice->shiftOffsetHz(), slice->frequency());
-        QVERIFY(std::abs(slice->frequency() - pan->centerFrequency()) <= pan->bandwidth() / 2.0);
-        QVERIFY(pan->ctunEnabled());
-        QVERIFY(model->receiverManager()->ddcFrequencyLocked());
+    // Issue #648 review: a CTUN drag moves the hardware but not the
+    // allocator, so an off-view tune back to the allocator's old centre must
+    // still move the radio there, not take the allocator's word for it.
+    void localCtunTuneBackToTheCentreBeforeADragMovesTheReceiver()
+    {
+        constexpr double kDraggedCentreHz = 3'850'000.0;
+        constexpr double kInViewHz = 3'860'000.0;
+        Test::markAudioFirstRunDone();
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        CtunPan f;
+        placeCtunPan(window, f, kCtunPanCentreHz, kCtunViewSpanHz);
+        if (QTest::currentTestFailed()) { return; }
+
+        // What a pan drag does: the widget moves its view, then reports it.
+        f.pan->setFrequencyRange(kDraggedCentreHz, f.pan->bandwidth());
+        emit f.pan->centerChanged(kDraggedCentreHz);
+        QCOMPARE(hardwareHz(f), kDraggedCentreHz);
+        QCOMPARE(f.pan->ddcCenterFrequency(), kDraggedCentreHz);
+        QCOMPARE(f.model->streamCentreHz(f.stream), kCtunPanCentreHz);
+
+        f.slice->setFrequency(kInViewHz);
+        QCOMPARE(hardwareHz(f), kDraggedCentreHz);
+        QCOMPARE(f.slice->shiftOffsetHz(), kInViewHz - kDraggedCentreHz);
+
+        f.slice->setFrequency(kCtunPanCentreHz);
+        QCOMPARE(f.slice->streamIndex(), f.stream);
+        QCOMPARE(hardwareHz(f), kCtunPanCentreHz);
+        QCOMPARE(f.model->streamCentreHz(f.stream), kCtunPanCentreHz);
+        QCOMPARE(f.pan->ddcCenterFrequency(), kCtunPanCentreHz);
+        QCOMPARE(hardwareHz(f) + f.slice->shiftOffsetHz(), f.slice->frequency());
+        QVERIFY(f.pan->ctunEnabled());
+    }
+
+    // Issue #648 review: when moving the DDC would put another slice on the
+    // stream outside its window, the DDC stays, the tuned slice keeps a
+    // shift against where the DDC really is, and the view follows the slice
+    // only as far as the DDC's data reaches.
+    void localCtunTunePastZoomedViewKeepsTheReceiverForACohost()
+    {
+        constexpr double kCohostHz = 3'959'000.0;
+        constexpr double kTunedHz = 3'819'000.0;
+        Test::markAudioFirstRunDone();
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        CtunPan f;
+        // Wide enough for the co-host to be placed on screen, so its own tune
+        // keeps the DDC put; zoomed in after.
+        placeCtunPan(window, f, kCtunPanCentreHz, 192'000.0);
+        if (QTest::currentTestFailed()) { return; }
+        const int cohostId = f.model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(cohostId >= 0);
+        SliceModel* cohost = f.model->sliceById(cohostId);
+        QVERIFY(cohost);
+        cohost->setFrequency(kCohostHz);
+        QCOMPARE(cohost->streamIndex(), f.stream);
+        QCOMPARE(hardwareHz(f), kCtunPanCentreHz);
+        f.pan->setFrequencyRange(kCtunPanCentreHz, kCtunViewSpanHz);
+        QCOMPARE(f.pan->bandwidth(), kCtunViewSpanHz);
+
+        const double halfWindow = f.model->streamSampleRateHz(f.stream) / 2.0;
+        // Inside today's window, off the view, and a move there would drop
+        // the co-host out of the window.
+        QVERIFY(std::abs(kTunedHz - kCtunPanCentreHz) < halfWindow);
+        QVERIFY(std::abs(kTunedHz - kCtunPanCentreHz) > kCtunViewSpanHz / 2.0);
+        QVERIFY(std::abs(kCohostHz - kTunedHz) >= halfWindow);
+
+        f.slice->setFrequency(kTunedHz);
+
+        QCOMPARE(f.slice->streamIndex(), f.stream);
+        QCOMPARE(hardwareHz(f), kCtunPanCentreHz);
+        QCOMPARE(f.model->streamCentreHz(f.stream), kCtunPanCentreHz);
+        QCOMPARE(f.pan->ddcCenterFrequency(), kCtunPanCentreHz);
+        QCOMPARE(f.slice->shiftOffsetHz(), kTunedHz - kCtunPanCentreHz);
+        QCOMPARE(hardwareHz(f) + f.slice->shiftOffsetHz(), f.slice->frequency());
+        QCOMPARE(hardwareHz(f) + cohost->shiftOffsetHz(), cohost->frequency());
+        // The view stops at the DDC window's lower edge and still shows the
+        // slice.
+        const double halfView = f.pan->bandwidth() / 2.0;
+        QCOMPARE(f.pan->centerFrequency(), kCtunPanCentreHz - halfWindow + halfView);
+        QVERIFY(std::abs(f.slice->frequency() - f.pan->centerFrequency()) <= halfView);
+        QVERIFY(f.pan->ctunEnabled());
     }
 
     void stack_starts_with_layout_single()
