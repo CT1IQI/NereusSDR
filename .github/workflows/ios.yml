@@ -6,11 +6,11 @@
 # own media transport and its pairing against the Core's own pairing, by
 # the helper and by a scratch nereusd kept off the network. The app job
 # (plan Task 51) generates the Xcode project, builds the app for devices,
-# and runs the app's tests and NereusKit's on an iPhone 17 simulator, split
-# three ways across three runners at once (see the app job): each builds
-# the app and its tests for the simulator, then boots the simulator and
-# waits for the runner to go quiet (ios/scripts/sim-settle.sh), then runs
-# its part of the tests. They run on
+# and runs the app's tests and NereusKit's on an iPhone 17 simulator, in
+# two parts on two runners at once (see the app job): each builds the app
+# and its tests for the simulator, then boots the simulator and waits for
+# the runner to go quiet (ios/scripts/sim-settle.sh), then runs its part
+# of the tests. They run on
 # changes to the app, to the conformance fixtures the app's tests read, to
 # the station's media transport, pairing and console and the helpers, and
 # to this workflow. On a pull request the app job runs only when the PR
@@ -68,7 +68,7 @@ concurrency:
 
 jobs:
   scope:
-    # Decides whether this pull request runs the app job, which holds three
+    # Decides whether this pull request runs the app job, which holds two
     # macOS runners for over half an hour. Pushes to main always run it. Fails
     # closed: if the diff can't be read, the app job runs.
     runs-on: ubuntu-latest
@@ -185,56 +185,29 @@ jobs:
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27
-    name: The app on the iOS simulator (${{ matrix.part }} of 3)
+    name: The app on the iOS simulator (${{ matrix.part }} of 2)
     # One runner took 75 to 90 minutes for this job (2026-10-17 to
     # 2026-10-25): 31 for the app's unit tests, 22 for its UI tests, 3 for
     # NereusKit's, all one after another, after 5 to 7 minutes of building
-    # and 10 to 16 of the simulator's first boot. So three runners each
-    # build, boot and run a third of the tests at once, about 17 minutes of
-    # tests each:
+    # and 10 to 16 of the simulator's first boot. Most of the unit tests'
+    # time went to making the same synthetic band lines again for every
+    # picture and to waiting 20 s for a heartbeat (both fixed in the
+    # tests), so the parts are now:
     #
-    #   1. the app's unit test suites named in UNIT_TESTS_PART_1,
-    #   2. the app's UI test classes named in UI_TESTS_PART_2, and the
-    #      build for devices,
-    #   3. everything else in the scheme: the app's other unit tests and UI
-    #      tests and all of NereusKit's.
+    #   1. the app's unit tests and NereusKit's, and the build for devices,
+    #   2. the app's UI tests (NereusSDRUITests).
     #
-    # Part 3 is "everything not named", so every test runs in exactly one
-    # part, and a new suite or class runs in part 3 until it is named. Move
-    # names between the lists to keep the parts even; the times per suite
-    # are in each part's log. The three parts and the package and interop
-    # jobs make five macOS jobs, the account's limit.
+    # Each part pays about 13 minutes to build and to wait out the first
+    # boot before its first test, so a third part would cost more runner
+    # time than it saves. Part 1 skips the UI test bundle and part 2 runs
+    # only it, so every test runs in exactly one part with no lists to
+    # keep, and a part that runs no tests fails. With the package and
+    # interop jobs, and ci.yml's Apple Silicon build on a pull request that
+    # touches ios/, that is five macOS jobs, the account's limit.
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3]
-    env:
-      # Swift Testing suites (type names) in NereusSDRTests, the slowest
-      # first, with their seconds in the 2026-10-25 runs.
-      UNIT_TESTS_PART_1: >-
-        SeveralDevicesScreenTests
-        ThreeDViewShotTests
-        DropSheetShotTests
-        ConnectionFlowShotTests
-        TransmitTakeTests
-        WideChipTests
-        KeyedMeterOverlayShotTests
-        DialShotTests
-        ConnectionFlowTests
-        TransmitScreenTests
-        MainScreenShotTests
-        ModesShotTests
-        TuningShotTests
-      # XCTest classes in NereusSDRUITests.
-      UI_TESTS_PART_2: >-
-        DiversityApprovedUITests
-        AboutAppUITests
-        TabBarUITests
-        PanelDragUITests
-        ConfirmWhereTappedUITests
-        SoundPanelUITests
-        TxPanelUITests
-        RenameUITests
+        part: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -263,8 +236,8 @@ jobs:
       # build compiled every file again (for arm64 and x86_64) to no use.
 
       - name: Build for devices
-        # Unsigned: CI holds no signing identity. Once, in part 2.
-        if: matrix.part == 2
+        # Unsigned: CI holds no signing identity. Once, in part 1.
+        if: matrix.part == 1
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'generic/platform=iOS' \
@@ -289,35 +262,26 @@ jobs:
         env:
           PART: ${{ matrix.part }}
         run: |
-          # A name that no longer matches a type would quietly move its
-          # tests to part 3: still run, but the parts no longer even.
-          for name in $UNIT_TESTS_PART_1; do
-            grep -rqE "(struct|class|enum|actor) ${name}([^A-Za-z0-9_]|\$)" ios/NereusApp/Tests ||
-              echo "::warning title=iOS test parts::No type named $name in ios/NereusApp/Tests; its tests run in part 3"
-          done
-          for name in $UI_TESTS_PART_2; do
-            grep -rqE "class ${name}([^A-Za-z0-9_]|\$)" ios/NereusApp/UITests ||
-              echo "::warning title=iOS test parts::No class named $name in ios/NereusApp/UITests; its tests run in part 3"
-          done
-          selection=()
           case "$PART" in
-            1)
-              for name in $UNIT_TESTS_PART_1; do selection+=("-only-testing:NereusSDRTests/$name"); done
-              ;;
-            2)
-              for name in $UI_TESTS_PART_2; do selection+=("-only-testing:NereusSDRUITests/$name"); done
-              ;;
-            3)
-              for name in $UNIT_TESTS_PART_1; do selection+=("-skip-testing:NereusSDRTests/$name"); done
-              for name in $UI_TESTS_PART_2; do selection+=("-skip-testing:NereusSDRUITests/$name"); done
-              ;;
+            1) selection=(-skip-testing:NereusSDRUITests) ;;
+            2) selection=(-only-testing:NereusSDRUITests) ;;
             *)
               echo "Unknown part $PART" >&2
               exit 1
               ;;
           esac
-          echo "Part $PART of 3: ${selection[*]}"
+          echo "Part $PART of 2: ${selection[*]}"
+          result="$RUNNER_TEMP/part-$PART.xcresult"
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -resultBundlePath "$result" \
             "${selection[@]}" \
             test-without-building
+          # A selection that matches nothing still passes in xcodebuild.
+          count=$(xcrun xcresulttool get test-results summary --path "$result" |
+            python3 -c 'import json, sys; print(json.load(sys.stdin).get("totalTestCount", 0))')
+          echo "Part $PART ran $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=iOS test parts::Part $PART ran no tests"
+            exit 1
+          fi

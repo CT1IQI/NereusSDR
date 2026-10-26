@@ -29,6 +29,8 @@ struct ThreeDViewShotTests {
     func bandShots() async throws {
         let rig = try await SetupDescribedPagesTests.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        // The kept lines are for this test's pictures only.
+        defer { Self.madeLines = nil }
         let app = rig.app
         let main = app.main
         try await MainScreenShotTests.fill(rig.station)
@@ -213,17 +215,30 @@ struct ThreeDViewShotTests {
         func noise() -> Float {
             boardFloorDbm + 10 * log10(-log(random() + 1e-9) + 1e-3)
         }
+        // Index loops over local copies of the signals, not `enumerated()`
+        // and `map` over tuples, which a debug build runs many times slower.
+        // The noise is drawn in the same order, so the lines are the same.
+        let signals = boardSignals
+        let outside = boardOutside
         /// A level at `unit` across the pan (outside 0 to 1 is beside it).
         func level(_ unit: Double, _ time: Double) -> Float {
             var dbm = noise()
-            for (index, signal) in boardSignals.enumerated() where unit >= signal.low && unit <= signal.high {
+            for index in 0..<signals.count {
+                let signal = signals[index]
+                guard unit >= signal.low && unit <= signal.high else {
+                    continue
+                }
                 let k = Double(index)
                 let envelope = Float(0.55 + 0.45 * sin(time * (2.1 + k) + k * 1.3) * sin(time * 0.7 + k))
                 let slope = signal.high - signal.low > 0.01
                     ? Float(-14 * (unit - signal.low) / (signal.high - signal.low)) : 0
                 dbm = max(dbm, boardFloorDbm + signal.level * envelope + slope + (random() - 0.5) * 7)
             }
-            for (index, station) in boardOutside.enumerated() where abs(unit - station.unit) < station.width / 2 {
+            for index in 0..<outside.count {
+                let station = outside[index]
+                guard abs(unit - station.unit) < station.width / 2 else {
+                    continue
+                }
                 let edge = Float(1 - pow(abs(unit - station.unit) / (station.width / 2), 4))
                 let wobble = Float(3 * sin(time * 2.3 + Double(index) * 1.7))
                 dbm = max(dbm, boardFloorDbm + station.level * edge + wobble + (random() - 0.5) * 6)
@@ -231,13 +246,19 @@ struct ThreeDViewShotTests {
             return dbm
         }
         let wideLow = 0.5 - StackedTrace.widestRowSpan / 2
+        let wideSpan = StackedTrace.widestRowSpan
+        let wideCount = wideSamples
         var made: [BoardLine] = []
         made.reserveCapacity(lines)
         for sequence in 1...lines {
             let time = Double(sequence) * 0.055
-            let trace = (0..<width).map { level((Double($0) + 0.5) / Double(width), time) }
-            let wide = (0..<wideSamples).map {
-                level(wideLow + (Double($0) + 0.5) / Double(wideSamples) * StackedTrace.widestRowSpan, time)
+            var trace = [Float](repeating: 0, count: width)
+            for pixel in 0..<width {
+                trace[pixel] = level((Double(pixel) + 0.5) / Double(width), time)
+            }
+            var wide = [Float](repeating: 0, count: wideCount)
+            for sample in 0..<wideCount {
+                wide[sample] = level(wideLow + (Double(sample) + 0.5) / Double(wideCount) * wideSpan, time)
             }
             made.append((trace: trace, wide: wide))
         }
