@@ -46,6 +46,8 @@
 // within four windows of the last one is let through once a frame has
 // come since the last reset; the drain's comment says so. J.J. Boyd
 // (KG4VCF), with AI-assisted implementation via Claude Code.
+// 2026-10-26: setEngineFrameGapClockForTest. J.J. Boyd (KG4VCF), with
+// AI-assisted implementation via Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -457,6 +459,16 @@ quint64 DaemonSpectrumSource::engineMinimumGapSkips(const MediaSourceKey& key) c
     if (it == m_sources.cend() || !it->engine) { return 0; }
     // An atomic in FFTEngine: safe to read off its thread.
     return it->engine->minimumGapSkips();
+}
+
+bool DaemonSpectrumSource::setEngineFrameGapClockForTest(const MediaSourceKey& key,
+                                                         std::function<qint64()> clockMs)
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend() || !it->engine) { return false; }
+    // Before any input, so the worker thread is not reading it yet.
+    it->engine->setFrameGapClockForTest(std::move(clockMs));
+    return true;
 }
 
 quint64 DaemonSpectrumSource::engineWindowResets(const MediaSourceKey& key) const

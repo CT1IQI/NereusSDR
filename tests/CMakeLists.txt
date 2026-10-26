@@ -9614,6 +9614,12 @@ nereus_add_test(tst_station_multi_session
 nereus_add_test(tst_tgxl_core_tune
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# CI load round, 2026-10-26: the whole run took 95 s of the 120 s limit on
+# a quiet Linux runner and timed out on a busy one, so four entries: the
+# test's main() places each function in the rest, _part2, _part3 or _part4
+# by its place in the list (the limit is not raised).
+nereus_split_test(tst_tgxl_core_tune ENV NEREUS_TGXL_CORE_TUNE_GROUP
+    GROUPS part2 part3 part4)
 # TGXL tune lane round 2: what the Core sent the tuner that it may answer
 # with its own tune on/off, as one table of sequences. No sockets.
 nereus_add_test(tst_tgxl_answer_tracker)
@@ -10655,6 +10661,12 @@ endif()
 # real FFT/display production, stale control rejection, and slice cleanup.
 nereus_add_test(tst_daemon_media_controller
     fakes/LoopbackTransport.cpp)
+# CI load round, 2026-10-26: the whole run took 110 s of the 120 s limit on
+# a quiet Linux runner and timed out on main under load, so three entries:
+# the test's main() places each function in the rest, _part2 or _part3 by
+# its place in the list (the limit is not raised).
+nereus_split_test(tst_daemon_media_controller
+    ENV NEREUS_DAEMON_MEDIA_CONTROLLER_GROUP GROUPS part2 part3)
 
 # iPhone app plan Task 24 (R-IOS-10): a session with no display endpoint
 # keeps its audio, metrics and S-meter readings and gets no display.
@@ -11310,10 +11322,21 @@ nereus_add_test(tst_cat_headless CORE_ONLY)
 nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
 
 nereus_add_test(tst_cat_rx_commands CORE_ONLY)
+# CI load round, 2026-10-26: 20 s on a quiet Linux runner, six times that
+# on a busy one; the test's main() deals fixtureExecution's rows to
+# _fixtures1 and _fixtures2, and the rest runs the other functions.
+nereus_split_test(tst_cat_rx_commands ENV NEREUS_CAT_RX_COMMANDS_GROUP
+    GROUPS fixtures1 fixtures2)
 
 nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
 nereus_add_test(tst_cat_tx_commands CORE_ONLY)
 nereus_add_test(tst_cat_coverage CORE_ONLY)
+# CI load round, 2026-10-26: 783 fixture rows took 84 s of the 120 s limit
+# on a quiet Linux runner and timed out on a busy one; the test's main()
+# deals allCurrentFixtures's rows to _fixtures1 to _fixtures4, and the
+# rest runs the other functions.
+nereus_split_test(tst_cat_coverage ENV NEREUS_CAT_COVERAGE_GROUP
+    GROUPS fixtures1 fixtures2 fixtures3 fixtures4)
 
 nereus_add_test(tst_cat_tcp CORE_ONLY)
 nereus_add_test(tst_cat_reporting CORE_ONLY)
