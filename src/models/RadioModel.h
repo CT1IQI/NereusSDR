@@ -2367,7 +2367,8 @@ public:
 
     /// Test seam: one tick of the load sampler's timer, its three slots in
     /// order (sampleReceiverDspLoad, the governor, reportDspDiagnostics),
-    /// on the real clock and the measured loads.
+    /// on the real clock and the measured loads. Nothing on a model with
+    /// no load sampler (Role::Remote).
     void dspLoadTickForTest();
 
     /// 2026-10-22: the Core's DSP diagnostics on the load sampler's tick,
