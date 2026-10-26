@@ -106,3 +106,37 @@ correction-applied change.
 Local `main` holds `5898faddc` on top of `e342467fb`, 4,583 commits behind
 `origin/main`. Its content is already on `origin/main`, so it does not need
 pushing. Resetting local `main` to `origin/main` would drop the duplicate.
+
+## Decisions (2026-10-25)
+
+The maintainer handed the open calls to the manager session. Ruled:
+
+- The rail's **Enable DUP** button stays.
+- The PS-A attenuator gate fix (PS-A drives the force-31 rules, as Thetis
+  does) belongs to its own session and is not part of this audit.
+
+Settled on the audit's recommendations, open to the maintainer's veto:
+
+- The live two-tone check runs in the 2026.10.2 bench pass, keyed by the
+  maintainer, following the bench-check procedure.
+- Product buttons keep their shipped order (tones first, then IMD3, then
+  IMD5).
+- The applet keeps working out "correcting" from feedback above 90; it is the
+  Thetis rule.
+- Realtime tests and the broad suite belong to the 2026.10.2 release
+  integration run, not to new work here.
+- Local `main` is left as it is; nothing in the primary checkout is reset.
+  The duplicate commit is harmless.
+
+Ready to build, each small and GUI-only. Items 1 and 2 are being built as
+one PR for 2026.10.2; item 3 runs with the 2026.10.2 bench pass once the
+Windows stations have the release candidate.
+
+1. The inspector's **Tone separation** reading: the gap between the two
+   measured tones, shown only when both are measured, blank otherwise.
+   NereusSDR presentation, no port.
+2. Waterfall correction marks take workspace color roles with the classic
+   fallback, as design section 7 asks for markers.
+3. A Windows and Linux capture pass of the applet, Bench, AmpView and IMD
+   rail, as Task 7 asked. This checks the shipped code and changes no code
+   unless it finds a defect.
