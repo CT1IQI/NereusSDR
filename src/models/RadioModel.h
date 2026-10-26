@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - governNnrLoadForTest: the first call takes the governor
+//                from the load sampler's tick for the model's life.
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
 //                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
 //                Core's setting LimitFiltersToSidebands, applied to every
@@ -2355,7 +2359,9 @@ public:
 
     /// Test seam for governNnrLoad: the same check with the given loads in
     /// place of receiverDspLoad (a missing slice, or nullopt, is not
-    /// measured).
+    /// measured). The first call takes the governor over for this model's
+    /// life: the load sampler's tick stops calling governNnrLoad, so the
+    /// caller's nowMs is the governor's only clock.
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
 
     /// 2026-10-22: the Core's DSP diagnostics on the load sampler's tick,
@@ -7981,6 +7987,9 @@ private:
     // two blocks after a step (slice id -> worker block count at the step).
     NnrLoadGovernor m_nnrGovernor;
     QElapsedTimer m_nnrGovernorClock;
+    // Set by governNnrLoadForTest: the sampler's tick leaves the governor
+    // to the test.
+    bool m_nnrGovernorDrivenByTest{false};
     QHash<int, qint64> m_nnrLimitReadbackPending;
     // 2026-10-22: per slice, non-finite WDSP output samples not yet logged
     // and when the slice's last such line was logged (reportDspDiagnostics).

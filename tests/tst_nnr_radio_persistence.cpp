@@ -10,6 +10,7 @@
 #include "core/RxChannel.h"
 #include "core/SampleRateCatalog.h"
 #include "core/WdspEngine.h"
+#include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/ChannelConfig.h"
 #include "core/dsp/NnrLoadGovernor.h"
 #include "core/wdsp_api.h"
@@ -344,6 +345,11 @@ private slots:
         QVERIFY(slice->nnrRunning());
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrActualModelSlot(), 1);
+        // The Core's own load sampler keeps ticking while the operator acts
+        // (CI run 40260774173: a loaded runner's lane waits spanned a tick).
+        // The governor's clock is still this test's: a real tick in between
+        // must not set its time base on another clock.
+        QTest::qWait(2 * ReceiverDspLoadSampler::kSampleIntervalMs + 100);
 
         // Choosing the saved model again is the operator asking again too.
         QCOMPARE(runUntilStep(overloaded), 5);
