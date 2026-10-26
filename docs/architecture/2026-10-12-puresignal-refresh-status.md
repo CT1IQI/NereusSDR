@@ -1,6 +1,7 @@
 # PureSignal refresh: status against the design
 
-Date: 2026-10-25. Audited against `origin/main` at `c8510c42a`.
+Date: 2026-10-25. Audited against `origin/main` at `c8510c42a`. Every
+file:line cite below is at that commit; later commits move some lines.
 
 This compares the [design](2026-10-12-puresignal-refresh-design.md), the
 [plan](2026-10-12-puresignal-refresh-plan.md) and the
@@ -12,9 +13,18 @@ commit message. No code was built or run for this audit.
 
 The refresh shipped. PR 450 (merge `8a71a469c`, branch
 `codex/puresignal-ui-publication-20261013`) carried all seven plan tasks into
-the 2026.10.1 release (tag `v2026.10.1` contains the merge). The PureSignal
-files it added or changed have not been touched since, apart from unrelated
-display-pill edits to `MoxDisplayController.cpp` and `PanadapterApplet.cpp`.
+the 2026.10.1 release (tag `v2026.10.1` contains the merge). The files that
+are PureSignal-only (the `Imd*` files, `AmpView*`, `PsForm`,
+`PureSignalInstruments.h`, `PureSignalViewStyle.h` and the applet) have not
+been touched since. The shared files have: after the merge and before the
+audit base, `6dbb9d964` and `113b76863` (the spectrum overlay rebuilds only
+when it changes) and `5f0defd3f` / `f8bd21ad8` (remote waterfall rows on
+their due times) changed IMD lines in `SpectrumWidget.cpp` and
+`MainWindow.cpp`, so the cites below already include them.
+`MoxDisplayController.cpp` and `PanadapterApplet.cpp` also have later
+commits (the display pill, PR 443, and `8461be26b`, heap menus and ASIO
+callers). After the audit base, the CTUN retune fixes for issue 648 (PR 655)
+changed `SpectrumWidget.cpp` and `MainWindow.cpp`, but no IMD lines.
 
 PR 450 also carried the design, the plan and the mockups themselves. They are
 on `origin/main` byte-for-byte identical to local commit `5898faddc`, so that
@@ -71,7 +81,7 @@ Every test file the plan named exists and is registered in
 
 | # | Difference | Evidence | Judgment |
 | --- | --- | --- | --- |
-| 1 | The rail has **Enable DUP** and **×** (hide measurements) buttons. Neither is in the mockup. The design said the rail explains a missing prerequisite and never turns it on by itself. | `ImdMeasurementPanel.cpp:50`, `:62`, `:186-200`; `MainWindow.cpp:18336-18339` | It only acts on a click and only shows while DUP is the missing gate, so it does not break the design's rule, but it is a new control that changes DUP. It shipped in 2026.10.1 and the changelog lists it. Worth one yes from JJ. |
+| 1 | The rail has **Enable DUP** and **×** (hide measurements) buttons. Neither is in the mockup. The design said the rail explains a missing prerequisite and never turns it on by itself. | `ImdMeasurementPanel.cpp:50`, `:62`, `:186-200`; `MainWindow.cpp:18336-18339` | It only acts on a click and only shows while DUP is the missing gate, so it does not break the design's rule, but it is a new control that changes DUP. It shipped in 2026.10.1 and the changelog lists it. Kept by manager ruling; see Decisions. |
 | 2 | A Nereus-only freshness timeout: current readings expire after the longer of 1 s or five frame intervals. | `SpectrumWidget.cpp:12650-12661` | Not in the design. It stops stale numbers looking current. It is a GUI rule, not a DSP or protocol change, and it is documented in the diagnosis record. |
 | 3 | AmpView keeps a sorted copy of the measured points for cursor lookup, because WDSP publishes them out of order. | Diagnosis record, "source-order audit"; `AmpViewChart.cpp:163` | A correct refinement the design did not foresee. DSP samples are untouched. |
 | 4 | The Bench mockup showed Diagnostics as a third tab; the code puts diagnostics beneath the instruments. | `PsForm.cpp:320-323`, `:602-603` | Matches the design text, which wins over the mockup. |
@@ -84,7 +94,7 @@ Every test file the plan named exists and is registered in
 
 | # | Item | Where it stands |
 | --- | --- | --- |
-| 1 | Real Qt captures on Mac, Windows and Linux, on both the CPU and GPU paths (Task 7) | Mac only: applet, Bench, rail and inspector at DPR 2 in the new and classic looks, with Metal for the spectrum. AmpView captures are CPU only. No Windows or Linux captures. Windows does build and run the code: later fixes `0e859e1ee` (applet DLL export) and `ef38ac349` (warning signs as text on Windows) came from it. |
+| 1 | Real Qt captures on Mac, Windows and Linux, on both the CPU and GPU paths (Task 7) | Mac only: applet, Bench, rail and inspector at DPR 2 in the new and classic looks, with Metal for the spectrum. AmpView captures are CPU only. No Windows or Linux captures. Windows builds the code: PR 450's own branch carries `0e859e1ee` (applet DLL export) and `ef38ac349` (warning signs drawn as text on Windows), and 2026.10.1 shipped Windows installers. No Windows screenshot or test result for these surfaces is on record. |
 | 2 | Realtime-labeled tests and a second full-suite pass (Task 7) | Not run during the work because the maintainer's console was live. Left to the release integration owner. |
 
 ## Not started
@@ -92,7 +102,7 @@ Every test file the plan named exists and is registered in
 | # | Item | Notes |
 | --- | --- | --- |
 | 1 | Maintainer-keyed live two-tone check on Protocol 2 (Task 7; design section 8) | The procedure is written in `docs/development/puresignal-imd-bench-check.md` and its result line still reads "pending maintainer operation". No live RF, coupler or before-and-after correction result exists. The original reported IMD failure has not been reproduced or confirmed fixed. |
-| 2 | The inspector's "Tone separation" reading from the IMD mockup | Not in `ImdMeasurementPanel.cpp`. Minor; the design text does not require it. |
+| 2 | The inspector's "Tone separation" reading from the IMD mockup | Not in `ImdMeasurementPanel.cpp`. Minor; the design text does not require it. In progress; see Decisions. |
 
 ## What this means
 
@@ -103,13 +113,16 @@ and Show 2Tone measurements on, a span wide enough for both fifth-order
 products, and record the six product frequencies, the status line and the
 correction-applied change.
 
-Local `main` holds `5898faddc` on top of `e342467fb`, 4,583 commits behind
-`origin/main`. Its content is already on `origin/main`, so it does not need
-pushing. Resetting local `main` to `origin/main` would drop the duplicate.
+The maintainer's local `main` held the design as commit `5898faddc` on an
+older base. Its content is already on `origin/main`, so it does not need
+pushing.
 
 ## Decisions (2026-10-25)
 
-The maintainer handed the open calls to the manager session. Ruled:
+On the evening of 2026-10-25 the maintainer handed open calls like these to
+the manager session, in his words: "I believe in you and trust your judgment
+move my project forward please". Under that handover the manager ruled, at
+about 20:55 EDT, and put the ruling on the maintainer's veto list:
 
 - The rail's **Enable DUP** button stays.
 - The PS-A attenuator gate fix (PS-A drives the force-31 rules, as Thetis
@@ -128,13 +141,14 @@ Settled on the audit's recommendations, open to the maintainer's veto:
 - Local `main` is left as it is; nothing in the primary checkout is reset.
   The duplicate commit is harmless.
 
-Ready to build, each small and GUI-only. Items 1 and 2 are being built as
-one PR for 2026.10.2; item 3 runs with the 2026.10.2 bench pass once the
-Windows stations have the release candidate.
+Follow-up work, each small and GUI-only. Items 1 and 2 are in progress on
+branch `claude/puresignal-imd-polish` for 2026.10.2, with no PR opened yet;
+item 3 runs with the 2026.10.2 bench pass once the Windows stations have the
+release candidate.
 
 1. The inspector's **Tone separation** reading: the gap between the two
-   measured tones, shown only when both are measured, blank otherwise.
-   NereusSDR presentation, no port.
+   measured tones, blank unless both are measured. Thetis shows the same
+   value as "f0 diff" (`display.cs:5652`, `:5695`), so it is a port.
 2. Waterfall correction marks take workspace color roles with the classic
    fallback, as design section 7 asks for markers.
 3. A Windows and Linux capture pass of the applet, Bench, AmpView and IMD
