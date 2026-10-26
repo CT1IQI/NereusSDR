@@ -24,8 +24,9 @@
 //                sampler's own tick no longer calls governNnrLoad once a
 //                test drives it, so its synthetic clock is the only one,
 //                and the takeover starts the governor afresh;
-//                dspLoadTickForTest runs one real tick. J.J. Boyd (KG4VCF),
-//                with AI-assisted transformation via Claude Code.
+//                dspLoadTickForTest runs one real tick, and nothing on a
+//                model with no load sampler (Role::Remote). J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
 //                setting (Setup's "Limit filter edges to sidebands", Thetis
 //                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
@@ -15603,6 +15604,11 @@ void RadioModel::governNnrLoadOnTick()
 
 void RadioModel::dspLoadTickForTest()
 {
+    // Only a model whose load sampler runs (Role::Local) has the tick, and
+    // only it starts m_nnrGovernorClock.
+    if (!m_dspLoadTimer) {
+        return;
+    }
     // The timer's three slots, in their connection order.
     sampleReceiverDspLoad();
     governNnrLoadOnTick();

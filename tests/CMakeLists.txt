@@ -483,10 +483,11 @@ endfunction()
 # with <variable>=rest. The test's main() picks its functions through
 # tests/TestFunctionGroups.h. Use it for a test whose cases add up near its
 # limit, so no entry carries another's time. Each entry takes the test's
-# labels, limit, RUN_SERIAL, PROCESSORS and environment, with a home of its
-# own. Call it after every set_tests_properties() on <name>; a test sharded
-# away is left alone. COMMAND <target> names the binary when <name> is an
-# entry of another target's (CI load round, 2026-10-26).
+# labels, limit, RUN_SERIAL, PROCESSORS, RESOURCE_LOCK and environment,
+# with a home of its own. Call it after every set_tests_properties() on
+# <name>; a test sharded away is left alone. COMMAND <target> names the
+# binary when <name> is an entry of another target's (CI load round,
+# 2026-10-26).
 function(nereus_split_test name)
     cmake_parse_arguments(_st "" "ENV;COMMAND" "GROUPS" ${ARGN})
     if(NOT _st_COMMAND)
@@ -495,7 +496,8 @@ function(nereus_split_test name)
     if(NOT TEST ${name})
         return()
     endif()
-    foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION ENVIRONMENT)
+    foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS RESOURCE_LOCK ENVIRONMENT_MODIFICATION
+            ENVIRONMENT)
         get_test_property(${name} ${_prop} _st_${_prop})
     endforeach()
     # The test's home is its own; each entry gets another.
@@ -508,7 +510,7 @@ function(nereus_split_test name)
     foreach(_group IN LISTS _st_GROUPS)
         set(_entry_name ${name}_${_group})
         add_test(NAME ${_entry_name} COMMAND ${_st_COMMAND})
-        foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION)
+        foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS RESOURCE_LOCK ENVIRONMENT_MODIFICATION)
             if(_st_${_prop})
                 set_property(TEST ${_entry_name} PROPERTY ${_prop} "${_st_${_prop}}")
             endif()
@@ -9073,6 +9075,12 @@ target_compile_definitions(tst_core_parity PRIVATE NEREUS_BUILD_TESTS)
 # table, and Connection Quality's EP6 sequence gap count.
 nereus_add_test(tst_controls_that_work)
 target_compile_definitions(tst_controls_that_work PRIVATE NEREUS_BUILD_TESTS)
+# CI load round, 2026-10-26: about 12 full MainWindows ran near the 120 s
+# limit and timed out at load 76 locally, so three entries: the test's
+# main() places each function in one by its place in the list (the limit
+# is not raised).
+nereus_split_test(tst_controls_that_work ENV NEREUS_CONTROLS_THAT_WORK_GROUP
+    GROUPS part2 part3)
 # R3 controls that work, Task 2 (R-R3-21): menu entries, the Phone/CW
 # applet's transmit controls, container controls, the pan overlay's ATT
 # and zoom buttons and the status badges reach their existing features.
