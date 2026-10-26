@@ -60,7 +60,6 @@
 #include <QSignalBlocker>
 #include <QKeyEvent>
 #include <QVBoxLayout>
-#include <cmath>
 namespace NereusSDR {
 namespace {
 const std::array<QString, 6> kNames{QStringLiteral("Tone L"), QStringLiteral("Tone U"),
@@ -286,7 +285,7 @@ void ImdMeasurementPanel::refresh()
     QString separation = QStringLiteral("—");
     if (lowerTone && upperTone) {
         // From Thetis display.cs:5652 [v2.10.3.15]
-        const double separationKHz = std::abs(upperTone->frequencyHz - lowerTone->frequencyHz) / kHzPerKilohertz;
+        const double separationKHz = (upperTone->frequencyHz - lowerTone->frequencyHz) / kHzPerKilohertz;
         separation = QString::number(separationKHz, 'f', kToneSeparationDecimals);
     }
     m_toneSeparation->setText(QStringLiteral("Tone separation  %1 kHz").arg(separation));
