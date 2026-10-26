@@ -102,6 +102,42 @@ private slots:
             }
         }
     }
+    void toneSeparationReadsMeasuredFundamentals()
+    {
+        ImdMeasurementFrame measured;
+        measured.status = ImdStatus::Valid;
+        measured.peaks[0] = ImdPeakReading{0, 14199400.0, -22.0f, std::nullopt};
+        measured.peaks[1] = ImdPeakReading{0, 14200600.0, -24.0f, 0.0f};
+        for (auto presentation : {ImdMeasurementPanel::Presentation::Inspector, ImdMeasurementPanel::Presentation::Window}) {
+            ImdMeasurementPanel panel;
+            panel.setPresentation(presentation);
+            panel.setFrame(measured);
+            QLabel* label = panel.findChild<QLabel*>(QStringLiteral("ImdToneSeparation"));
+            QVERIFY(label);
+            QVERIFY(label->isVisibleTo(&panel));
+            QCOMPARE(label->text(), QStringLiteral("Tone separation  1.200 kHz"));
+        }
+        ImdMeasurementPanel rail;
+        rail.setPresentation(ImdMeasurementPanel::Presentation::Rail);
+        rail.setFrame(measured);
+        QLabel* railLabel = rail.findChild<QLabel*>(QStringLiteral("ImdToneSeparation"));
+        QVERIFY(railLabel);
+        QVERIFY(!railLabel->isVisibleTo(&rail));
+
+        ImdMeasurementPanel panel;
+        panel.setPresentation(ImdMeasurementPanel::Presentation::Inspector);
+        ImdMeasurementFrame lowerOnly;
+        lowerOnly.status = ImdStatus::FundamentalsUnresolved;
+        lowerOnly.peaks[0] = measured.peaks[0];
+        panel.setFrame(lowerOnly);
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  — kHz"));
+        ImdMeasurementFrame expectedOnly;
+        expectedOnly.status = ImdStatus::ProductsMissing;
+        expectedOnly.expectedFrequencyHz[0] = 14199400.0;
+        expectedOnly.expectedFrequencyHz[1] = 14200600.0;
+        panel.setFrame(expectedOnly);
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  — kHz"));
+    }
     void railCloseRequestsMeasurementVisibilityClear()
     {
         ImdMeasurementPanel panel;
