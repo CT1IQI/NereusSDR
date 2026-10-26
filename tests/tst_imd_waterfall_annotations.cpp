@@ -17,6 +17,7 @@
 #include "NativeWindowFrames.h"
 #include <QDir>
 #include <QPainter>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <cmath>
@@ -96,20 +97,20 @@ static QColor blendedInk(const QColor& background, const QColor& ink)
     return pixel.pixelColor(0, 0);
 }
 
-static bool closeTo(const QColor& a, const QColor& b)
+static bool closeTo(const QColor& a, const QColor& b, int tolerance)
 {
-    return std::abs(a.red() - b.red()) <= 2 && std::abs(a.green() - b.green()) <= 2
-        && std::abs(a.blue() - b.blue()) <= 2;
+    return std::abs(a.red() - b.red()) <= tolerance && std::abs(a.green() - b.green()) <= tolerance
+        && std::abs(a.blue() - b.blue()) <= tolerance;
 }
 
 // True when a row within a pixel of `y` in column `x` carries `ink` over the
-// waterfall a few rows above it.
-static bool markDrawn(const QImage& image, int x, qreal y, const QColor& ink)
+// waterfall a few rows above it, each channel within `tolerance`.
+static bool markDrawn(const QImage& image, int x, qreal y, const QColor& ink, int tolerance)
 {
     const QColor background = image.pixelColor(x, qRound(y) - 4);
     const QColor expected = blendedInk(background, ink);
     for (int row = qFloor(y) - 1; row <= qCeil(y) + 1; ++row) {
-        if (row >= 0 && row < image.height() && closeTo(image.pixelColor(x, row), expected)) {
+        if (row >= 0 && row < image.height() && closeTo(image.pixelColor(x, row), expected, tolerance)) {
             return true;
         }
     }
@@ -358,6 +359,8 @@ private slots:
     {
         constexpr QColor kAppliedInk(100, 210, 170);
         constexpr QColor kOffInk(220, 165, 110);
+        // A failed check returns early; the later slots still get the classic look.
+        const auto restoreClassic = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
         // The workspace look first; the classic pass proves the old ink is unchanged.
         for (const bool workspace : {true, false}) {
             WorkspacePreview::setEnabledForTest(workspace);
@@ -398,19 +401,22 @@ private slots:
             const QRect wf = widget.waterfallRectForTest();
             const qreal dpr = frame.width() / qreal(widget.width());
             const int x = qRound((wf.right() - 10) * dpr);
-            QColor appliedInk = workspace ? WorkspacePreview::roleColour(kAppliedInk, "live") : kAppliedInk;
-            QColor offInk = workspace ? WorkspacePreview::roleColour(kOffInk, "measured") : kOffInk;
-            appliedInk.setAlpha(190);
-            offInk.setAlpha(190);
-            if (!workspace) {
-                QCOMPARE(appliedInk, QColor(100, 210, 170, 190));
-                QCOMPARE(offInk, QColor(220, 165, 110, 190));
-            } else {
+            // Classic: the drawn pixel must be exactly the pre-change RGBA blended
+            // over the waterfall. Workspace: the status role ink, within 2 per channel.
+            QColor appliedInk(100, 210, 170, 190);
+            QColor offInk(220, 165, 110, 190);
+            int tolerance = 0;
+            if (workspace) {
+                appliedInk = WorkspacePreview::roleColour(kAppliedInk, "live");
+                offInk = WorkspacePreview::roleColour(kOffInk, "measured");
+                appliedInk.setAlpha(190);
+                offInk.setAlpha(190);
                 QVERIFY(appliedInk.rgb() != kAppliedInk.rgb());
                 QVERIFY(offInk.rgb() != kOffInk.rgb());
+                tolerance = 2;
             }
-            QVERIFY2(markDrawn(frame, x, (wf.top() + *appliedY) * dpr, appliedInk), workspace ? "workspace applied" : "classic applied");
-            QVERIFY2(markDrawn(frame, x, (wf.top() + *offY) * dpr, offInk), workspace ? "workspace off" : "classic off");
+            QVERIFY2(markDrawn(frame, x, (wf.top() + *appliedY) * dpr, appliedInk, tolerance), workspace ? "workspace applied" : "classic applied");
+            QVERIFY2(markDrawn(frame, x, (wf.top() + *offY) * dpr, offInk, tolerance), workspace ? "workspace off" : "classic off");
             const QString evidence = QString::fromUtf8(qgetenv("NEREUS_IMD_EVIDENCE"));
             if (!evidence.isEmpty()) {
                 QVERIFY(QDir().mkpath(evidence));
@@ -418,7 +424,6 @@ private slots:
                     .arg(workspace ? QStringLiteral("workspace") : QStringLiteral("classic"))));
             }
         }
-        WorkspacePreview::setEnabledForTest(false);
     }
     void nativeGpuWrapPauseRewindGlideCapture()
     {

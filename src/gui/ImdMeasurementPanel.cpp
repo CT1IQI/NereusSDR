@@ -51,6 +51,8 @@
 //   2026-10-13: J.J. Boyd (KG4VCF), OpenAI Codex; rail and optional bench inspector.
 //   2026-10-25: J.J. Boyd (KG4VCF), Claude Code; tone separation reading from the
 //               measured fundamentals, the Thetis "f0 diff" value and format.
+//   2026-10-25: J.J. Boyd (KG4VCF), Claude Code; each fundamental truncates
+//               to whole Hz before the difference, as Thetis's (long) casts do.
 #include "gui/ImdMeasurementPanel.h"
 #include "gui/PureSignalViewStyle.h"
 #include <QGridLayout>
@@ -284,8 +286,12 @@ void ImdMeasurementPanel::refresh()
     const auto& upperTone = m_frame.peaks[static_cast<int>(ImdProduct::FundamentalUpper)];
     QString separation = QStringLiteral("—");
     if (lowerTone && upperTone) {
+        // From Thetis display.cs:5569-5575 [v2.10.3.15]: f0l_freq and f0h_freq are whole Hz,
+        // each truncated by its (long) cast before the difference is taken.
+        const qint64 lowerHz = static_cast<qint64>(lowerTone->frequencyHz);
+        const qint64 upperHz = static_cast<qint64>(upperTone->frequencyHz);
         // From Thetis display.cs:5652 [v2.10.3.15]
-        const double separationKHz = (upperTone->frequencyHz - lowerTone->frequencyHz) / kHzPerKilohertz;
+        const double separationKHz = static_cast<double>(upperHz - lowerHz) / kHzPerKilohertz;
         separation = QString::number(separationKHz, 'f', kToneSeparationDecimals);
     }
     m_toneSeparation->setText(QStringLiteral("Tone separation  %1 kHz").arg(separation));
