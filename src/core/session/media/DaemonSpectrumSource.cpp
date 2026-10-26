@@ -467,6 +467,12 @@ bool DaemonSpectrumSource::setEngineFrameGapClockForTest(const MediaSourceKey& k
     const auto it = m_sources.constFind(key);
     if (it == m_sources.cend() || !it->engine) { return false; }
     // Before any input, so the worker thread is not reading it yet.
+    {
+        QMutexLocker lock(&it->state->mutex);
+        if (it->state->completedInputHandoffs != 0) {
+            return false;
+        }
+    }
     it->engine->setFrameGapClockForTest(std::move(clockMs));
     return true;
 }

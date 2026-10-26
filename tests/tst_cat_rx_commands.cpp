@@ -77,6 +77,14 @@ public:
 
 
 
+// The fixtures this file executes: fixtureExecution's rows and the
+// entries main() deals them to read this one list.
+static bool executedHere(const QJsonObject& fixture)
+{
+    return fixture.value(QStringLiteral("executionStatus")).toString()
+        == QStringLiteral("executed-task-5");
+}
+
 class TstCatRxCommands : public QObject {
  Q_OBJECT
     quint64 start(RadioModel& model, bool secondary=true) {
@@ -102,7 +110,7 @@ private slots:
     QFile file(QFINDTESTDATA("data/cat/requests.json")); QVERIFY(file.open(QIODevice::ReadOnly));
     const QJsonArray fixtures=QJsonDocument::fromJson(file.readAll()).array(); int count=0;
     for (const QJsonValue& value : fixtures) {
-        const QJsonObject fixture=value.toObject(); if (fixture.value("executionStatus").toString() != "executed-task-5") { continue; }
+        const QJsonObject fixture=value.toObject(); if (!executedHere(fixture)) { continue; }
         QTest::newRow(qPrintable(fixture.value("id").toString())) << fixture; ++count;
     }
     QCOMPARE(count,158);
@@ -434,8 +442,7 @@ int main(int argc, char** argv)
     QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("fixtures1"), {}}, {QStringLiteral("fixtures2"), {}}};
     int index = 0;
     for (const QJsonValue& record : QJsonDocument::fromJson(file.readAll()).array()) {
-        if (record.toObject().value(QStringLiteral("executionStatus")).toString()
-            != QStringLiteral("executed-task-5")) {
+        if (!executedHere(record.toObject())) {
             continue;
         }
         groups[index++ % kFixtureEntries].entries.append(

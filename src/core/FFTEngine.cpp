@@ -794,12 +794,15 @@ void FFTEngine::processFrame()
     // its remaining batch samples when processFrame returned without
     // running the FFT.  This preserves the overlap region across the
     // (rare) cap fire.
-    const qint64 sinceFrameMs = m_frameGapClockForTest
-        ? m_frameGapClockForTest() - m_frameGapTestStampMs
-        : m_frameTimer.elapsed();
-    if (m_frameTimerStarted && sinceFrameMs < 5) {
-        m_minimumGapHeldFrame = true;  // NereusSDR-original: feedIQ counts it
-        return;  // buffer stays full; next feedIQ call retries
+    if (m_frameTimerStarted) {
+        // The timer is read only once started (an invalid one is undefined).
+        const qint64 sinceFrameMs = m_frameGapClockForTest
+            ? m_frameGapClockForTest() - m_frameGapTestStampMs
+            : m_frameTimer.elapsed();
+        if (sinceFrameMs < 5) {
+            m_minimumGapHeldFrame = true;  // NereusSDR-original: feedIQ counts it
+            return;  // buffer stays full; next feedIQ call retries
+        }
     }
 
     // 2026-05-26 KG4VCF perf instrumentation: time the FFT compute

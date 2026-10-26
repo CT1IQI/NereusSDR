@@ -289,7 +289,8 @@ public:
 
     /// Test seam: key's engine reads its 5 ms minimum frame gap from
     /// `clockMs` (FFTEngine::setFrameGapClockForTest). Call it after
-    /// activate() and before any I/Q is fed. False for an unknown source.
+    /// activate() and before any I/Q is fed. False for an unknown source,
+    /// or once the engine has taken input.
     bool setEngineFrameGapClockForTest(const MediaSourceKey& key,
                                        std::function<qint64()> clockMs);
 

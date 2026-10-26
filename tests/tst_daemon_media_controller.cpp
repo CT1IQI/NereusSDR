@@ -6,7 +6,7 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-26: CI load round: three ctest entries, each function in one by
+//   2026-10-26: CI load round: five ctest entries, each function in one by
 //               its place in the list (the whole file took 110 s of ctest's
 //               120 s on a quiet Linux runner), and the gap test drives the
 //               engine's 5 ms frame gap on its own clock instead of waiting
@@ -7135,20 +7135,20 @@ void TstDaemonMediaController::unkeyEventLinesPlaceTheOversDropouts()
 // CI load round, 2026-10-26: one entry took 96 s on a quiet Mac and 110 s
 // on a quiet Linux runner, against ctest's 120 s limit, and timed out on
 // busy runners (main at 6b765cf95 and 02dae18cb).
-// 3 entries, each function in one by its place in the list, so a new
+// 5 entries, each function in one by its place in the list, so a new
 // function lands in one with no list to edit: in declaration order they go
-// in turn to the rest, _part2, _part3 (tests/CMakeLists.txt).
+// in turn to the rest, _part2, _part3, _part4, _part5 (tests/CMakeLists.txt).
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TstDaemonMediaController test;
     QTEST_SET_MAIN_SOURCE_PATH
-    constexpr int kEntries = 3;
-    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}};
+    constexpr int kEntries = 5;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{{QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}, {QStringLiteral("part5"), {}}};
     int index = 0;
     for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
-        // The first of every 3 stays in the rest, so the rest is never empty.
+        // The first of every 5 stays in the rest, so the rest is never empty.
         const int slot = index++ % kEntries;
         if (slot > 0) {
             groups[slot - 1].entries.append(name);

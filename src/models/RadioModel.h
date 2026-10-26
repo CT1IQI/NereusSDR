@@ -13,7 +13,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
-//                from the load sampler's tick for the model's life.
+//                from the load sampler's tick for the model's life;
+//                dspLoadTickForTest runs one tick of that timer.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
@@ -2363,6 +2364,11 @@ public:
     /// life: the load sampler's tick stops calling governNnrLoad, so the
     /// caller's nowMs is the governor's only clock.
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
+
+    /// Test seam: one tick of the load sampler's timer, its three slots in
+    /// order (sampleReceiverDspLoad, the governor, reportDspDiagnostics),
+    /// on the real clock and the measured loads.
+    void dspLoadTickForTest();
 
     /// 2026-10-22: the Core's DSP diagnostics on the load sampler's tick,
     /// main thread, measures only. For every slice whose channel ran a
@@ -7298,6 +7304,9 @@ private:
     void wireNnrSettings(SliceModel* slice);
     void applyNnrStateToChannel(SliceModel* slice, RxChannel* channel);
     // R-R3-40: the runtime NNR limit (see governNnrLoad).
+    // The governor's slot on the load sampler's tick: governNnrLoad on
+    // m_nnrGovernorClock, unless a test has taken the governor over.
+    void governNnrLoadOnTick();
     void governNnrLoadWith(qint64 nowMs,
                            const std::function<std::optional<double>(int)>& load);
     void applyNnrLimit(SliceModel* slice, NnrLimit limit);
