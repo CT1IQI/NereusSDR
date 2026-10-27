@@ -1207,40 +1207,64 @@ private slots:
         }
     }
 
-    // Fix wave item 12: no user-visible string in the files the R3 controls
-    // plan touched carries an em dash; prose uses periods, colons,
-    // semicolons, parentheses or commas, and a lone empty-value mark in a
-    // readout is an en dash. Log lines and the decision-list placeholders
-    // are not read by the operator here and are left out.
+    // Fix wave item 12: no user-visible string carries an em dash; prose
+    // uses periods, colons, semicolons, parentheses or commas, and a lone
+    // empty-value mark in a readout is an en dash. Every source file under
+    // src/ is read, not a fixed list: a list of 17 files missed the em
+    // dashes in files written after it. Log lines and the decision-list
+    // placeholders are not read by the operator here and are left out;
+    // tr() literals are read too, so a translated string inside a log
+    // statement's reach is still checked, and so is an em dash built with
+    // QChar(0x2014).
     void noEmDashInUserVisibleStrings()
     {
-        const char* files[] = {
-            "src/gui/AboutDialog.cpp",
-            "src/gui/MainWindow.cpp",
-            "src/gui/SpectrumOverlayPanel.cpp",
-            "src/gui/SpotHubDialog.cpp",
-            "src/gui/applets/PhoneCwApplet.cpp",
-            "src/gui/applets/TxApplet.cpp",
-            "src/gui/diagnostics/DiagnosticsPhaseHPages.cpp",
-            "src/gui/diagnostics/RadioStatusPage.cpp",
-            "src/gui/setup/AudioVaxPage.cpp",
-            "src/gui/setup/DspOptionsPage.cpp",
-            "src/gui/setup/DspSetupPages.cpp",
-            "src/gui/setup/TransmitSetupPages.cpp",
-            "src/gui/setup/hardware/OcOutputsHfTab.cpp",
-            "src/gui/widgets/VfoWidget.cpp",
-            "src/gui/widgets/RxDashboard.cpp",
-            "src/models/RadioModel.cpp",
-            "src/core/P1RadioConnection.cpp",
+        const auto hasEmDash = [](const QString& text) {
+            return text.contains(QChar(0x2014)) || text.contains(QLatin1String("\\u2014"))
+                || text.contains(QLatin1String("\\x2014"));
         };
-        for (const char* file : files) {
-            const QStringList literals = userVisibleLiterals(sourcePath(file));
-            QVERIFY2(literals.size() >= 5, file);
-            for (const QString& text : literals) {
-                QVERIFY2(!text.contains(QChar(0x2014)) && !text.contains(QLatin1String("\\u2014")),
-                         qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(file), text)));
+        // The rule is not vacuous: each spelling of the em dash fails it.
+        QVERIFY(hasEmDash(QStringLiteral("Container default \u2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\u2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\x2014 %1")));
+        QVERIFY(!hasEmDash(QStringLiteral("Container default: %1")));
+        QVERIFY(!hasEmDash(QString(QChar(0x2013))));
+
+        static const QRegularExpression builtEmDash(
+            QStringLiteral("QChar\\(\\s*0x2014\\s*\\)"), QRegularExpression::CaseInsensitiveOption);
+        QVERIFY(builtEmDash.match(QStringLiteral("QChar(0x2014) + QStringLiteral(\" ms\")")).hasMatch());
+
+        QStringList failures;
+        int literals = 0;
+        QDirIterator it(sourcePath("src"), {QStringLiteral("*.cpp"), QStringLiteral("*.h"),
+                                            QStringLiteral("*.mm")},
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            const QString file = QDir(QStringLiteral(NEREUS_SOURCE_DIR)).relativeFilePath(path);
+            const QString code = codeWithoutComments(path);
+            QStringList texts = userVisibleLiterals(path);
+            texts += trLiterals(code);
+            for (const QString& text : std::as_const(texts)) {
+                ++literals;
+                if (hasEmDash(text)) {
+                    failures << QStringLiteral("%1: %2").arg(file, text);
+                }
+            }
+            // An em dash built from its code point never shows as a literal.
+            if (builtEmDash.match(code).hasMatch()) {
+                failures << QStringLiteral("%1: QChar(0x2014)").arg(file);
             }
         }
+        QVERIFY2(literals > 20000, qPrintable(QString::number(literals)));
+
+        failures.removeDuplicates();
+        // QtTest cuts a long message short; each failure gets its own line.
+        for (const QString& failure : std::as_const(failures)) {
+            qWarning().noquote() << failure;
+        }
+        QVERIFY2(failures.isEmpty(), qPrintable(QString::number(failures.size())
+                                                + QStringLiteral(" strings carry an em dash")));
+
         // The readouts' empty-value mark is the en dash.
         const QStringList status = userVisibleLiterals(
             sourcePath("src/gui/diagnostics/RadioStatusPage.cpp"));
