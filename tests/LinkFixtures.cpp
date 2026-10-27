@@ -92,6 +92,10 @@
 //               more after the last; a turn sleeps until an event or its
 //               end instead of spinning; every wait has a 60 s wall cap.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: A drain() that ends with the control channel unsettled
+//               fails the session, naming the step it ended in, where it
+//               had ended silently. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -406,6 +410,21 @@ std::function<QString(LoopbackTransport*, StationServer&)>& connectClientHook()
     return hook;
 }
 
+// The step the player is on, for a drain() that ends unsettled.
+QString& currentStep()
+{
+    static QString step;
+    return step;
+}
+
+// Empty, or the step in which a drain() first ended with the control
+// channel unsettled. runSession() fails with it.
+QString& unsettledStep()
+{
+    static QString step;
+    return step;
+}
+
 // How long drain() waits, in turns of the event loop (as kStationReplyWaitMs
 // is counted), for the control channel to settle in the data-channel mode.
 // A passing fixture settles in milliseconds.
@@ -460,6 +479,12 @@ void drain()
             waitedMs += kReplyTurnMs;
         }
         drainQueue();
+    }
+    // Unsettled at the end (the last check failed, after the last turn):
+    // the steps after it would run against a channel that has not
+    // delivered, so the session fails with this step.
+    if (settled < 2 && unsettledStep().isEmpty()) {
+        unsettledStep() = currentStep();
     }
 }
 
@@ -1618,8 +1643,8 @@ QString LinkFixtures::runFraming(const QJsonObject& fixture)
     return QString();
 }
 
-QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& server,
-                                 LoopbackTransport& transport)
+QString LinkFixtures::playSession(const QJsonObject& fixture, StationServer& server,
+                                  LoopbackTransport& transport)
 {
     QString problem = checkSessionFormat(fixture);
     if (!problem.isEmpty()) {
@@ -1838,6 +1863,12 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
     clock.scan();
 
     for (int index = 0; index < steps.size(); ++index) {
+        // A drain in the step before ended unsettled: runSession() fails
+        // with that step.
+        if (!unsettledStep().isEmpty()) {
+            return QString();
+        }
+        currentStep() = describe(index);
         if (!steps.at(index).isObject()) {
             return QStringLiteral("step %1: not an object").arg(index);
         }
@@ -2103,6 +2134,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
         }
     }
 
+    currentStep() = QStringLiteral("after the last step");
     const QJsonObject last = steps.last().toObject();
     if (!last.contains(QStringLiteral("expectClosed"))
         || last.value(QStringLiteral("expectClosed")).toObject().contains(QStringLiteral("client"))) {
@@ -2113,6 +2145,31 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
         }
     }
     return QString();
+}
+
+QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& server,
+                                 LoopbackTransport& transport)
+{
+    currentStep() = QStringLiteral("before the first step");
+    unsettledStep().clear();
+    const QString failure = playSession(fixture, server, transport);
+    if (unsettledStep().isEmpty()) {
+        return failure;
+    }
+    // In the data-channel mode, drain() waits kSettleWaitMs of turns (at
+    // most kReplyWallCapMs of real time) for each end to have handled
+    // everything the other sent; one that ran out ended silently before,
+    // and the steps after it ran against a channel that had not delivered.
+    QString message = QStringLiteral("%1: the control data channel had not settled after "
+                                     "%2 ms of turns or %3 ms of real time (an end had not "
+                                     "handled everything the other sent)")
+                          .arg(unsettledStep())
+                          .arg(kSettleWaitMs)
+                          .arg(kReplyWallCapMs);
+    if (!failure.isEmpty()) {
+        message += QStringLiteral("; then %1").arg(failure);
+    }
+    return message;
 }
 
 // ── Media vectors ────────────────────────────────────────────────────────

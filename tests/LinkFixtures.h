@@ -73,6 +73,10 @@
 //               placeholder, a client's media connection id. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-27: runSession() fails, naming the step, when a drain ends
+//               with the control channel unsettled (playSession() plays
+//               the steps). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -224,8 +228,17 @@ public:
         std::function<QString(LoopbackTransport* client, NereusSDR::StationServer& server)>
             connect);
 
+    /// Empty on pass. In the data-channel mode it also fails when a drain
+    /// between steps ended with the control channel unsettled, naming the
+    /// step it ended in.
     static QString runSession(const QJsonObject& fixture, NereusSDR::StationServer& server,
                               LoopbackTransport& transport);
+
+private:
+    /// Plays the session's steps for runSession(); it stops at the step
+    /// after a drain that ended unsettled.
+    static QString playSession(const QJsonObject& fixture, NereusSDR::StationServer& server,
+                               LoopbackTransport& transport);
 };
 
 /// The media vectors' fixed inputs and their JSON form. The regen target
