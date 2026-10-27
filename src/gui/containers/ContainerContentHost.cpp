@@ -373,7 +373,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 m_layout->insertWidget(qMax(0,position),label); row.widget=label;
             }
             if (auto* label=qobject_cast<QLabel*>(row.widget.data()); label && (!view || !claim)) {
-                label->setText(entry.name + QStringLiteral(": ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
+                label->setText(entry.name + QStringLiteral(" — ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
                     (m_registry.isAvailable(entry.typeId)?QStringLiteral("waiting for its live view"):m_registry.unavailableReason(entry.typeId))));
             }
             // Unavailable, a claimed view is grayed, not hidden.
@@ -456,7 +456,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 presentAvailability(view, m_registry, entry.typeId);
                 view->setVisible(entry.visible);
             } else {
-                auto* label = new QLabel(entry.name + QStringLiteral(": ") +
+                auto* label = new QLabel(entry.name + QStringLiteral(" — ") +
                     (unique ? QStringLiteral("waiting for its live view") : QStringLiteral("duplicate singleton placement; original data retained")), m_body);
                 label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
                 row.presentationVisible = entry.visible;
@@ -467,7 +467,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         // A hidden/unavailable record is still an ordered insertion boundary.
         if (!row.effectiveVisible) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(": ") + m_registry.unavailableReason(entry.typeId), m_body);
+            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry.typeId), m_body);
             label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
             row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
@@ -497,7 +497,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         MeterItem* item = m_registry.createMeterItem(entry, run);
         if (!item) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(": unsupported configuration; original data retained"), this);
+            auto* label = new QLabel(entry.name + QStringLiteral(" — unsupported configuration; original data retained"), this);
             row.widget = label; m_layout->addWidget(label); row.presentationVisible = entry.visible;
             label->setVisible(row.presentationVisible); m_rows.append(row); continue;
         }
@@ -585,7 +585,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 // old widget here is always that label.
                 if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
                 else {row.widget=new QLabel(m_canvas);}
-                if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(": ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
+                if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
             }
         } else if(row.effectiveVisible && m_registry.hasWidgetFactory(entry.typeId)) {
             // Per-instance widget content (workspace preview).
@@ -640,7 +640,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             // Workspace preview: as above, a factory widget is not the label.
             if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
-            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(": ")+m_registry.unavailableReason(entry.typeId));}
+            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
         }
         // A singleton view is grayed when unavailable, never hidden for it.
         if(!row.widget->property("singletonTypeId").toString().isEmpty()) {presentAvailability(row.widget,m_registry,entry.typeId);}

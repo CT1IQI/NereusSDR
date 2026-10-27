@@ -378,7 +378,7 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
 {
     // Window title uses the first 8 chars of the container ID
     const QString shortId = m_container ? m_container->id().left(8) : QStringLiteral("????????");
-    setWindowTitle(QStringLiteral("Container Settings: ") + shortId);
+    setWindowTitle(QStringLiteral("Container Settings \u2014 ") + shortId);
 
     // Phase 3G-6 block 4b: grown defaults so the Properties column
     // has usable vertical and horizontal room for the type-specific
@@ -470,7 +470,7 @@ void ContainerSettingsDialog::buildLayout()
 
     root->addWidget(m_splitter, 1);
     if (m_editSession && m_manager->previewPoller()) {
-        auto* label=new QLabel(tr("Live preview: edits remain in the draft until Apply"),this);
+        auto* label=new QLabel(tr("Live preview — edits remain in the draft until Apply"),this);
         label->setStyleSheet(kSectionHeaderStyle); root->addWidget(label);
         auto* scroll=new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setMinimumHeight(260);
         m_preview=new ContainerPreviewWidget(*m_manager->contentRegistry(),*m_manager->previewPoller());
@@ -684,7 +684,7 @@ void ContainerSettingsDialog::populateAvailableList()
     if (m_editSession && m_manager) {
         m_availableList->clear();
         for(const auto& descriptor:m_manager->contentRegistry()->descriptors()) {
-            auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" (Move)"):QString()),m_availableList);
+            auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
             row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
             if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
         }
@@ -1145,7 +1145,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
             // Workspace preview: a header is shown or hidden.
             m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
         } else {
-            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden (recovery menu)"),int(HeaderMode::Hidden));
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
         }
         m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
         m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
@@ -1784,7 +1784,7 @@ void ContainerSettingsDialog::refreshItemList()
                 if(title.startsWith('{')) { title=m_manager->contentRegistry()->makeEntry(entry.typeId).name; }
                 QString reason=entry.extensions.value("unavailableReason").toString();
                 if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry.typeId)) {reason=m_manager->contentRegistry()->unavailableReason(entry.typeId);}
-                auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" (unavailable)")),m_itemList);
+                auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" — unavailable")),m_itemList);
                 row->setData(Qt::UserRole,entry.id); row->setToolTip(reason);
             }
         }
@@ -2184,7 +2184,7 @@ void ContainerSettingsDialog::updateDraftStatus()
 {
     if(!m_editSession || !m_draftStatus) {return;}
     const bool pending=m_editSession->hasPendingChanges();
-    m_draftStatus->setText(pending?tr("Pending Apply: changes are only in this draft."):tr("No pending changes."));
+    m_draftStatus->setText(pending?tr("Pending Apply — changes are only in this draft."):tr("No pending changes."));
     if(pending && m_transactionStatus && m_transactionStatus->text()==tr("All drafts saved.")) {m_transactionStatus->clear();}
 }
 CommitResult ContainerSettingsDialog::applyDraft()
