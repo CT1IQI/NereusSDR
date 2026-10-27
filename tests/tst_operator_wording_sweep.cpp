@@ -1217,9 +1217,10 @@ private slots:
     // tr() literals are read too, so a translated string inside a log
     // statement's reach is still checked, and so is an em dash built with
     // QChar(0x2014). The iPhone and iPad sources are read too: every .swift
-    // file under ios/ except test sources (a /Tests/ path, which assert the
-    // dash is absent), with comments dropped, for the raw dash and Swift's
-    // \u{2014} escape.
+    // file under ios/ except test sources (any path segment ending in Tests,
+    // such as Tests/ or UITests/, which may assert the dash is absent) and
+    // generated code in ios/DerivedData/, with comments dropped, for the raw
+    // dash and Swift's \u{2014} escape.
     void noEmDashInUserVisibleStrings()
     {
         // Swift spells the escape \u{2014}, with 1 to 8 hex digits.
@@ -1289,12 +1290,20 @@ private slots:
 
         // The iPhone and iPad sources. With comments dropped, an em dash left
         // in a Swift file can only be in a string, multi-line ones included.
+        // codeWithoutComments is a C++ scanner, only approximate for Swift's
+        // multi-line and raw strings: it can miss a dash (a "/*" inside a
+        // multi-line string hides text up to the next "*/"), but a misread
+        // string literal never runs past its line.
+        // Test sources (a path segment ending in Tests) and generated code in
+        // DerivedData are left out.
+        static const QRegularExpression swiftTestSegment(QStringLiteral("/[A-Za-z]*Tests/"));
+        const QString derivedData = sourcePath("ios/DerivedData") + QLatin1Char('/');
         int swiftFiles = 0;
         QDirIterator swift(sourcePath("ios"), {QStringLiteral("*.swift")}, QDir::Files,
                            QDirIterator::Subdirectories);
         while (swift.hasNext()) {
             const QString path = swift.next();
-            if (path.contains(QLatin1String("/Tests/"))) {
+            if (swiftTestSegment.match(path).hasMatch() || path.startsWith(derivedData)) {
                 continue;
             }
             ++swiftFiles;
