@@ -691,7 +691,7 @@ void VaxApplet::connectSliceTagsTracking()
 
 void VaxApplet::updateTagsLabels()
 {
-    // Reset every RX tag to the em-dash placeholder, then fill in.
+    // Reset every RX tag to the en-dash placeholder, then fill in.
     for (int i = 0; i < kChannels; ++i) {
         if (m_tagsLbl[i]) {
             m_tagsLbl[i]->setText(QStringLiteral("\u2013"));

@@ -1220,12 +1220,17 @@ private slots:
     {
         const auto hasEmDash = [](const QString& text) {
             return text.contains(QChar(0x2014)) || text.contains(QLatin1String("\\u2014"))
-                || text.contains(QLatin1String("\\x2014"));
+                || text.contains(QLatin1String("\\x2014"))
+                || text.contains(QLatin1String("\\U00002014"))
+                || text.contains(QLatin1String("\\xe2\\x80\\x94"), Qt::CaseInsensitive);
         };
         // The rule is not vacuous: each spelling of the em dash fails it.
         QVERIFY(hasEmDash(QStringLiteral("Container default \u2014 %1")));
         QVERIFY(hasEmDash(QStringLiteral("Container default \\u2014 %1")));
         QVERIFY(hasEmDash(QStringLiteral("Container default \\x2014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\U00002014 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\xe2\\x80\\x94 %1")));
+        QVERIFY(hasEmDash(QStringLiteral("Container default \\xE2\\x80\\x94 %1")));
         QVERIFY(!hasEmDash(QStringLiteral("Container default: %1")));
         QVERIFY(!hasEmDash(QString(QChar(0x2013))));
 

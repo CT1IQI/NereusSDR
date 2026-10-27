@@ -255,7 +255,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     // Right-aligned "Currently selected" label — Phase H Task 5a.
     // Driven from updateActiveLeds() which mirrors setAlex2HPF/LPF
     // range-match logic (Thetis console.cs:7060-7299) [@501e3f5].
-    // Glyphs built via QChar — \xe2\x80\x94 (em-dash) and \xc2\xb7 (middle
+    // Glyphs built via QChar — \xe2\x80\x93 (en dash) and \xc2\xb7 (middle
     // dot) byte-escapes inside QStringLiteral / tr() get misinterpreted
     // as Latin-1 codepoints on the macOS compile path (ebe9030 docs).
     m_selectedLabel = new QLabel(
