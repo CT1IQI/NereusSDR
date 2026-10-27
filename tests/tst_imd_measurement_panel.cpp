@@ -109,8 +109,10 @@ private slots:
     {
         ImdMeasurementFrame measured;
         measured.status = ImdStatus::Valid;
-        measured.peaks[0] = ImdPeakReading{0, 14199400.0, -22.0f, std::nullopt};
-        measured.peaks[1] = ImdPeakReading{0, 14200600.0, -24.0f, 0.0f};
+        measured.context.firstSampleHz = 14190000.0;
+        measured.context.sampleStepHz = 1.0;
+        measured.peaks[0] = ImdPeakReading{9400, 14199400.0, -22.0f, std::nullopt};
+        measured.peaks[1] = ImdPeakReading{10600, 14200600.0, -24.0f, 0.0f};
         for (auto presentation : {ImdMeasurementPanel::Presentation::Inspector, ImdMeasurementPanel::Presentation::Window}) {
             ImdMeasurementPanel panel;
             panel.setPresentation(presentation);
@@ -140,11 +142,25 @@ private slots:
         expectedOnly.expectedFrequencyHz[1] = 14200600.0;
         panel.setFrame(expectedOnly);
         QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  — kHz"));
-        // Each fundamental truncates to whole Hz first: 1199.1 Hz would read 1.199, Thetis reads 1.200.
-        ImdMeasurementFrame fractional = measured;
-        fractional.peaks[0]->frequencyHz = 14199400.9;
+        // Thetis truncates the edge and each offset, not each whole frequency. Edge
+        // 14190000.6 Hz, offsets 9400.95 and 10600.05 Hz: the Thetis form reads
+        // 10600 - 9400 = 1.200; truncating each whole frequency gives
+        // 14200600 - 14199401 = 1.199, and no truncation 1199.1 = 1.199.
+        ImdMeasurementFrame fractional;
+        fractional.status = ImdStatus::Valid;
+        fractional.context.firstSampleHz = 14190000.6;
+        fractional.context.sampleStepHz = 0.05;
+        fractional.peaks[0] = ImdPeakReading{188019, 14190000.6 + 188019 * 0.05, -22.0f, std::nullopt};
+        fractional.peaks[1] = ImdPeakReading{212001, 14190000.6 + 212001 * 0.05, -24.0f, 0.0f};
         panel.setFrame(fractional);
         QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  1.200 kHz"));
+        // Both tones measured is enough: missing or off-view products keep the reading.
+        for (ImdStatus status : {ImdStatus::ProductsMissing, ImdStatus::ProductsOutsideView}) {
+            ImdMeasurementFrame partial = measured;
+            partial.status = status;
+            panel.setFrame(partial);
+            QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  1.200 kHz"));
+        }
     }
     void inspectorSelectionKeepsItsWrappedHeight()
     {

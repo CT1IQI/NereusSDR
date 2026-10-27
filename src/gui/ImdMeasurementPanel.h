@@ -47,11 +47,12 @@
 
 
 // Ported from Thetis Project Files/Source/Console/display.cs (tone separation readout).
-// no-port-check: NereusSDR-original cached GUI measurement presentation; no analyzer.
 // Modification history (NereusSDR):
 //   2026-10-13: J.J. Boyd (KG4VCF), OpenAI Codex; rail and optional bench inspector.
 //   2026-10-25: J.J. Boyd (KG4VCF), Claude Code; tone separation label paired with
 //               the implementation's "f0 diff" port; upstream notice added.
+//   2026-10-26: J.J. Boyd (KG4VCF), Claude Code; drop the no-port-check
+//               marker now that the pair ports display.cs.
 #include "gui/ImdMeasurementFrame.h"
 #include "gui/NereusGuiExport.h"
 #include <QString>

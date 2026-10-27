@@ -46,13 +46,15 @@
 
 
 // Ported from Thetis Project Files/Source/Console/display.cs (tone separation readout).
-// no-port-check: NereusSDR-original cached GUI measurement presentation; no analyzer.
 // Modification history (NereusSDR):
 //   2026-10-13: J.J. Boyd (KG4VCF), OpenAI Codex; rail and optional bench inspector.
 //   2026-10-25: J.J. Boyd (KG4VCF), Claude Code; tone separation reading from the
 //               measured fundamentals, the Thetis "f0 diff" value and format.
 //   2026-10-25: J.J. Boyd (KG4VCF), Claude Code; each fundamental truncates
 //               to whole Hz before the difference, as Thetis's (long) casts do.
+//   2026-10-26: J.J. Boyd (KG4VCF), Claude Code; whole-Hz edge plus a
+//               truncated offset, as display.cs builds f0l_freq and f0h_freq;
+//               no-port-check marker dropped now that the file ports display.cs.
 #include "gui/ImdMeasurementPanel.h"
 #include "gui/PureSignalViewStyle.h"
 #include <QGridLayout>
@@ -286,10 +288,13 @@ void ImdMeasurementPanel::refresh()
     const auto& upperTone = m_frame.peaks[static_cast<int>(ImdProduct::FundamentalUpper)];
     QString separation = QStringLiteral("—");
     if (lowerTone && upperTone) {
-        // From Thetis display.cs:5569-5575 [v2.10.3.15]: f0l_freq and f0h_freq are whole Hz,
-        // each truncated by its (long) cast before the difference is taken.
-        const qint64 lowerHz = static_cast<qint64>(lowerTone->frequencyHz);
-        const qint64 upperHz = static_cast<qint64>(upperTone->frequencyHz);
+        // Deliberate: shown whenever both tones are measured, while Thetis waits for all six products (display.cs:5560-5562 ok); the inspector shows each measured reading.
+        // From Thetis display.cs:5569-5575 [v2.10.3.15]: a whole-Hz low edge,
+        // (long)(m_dCentreFreqRX1 * 1e6) + left_edge, plus each tone's offset
+        // truncated by (long)(f_X * hz_per_pixel).
+        const qint64 edgeHz = static_cast<qint64>(m_frame.context.firstSampleHz);
+        const qint64 lowerHz = edgeHz + static_cast<qint64>(lowerTone->sampleIndex * m_frame.context.sampleStepHz);
+        const qint64 upperHz = edgeHz + static_cast<qint64>(upperTone->sampleIndex * m_frame.context.sampleStepHz);
         // From Thetis display.cs:5652 [v2.10.3.15]
         const double separationKHz = static_cast<double>(upperHz - lowerHz) / kHzPerKilohertz;
         separation = QString::number(separationKHz, 'f', kToneSeparationDecimals);
