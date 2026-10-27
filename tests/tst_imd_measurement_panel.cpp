@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original GUI contracts and synthetic presentation fixtures.
+// Modification history (NereusSDR):
+//   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QDir>
 #include <QGridLayout>
@@ -97,10 +100,10 @@ private slots:
             frame.status = status;
             panel.setFrame(frame);
             QCOMPARE(textOf(panel, "ImdStatus"), ImdMeasurementPanel::statusText(status));
-            QVERIFY(textOf(panel, "ImdWorstThird").contains(QStringLiteral("—")));
+            QVERIFY(textOf(panel, "ImdWorstThird").contains(QStringLiteral("–")));
             for (int i = 0; i < 6; ++i) {
                 for (int j = 0; j < 3; ++j) {
-                    QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ImdReading%1_%2").arg(i).arg(j))->text(), QStringLiteral("—"));
+                    QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("ImdReading%1_%2").arg(i).arg(j))->text(), QStringLiteral("–"));
                 }
             }
         }
@@ -135,13 +138,13 @@ private slots:
         lowerOnly.status = ImdStatus::FundamentalsUnresolved;
         lowerOnly.peaks[0] = measured.peaks[0];
         panel.setFrame(lowerOnly);
-        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  — kHz"));
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  – kHz"));
         ImdMeasurementFrame expectedOnly;
         expectedOnly.status = ImdStatus::ProductsMissing;
         expectedOnly.expectedFrequencyHz[0] = 14199400.0;
         expectedOnly.expectedFrequencyHz[1] = 14200600.0;
         panel.setFrame(expectedOnly);
-        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  — kHz"));
+        QCOMPARE(textOf(panel, "ImdToneSeparation"), QStringLiteral("Tone separation  – kHz"));
         // Thetis truncates the edge and each offset, not each whole frequency. Edge
         // 14190000.6 Hz, offsets 9400.95 and 10600.05 Hz: the Thetis form reads
         // 10600 - 9400 = 1.200; truncating each whole frequency gives
@@ -433,6 +436,7 @@ private slots:
         }
     }
     void renderedFixtures() {
+        NEREUS_SKIP_WITHOUT_QRHI();
         QFETCH(int, width); QFETCH(bool, modern); QFETCH(int, condition); QFETCH(bool, inspector);
         WorkspacePreview::setEnabledForTest(modern);
         PanadapterApplet pan(QStringLiteral("Synthetic RF fixture · no hardware"));

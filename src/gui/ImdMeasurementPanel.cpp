@@ -261,15 +261,15 @@ void ImdMeasurementPanel::refresh()
     m_enableDuplex->setVisible(m_presentation == Presentation::Rail && duplexRequired && m_displayDuplexAvailable);
     m_status->setStyleSheet(QStringLiteral("color: %1;").arg(WorkspacePreview::statusColour(QColor("#9db6cd"), m_frame.status == ImdStatus::Valid ? "ok" : "warn").name()));
     const QString summaryTemplate = QStringLiteral("<span style='font-size:11px;color:%1'>%2</span><br><span style='font-size:22px;font-weight:600'>%3</span> <span style='font-size:11px'>dBc</span>");
-    m_third->setText(summaryTemplate.arg(PureSignalViewStyle::muted().name(), QStringLiteral("WORST IMD3"), m_frame.summary ? level(-m_frame.summary->worstImd3DBc) : QStringLiteral("—")));
-    m_fifth->setText(summaryTemplate.arg(PureSignalViewStyle::muted().name(), QStringLiteral("WORST IMD5"), m_frame.summary ? level(-m_frame.summary->worstImd5DBc) : QStringLiteral("—")));
+    m_third->setText(summaryTemplate.arg(PureSignalViewStyle::muted().name(), QStringLiteral("WORST IMD3"), m_frame.summary ? level(-m_frame.summary->worstImd3DBc) : QStringLiteral("–")));
+    m_fifth->setText(summaryTemplate.arg(PureSignalViewStyle::muted().name(), QStringLiteral("WORST IMD5"), m_frame.summary ? level(-m_frame.summary->worstImd5DBc) : QStringLiteral("–")));
     for (int index = 0; index < 6; ++index) {
         const QSignalBlocker blocker(m_products[index]);
         m_products[index]->setChecked(index == static_cast<int>(m_selected));
         const auto& peak = m_frame.peaks[index];
-        m_values[index][0]->setText(peak ? level(peak->absoluteDbm) : QStringLiteral("—"));
-        m_values[index][1]->setText(peak && peak->relativeDbc ? level(*peak->relativeDbc) : QStringLiteral("—"));
-        m_values[index][2]->setText(peak ? frequency(peak->frequencyHz) : QStringLiteral("—"));
+        m_values[index][0]->setText(peak ? level(peak->absoluteDbm) : QStringLiteral("–"));
+        m_values[index][1]->setText(peak && peak->relativeDbc ? level(*peak->relativeDbc) : QStringLiteral("–"));
+        m_values[index][2]->setText(peak ? frequency(peak->frequencyHz) : QStringLiteral("–"));
     }
     const int selected = static_cast<int>(m_selected);
     const auto& peak = m_frame.peaks[selected];
@@ -277,16 +277,16 @@ void ImdMeasurementPanel::refresh()
     QString selection = kNames[selected] + QStringLiteral(" · ");
     if (peak) {
         selection += frequency(peak->frequencyHz) + QStringLiteral(" MHz · ") + level(peak->absoluteDbm) + QStringLiteral(" dBm · ")
-            + (peak->relativeDbc ? level(*peak->relativeDbc) : QStringLiteral("—")) + QStringLiteral(" dBc\nMeasured peak");
+            + (peak->relativeDbc ? level(*peak->relativeDbc) : QStringLiteral("–")) + QStringLiteral(" dBc\nMeasured peak");
     } else if (expected) {
-        selection += frequency(*expected) + QStringLiteral(" MHz\nExpected position · unmeasured (— dBm · — dBc)");
-    } else { selection += QStringLiteral("— MHz · — dBm · — dBc\nNo reliable position"); }
+        selection += frequency(*expected) + QStringLiteral(" MHz\nExpected position · unmeasured (– dBm · – dBc)");
+    } else { selection += QStringLiteral("– MHz · – dBm · – dBc\nNo reliable position"); }
     m_selection->setText(selection);
     m_reference->setText(QStringLiteral("Reference\nPer-product dBc: higher fundamental\nWorst IMD: lower fundamental · single tone"));
     // Measured fundamentals only; an expected position never stands in for a peak.
     const auto& lowerTone = m_frame.peaks[static_cast<int>(ImdProduct::FundamentalLower)];
     const auto& upperTone = m_frame.peaks[static_cast<int>(ImdProduct::FundamentalUpper)];
-    QString separation = QStringLiteral("—");
+    QString separation = QStringLiteral("–");
     if (lowerTone && upperTone) {
         // Deliberate: shown whenever both tones are measured, while Thetis waits for all six products (display.cs:5560-5562 ok); the inspector shows each measured reading.
         // From Thetis display.cs:5569-5575 [v2.10.3.15]: a whole-Hz low edge,
@@ -300,7 +300,7 @@ void ImdMeasurementPanel::refresh()
         separation = QString::number(separationKHz, 'f', kToneSeparationDecimals);
     }
     m_toneSeparation->setText(QStringLiteral("Tone separation  %1 kHz").arg(separation));
-    QString diagnostics = QStringLiteral("Derived diagnostics · EMA\nOIP3: — dB    OIP5: — dB");
+    QString diagnostics = QStringLiteral("Derived diagnostics · EMA\nOIP3: – dB    OIP5: – dB");
     if (m_frame.summary) {
         diagnostics = QStringLiteral("Derived diagnostics · EMA\nOIP3: %1 dB    OIP5: %2 dB").arg(level(m_frame.summary->oip3), level(m_frame.summary->oip5));
     }
