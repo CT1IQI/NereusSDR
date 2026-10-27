@@ -88,6 +88,10 @@
 //               event loop, as QTRY_VERIFY does, not the wall clock, so a
 //               process stall on a loaded runner counts once. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: drain()'s settle wait counts turns too and checks once
+//               more after the last; a turn sleeps until an event or its
+//               end instead of spinning; every wait has a 60 s wall cap.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -154,24 +158,46 @@ constexpr int kStationReplyWaitMs = 5000;
 // client's session (it logged "Session established"), and a wait on the
 // wall clock ran out before the next turn could deliver snapshot.complete.
 constexpr int kReplyTurnMs = 10;
+// Whatever the turns count, a wait ends after this much real time, so a
+// station that never replies on a computer where every turn is slow fails
+// with its step's message, not as the test's ctest time-out.
+constexpr int kReplyWallCapMs = 60000;
+
+// One turn of the event loop: kReplyTurnMs of real time, or less once
+// `done` holds. It sleeps until an event arrives or the turn ends, never
+// spinning a core: a wake timer of its own (no parent, so not one of the
+// station's timers that LinkVirtualClock holds) ends the turn. With
+// `deleteLater`, deleteLater() runs after each event batch.
+template <typename Done>
+void runTurn(const Done& done, bool deleteLater)
+{
+    bool ended = false;
+    QTimer wake;
+    wake.setSingleShot(true);
+    wake.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&wake, &QTimer::timeout, &wake, [&ended] { ended = true; });
+    wake.start(kReplyTurnMs);
+    do {
+        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents);
+        if (deleteLater) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+    } while (!ended && !done());
+}
 
 // Turns the event loop until `done` holds; false once kStationReplyWaitMs
-// of turns have passed without it. `done` is read after every turn, the
-// last included. With `deleteLater`, each turn also runs deleteLater().
+// of turns, or kReplyWallCapMs of real time, have passed without it.
+// `done` is read after every turn, the last included.
 template <typename Done>
 bool waitForStation(const Done& done, bool deleteLater)
 {
+    QElapsedTimer wall;
+    wall.start();
     for (int waitedMs = 0; !done(); waitedMs += kReplyTurnMs) {
-        if (waitedMs >= kStationReplyWaitMs) {
+        if (waitedMs >= kStationReplyWaitMs || wall.hasExpired(kReplyWallCapMs)) {
             return false;
         }
-        const QDeadlineTimer turn(kReplyTurnMs);
-        do {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, kReplyTurnMs);
-            if (deleteLater) {
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-            }
-        } while (!done() && !turn.hasExpired());
+        runTurn(done, deleteLater);
     }
     return true;
 }
@@ -380,8 +406,9 @@ std::function<QString(LoopbackTransport*, StationServer&)>& connectClientHook()
     return hook;
 }
 
-// How long drain() waits, in real time, for the control channel to settle
-// in the data-channel mode. A passing fixture settles in milliseconds.
+// How long drain() waits, in turns of the event loop (as kStationReplyWaitMs
+// is counted), for the control channel to settle in the data-channel mode.
+// A passing fixture settles in milliseconds.
 constexpr int kSettleWaitMs = 5000;
 
 void drainQueue()
@@ -407,16 +434,30 @@ void drain()
     if (!settleCheck()) {
         return;
     }
-    const QDeadlineTimer deadline(kSettleWaitMs);
     // Settled twice in a row with the queue drained between: nothing
-    // handled in between sent anything more.
+    // handled in between sent anything more. The wait counts turns of the
+    // event loop, with the same wall cap, as waitForStation() does, and the
+    // check runs once more after the last turn. On the wall clock, a stall
+    // of over 5 s ended it early and silently, with the channel unsettled,
+    // and an advanceMs could then fire the station's timers before the
+    // channel had delivered.
+    const auto check = [] { return settleCheck()(); };
+    QElapsedTimer wall;
+    wall.start();
     int settled = 0;
-    while (settled < 2 && !deadline.hasExpired()) {
-        if (settleCheck()()) {
-            ++settled;
+    int waitedMs = 0;
+    while (true) {
+        if (check()) {
+            if (++settled == 2) {
+                break;
+            }
         } else {
             settled = 0;
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            if (waitedMs >= kSettleWaitMs || wall.hasExpired(kReplyWallCapMs)) {
+                break;
+            }
+            runTurn(check, false);
+            waitedMs += kReplyTurnMs;
         }
         drainQueue();
     }
