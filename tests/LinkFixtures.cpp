@@ -93,9 +93,10 @@
 //               end instead of spinning; every wait has a 60 s wall cap.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: A drain() that ends with the control channel unsettled
-//               fails the session, naming the step it ended in, where it
-//               had ended silently. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               fails the session, naming the step it ended in, the limit
+//               that ran out and what had not settled, where it had ended
+//               silently; the drains after it do not wait. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -397,10 +398,11 @@ QString expectKeys(const QJsonObject& object, const QStringList& required,
     return QString();
 }
 
-// Task 28: the data-channel mode's settle check and client joiner.
-std::function<bool()>& settleCheck()
+// Task 28: the data-channel mode's settle check and client joiner. The
+// check returns empty once settled, otherwise what has not settled.
+std::function<QString()>& settleCheck()
 {
-    static std::function<bool()> check;
+    static std::function<QString()> check;
     return check;
 }
 
@@ -423,6 +425,13 @@ QString& unsettledStep()
 {
     static QString step;
     return step;
+}
+
+// With unsettledStep(): the limit that ran out and what had not settled.
+QString& unsettledWhy()
+{
+    static QString why;
+    return why;
 }
 
 // How long drain() waits, in turns of the event loop (as kStationReplyWaitMs
@@ -450,7 +459,10 @@ void drainQueue()
 void drain()
 {
     drainQueue();
-    if (!settleCheck()) {
+    // Once a drain has ended unsettled the session fails at the next step;
+    // until then (an advanceMs drains at every timer it fires) the drains
+    // after it run the queue but do not wait again.
+    if (!settleCheck() || !unsettledStep().isEmpty()) {
         return;
     }
     // Settled twice in a row with the queue drained between: nothing
@@ -460,7 +472,7 @@ void drain()
     // of over 5 s ended it early and silently, with the channel unsettled,
     // and an advanceMs could then fire the station's timers before the
     // channel had delivered.
-    const auto check = [] { return settleCheck()(); };
+    const auto check = [] { return settleCheck()().isEmpty(); };
     QElapsedTimer wall;
     wall.start();
     int settled = 0;
@@ -483,8 +495,17 @@ void drain()
     // Unsettled at the end (the last check failed, after the last turn):
     // the steps after it would run against a channel that has not
     // delivered, so the session fails with this step.
-    if (settled < 2 && unsettledStep().isEmpty()) {
+    if (settled < 2) {
         unsettledStep() = currentStep();
+        unsettledWhy() =
+            (waitedMs >= kSettleWaitMs
+                 ? QStringLiteral("after %1 ms of turns (%2 ms of real time)")
+                       .arg(waitedMs)
+                       .arg(wall.elapsed())
+                 : QStringLiteral("after %1 ms of real time (%2 ms of turns)")
+                       .arg(wall.elapsed())
+                       .arg(waitedMs))
+            + QStringLiteral(": ") + settleCheck()();
     }
 }
 
@@ -1405,9 +1426,9 @@ struct PlayedClient {
 
 } // namespace
 
-void LinkFixtures::setSettleCheck(std::function<bool()> settled)
+void LinkFixtures::setSettleCheck(std::function<QString()> unsettled)
 {
-    settleCheck() = std::move(settled);
+    settleCheck() = std::move(unsettled);
 }
 
 void LinkFixtures::setConnectClient(
@@ -2152,6 +2173,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
 {
     currentStep() = QStringLiteral("before the first step");
     unsettledStep().clear();
+    unsettledWhy().clear();
     const QString failure = playSession(fixture, server, transport);
     if (unsettledStep().isEmpty()) {
         return failure;
@@ -2160,12 +2182,8 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
     // most kReplyWallCapMs of real time) for each end to have handled
     // everything the other sent; one that ran out ended silently before,
     // and the steps after it ran against a channel that had not delivered.
-    QString message = QStringLiteral("%1: the control data channel had not settled after "
-                                     "%2 ms of turns or %3 ms of real time (an end had not "
-                                     "handled everything the other sent)")
-                          .arg(unsettledStep())
-                          .arg(kSettleWaitMs)
-                          .arg(kReplyWallCapMs);
+    QString message = QStringLiteral("%1: the control data channel had not settled %2")
+                          .arg(unsettledStep(), unsettledWhy());
     if (!failure.isEmpty()) {
         message += QStringLiteral("; then %1").arg(failure);
     }

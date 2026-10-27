@@ -75,8 +75,8 @@
 //               Claude Code.
 //   2026-10-27: runSession() fails, naming the step, when a drain ends
 //               with the control channel unsettled (playSession() plays
-//               the steps). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               the steps); setSettleCheck() takes what has not settled.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -216,9 +216,10 @@ public:
 
     /// iPhone app plan Task 28: set by the session runner's data-channel
     /// mode. drain() and every wait for the station also wait, in real
-    /// time, until this returns true (both ends of the control channel have
-    /// handled everything the other sent). Unset: no wait.
-    static void setSettleCheck(std::function<bool()> settled);
+    /// time, until this returns empty (both ends of the control channel
+    /// have handled everything the other sent); otherwise it says what has
+    /// not settled, which a drain that ran out reports. Unset: no wait.
+    static void setSettleCheck(std::function<QString()> unsettled);
     /// Also for the data-channel mode: how a client the player adds
     /// (stationSetup.otherClients' {"connect"} step) is joined to the
     /// station. Unset: a LoopbackTransport pair, as always. Returns empty
