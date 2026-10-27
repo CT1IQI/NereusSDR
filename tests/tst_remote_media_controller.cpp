@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-27  J.J. Boyd / KG4VCF  Load finding from PR 692's CI:
+//                                    repeatedAudioRestartsBackOff checks
+//                                    every request from the connection's
+//                                    first against its backoff step, so a
+//                                    restart before playback began (first
+//                                    packets late under load) no longer
+//                                    shifts the steps it expects, and waits
+//                                    for each request on its own step.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  Load findings from PR 654's CI.
 //                                    PacedRemoteAudio's speaker plays on the
 //                                    steady clock, as hardware does, not on
@@ -12727,6 +12736,12 @@ private slots:
     // ends with no packets and asks again: 1 s after the first request
     // (already past), then 2 s, then 4 s, then 4 s again, each counted from
     // the request before. The operator's Retry starts the count over.
+    // Load finding, 2026-10-27: the steps count from the connection's first
+    // request, not from playback. A context whose first packets come more
+    // than 500 ms late (a loaded computer) asks again before playback
+    // begins and takes the 1 s step, so the outage starts on the 2 s step.
+    // The case checks every request against its own step and waits for
+    // each on that step.
     void repeatedAudioRestartsBackOff()
     {
         using State = RemoteAudioStatus::State;
@@ -12753,35 +12768,81 @@ private slots:
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
+        // Requests before this one restarted contexts that never played.
         const qsizetype before = requestMs.size();
+        QVERIFY2(before >= 1, "no request for audio");
         const QString connectionId = remoteMedia.mediaConnectionId();
+        // What the failures show: every request's time, where the outage
+        // began, and where the window stands.
+        const auto evidence = [&] {
+            QStringList parts;
+            for (qint64 ms : requestMs) {
+                parts << QString::number(ms);
+            }
+            return QStringLiteral("requests at %1 ms (the outage from request %2); now %3 ms, "
+                                  "state %4, connection %5")
+                .arg(parts.join(QStringLiteral(", ")))
+                .arg(before)
+                .arg(clock.elapsed())
+                .arg(int(remoteMedia.audioStatus().state))
+                .arg(remoteMedia.mediaConnectionId() == connectionId
+                         ? QStringLiteral("unchanged")
+                         : QStringLiteral("changed"))
+                .toUtf8();
+        };
+        // Request k after the connection's first (k from 1) waits the k-th
+        // step: 1 s, 2 s, then 4 s from then on.
+        const auto stepMs = [](qsizetype k) -> int {
+            return k == 1 ? 1000 : k == 2 ? 2000 : 4000;
+        };
+        // The bound under which each step's request comes, to tell it from
+        // the next step (as before: 3.5 s for the 2 s step, 6 s for 4 s).
+        const auto boundMs = [](int step) { return step < 4000 ? 3500 : 6000; };
+        // The receiver notices a playing context's outage after 2.5 s
+        // without packets, and a new context with no packets after 500 ms.
+        constexpr int kOutageNoticedMs =
+            int(RemoteAudioReceiver::kNoPacketsRestartNs / 1'000'000);
+        constexpr int kNewContextNoticedMs =
+            int(RemoteAudioReceiver::kNoPacketsBeforePlayNs / 1'000'000);
+        // How much later than due each request may come. Counted in QTRY's
+        // turns, so time this thread is not scheduled does not use it up.
+        constexpr int kLateMs = 5000;
 
         // The Core has no audio to send from here on; its display goes on.
         display.timer.start();
         audio.source.stop();
-        QTRY_VERIFY_WITH_TIMEOUT(requestMs.size() >= before + 4, 15000);
-        QList<qint64> waits;
-        for (qsizetype i = before + 1; i < before + 4; ++i) {
-            waits << requestMs.at(i) - requestMs.at(i - 1);
+        // The outage's first request, then three steps after it, and at
+        // least to the second 4 s step.
+        const qsizetype last = std::max<qsizetype>(before + 3, 4);
+        for (qsizetype k = before; k <= last; ++k) {
+            const int dueMs = k == before ? std::max(kOutageNoticedMs, stepMs(k))
+                                          : std::max(kNewContextNoticedMs, stepMs(k));
+            QTRY_VERIFY2_WITH_TIMEOUT(requestMs.size() > k, evidence().constData(),
+                                      dueMs + kLateMs);
         }
-        const QString evidence = QStringLiteral("waits between requests: %1 ms").arg(
-            [&] { QStringList parts; for (qint64 w : waits) parts << QString::number(w);
-                  return parts.join(QStringLiteral(", ")); }());
-        qInfo().noquote() << evidence;
-        // 2 s, 4 s, 4 s, each from the request before. Never sooner (the
+        qInfo().noquote() << evidence();
+        // Each request its step after the one before. Never sooner (the
         // retry timers are Qt::PreciseTimer, which does not fire early; a
         // coarse one may, by up to 5%); a loaded machine may be later, so
-        // the upper bounds only tell the steps apart.
-        QVERIFY2(waits.at(0) >= 1990 && waits.at(0) < 3500, qPrintable(evidence));
-        QVERIFY2(waits.at(1) >= 3990 && waits.at(1) < 6000, qPrintable(evidence));
-        QVERIFY2(waits.at(2) >= 3990 && waits.at(2) < 6000, qPrintable(evidence));
+        // the upper bounds only tell the steps apart. The outage's first
+        // request comes when the outage is noticed, so it has no upper
+        // bound.
+        for (qsizetype k = 1; k <= last; ++k) {
+            const qint64 waited = requestMs.at(k) - requestMs.at(k - 1);
+            const int step = stepMs(k);
+            QVERIFY2(waited >= step - 10, evidence().constData());
+            if (k != before) {
+                QVERIFY2(waited < boundMs(step), evidence().constData());
+            }
+        }
 
         // Retry starts over: the next automatic retry is 1 s out again.
         const qsizetype beforeRetry = requestMs.size();
         remoteMedia.retryAudio();
-        QTRY_VERIFY_WITH_TIMEOUT(requestMs.size() >= beforeRetry + 2, 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(requestMs.size() >= beforeRetry + 2, evidence().constData(),
+                                  stepMs(1) + kLateMs);
         const qint64 afterRetry = requestMs.at(beforeRetry + 1) - requestMs.at(beforeRetry);
-        QVERIFY2(afterRetry >= 990 && afterRetry < 3500, qPrintable(QString::number(afterRetry)));
+        QVERIFY2(afterRetry >= 990 && afterRetry < 3500, evidence().constData());
         // Audio and display stayed on the connection they started on.
         QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
 
