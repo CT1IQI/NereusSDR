@@ -13718,8 +13718,8 @@ private slots:
             auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
             QVERIFY(choice);
             QCOMPARE(choice->count(), 3);
-            QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
-            QCOMPARE(choice->itemText(1), QStringLiteral("Save data — 24 kbps"));
+            QCOMPARE(choice->itemText(0), QStringLiteral("High (48 kbps)"));
+            QCOMPARE(choice->itemText(1), QStringLiteral("Save data (24 kbps)"));
             QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
             QCOMPARE(choice->currentIndex(), fixture.second);
         }
@@ -14437,9 +14437,9 @@ private slots:
         auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
         QVERIFY(choice && details);
         QCOMPARE(choice->count(), 3);
-        QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
+        QCOMPARE(choice->itemText(0), QStringLiteral("High (48 kbps)"));
         QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
-        QCOMPARE(choice->currentText(), QStringLiteral("High — 48 kbps"));
+        QCOMPARE(choice->currentText(), QStringLiteral("High (48 kbps)"));
         QVERIFY(details->text().contains(QStringLiteral("Current receive format: Opus")));
 
         choice->setCurrentIndex(2);
