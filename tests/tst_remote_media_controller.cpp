@@ -7,7 +7,10 @@
 //                                    it whenever that thread went
 //                                    unscheduled, and its source feeds what
 //                                    that clock has reached, so the two keep
-//                                    one rate. displayRidesAStall...: the
+//                                    one rate (ClockedSource, ClockedDevice;
+//                                    the speaker format case and the three
+//                                    headphones cases use them too).
+//                                    displayRidesAStall...: the
 //                                    fake Core stamps t1 and t2 as a real
 //                                    one does, and the delay is checked
 //                                    against the round trip the test
@@ -746,63 +749,98 @@ QByteArray asACoreThatNamesNoReceiverHolderSends(const QByteArray& wire)
     return QJsonDocument(message).toJson(QJsonDocument::Compact);
 }
 
-// The station's two-slice tone and this computer's speaker, both on the
-// steady clock, as a radio and a sound card run.
+// The fake radio and this computer's fake devices run on one steady clock,
+// as a radio and a sound card run.
 //
-// They ran on this thread's 10 ms timers, a block per tick, and a speaker
+// They ran on this thread's 10 ms timers, a block per tick, and a device
 // that only consumed when its timer rendered stopped whenever this thread
 // was not scheduled: a CI runner left it unscheduled for over 900 ms while
 // the receiver's worker ran on, and the receiver saw a device that took
 // nothing for 500 ms and reported, rightly, "Speaker device stopped
 // consuming audio". A real device's callback does not wait for the GUI
-// thread. So the speaker has a play clock: it takes its queue a callback
-// at a time as the clock passes and reports that as consumed, and its timer
-// only moves what has played into `heard`. The source feeds every block the
-// clock has reached since it started, so the two keep one rate: a source
-// that lost the ticks a busy thread missed would run short of a speaker on
+// thread. So a device has a play clock (ClockedDevice): it takes its queue
+// a callback at a time as the clock passes, at the rate it was opened at,
+// and reports that as consumed, and its timer only moves what has played
+// into `heard`. The source (ClockedSource) feeds every block the clock has
+// reached since it started, so source and devices keep one rate: a source
+// that lost the ticks a busy thread missed would run short of a device on
 // the clock and underflow the receiver's rate matcher. A stall of this
 // thread reaches the window as a stalled link, then a burst, which it rides.
 // source.stop() and start() still leave a gap: the Core sends nothing
 // meanwhile, and start() counts afresh.
-struct PacedRemoteAudio {
-    struct Source {
-        QTimer timer;
-        QElapsedTimer clock;
-        qint64 fedFrames = 0;
-        void start()
-        {
-            clock.start();
-            fedFrames = 0;
-            timer.start();
-        }
-        void stop() { timer.stop(); }
-    };
-    Source source;
-    QTimer speaker;
+qint64 steadyClockNs()
+{
+    return qint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count());
+}
 
-    explicit PacedRemoteAudio(Test::RemoteAudioSessionHarness& h)
+// A fake device on the steady clock: the harness's bus pointer, read on
+// each tick, so a bus a test replaces (attachRemoteHeadphones() again) is
+// the one played. A bus not yet on the clock (origin 0) is put on it before
+// anything renders it. The clock is a plain function, so a bus, which
+// outlives this object, can read it from the receiver's worker thread.
+struct ClockedDevice {
+    QTimer timer;
+    explicit ClockedDevice(PacedAudioBus* const* bus)
     {
-        constexpr int kFrames = Test::RemoteAudioSessionHarness::kFrames;
-        source.timer.setInterval(10);
-        source.timer.setTimerType(Qt::PreciseTimer);
-        QObject::connect(&source.timer, &QTimer::timeout, &source.timer, [this, &h] {
-            while (source.fedFrames + kFrames <= source.clock.nsecsElapsed() * 48 / 1'000'000) {
+        const auto onTheClock = [](PacedAudioBus* device) {
+            if (device != nullptr && device->playClockOriginNs() == 0) {
+                device->setPlayClockForTesting(&steadyClockNs);
+            }
+            return device;
+        };
+        onTheClock(*bus);
+        timer.setInterval(10);
+        timer.setTimerType(Qt::PreciseTimer);
+        QObject::connect(&timer, &QTimer::timeout, &timer, [bus, onTheClock] {
+            if (PacedAudioBus* device = onTheClock(*bus)) { device->renderDue(); }
+        });
+        timer.start();
+    }
+    void stop() { timer.stop(); }
+};
+
+// The station's two-slice tone, every block the steady clock has reached
+// since start(). Not started on construction.
+struct ClockedSource {
+    // The station's audio rate: feedMixedTone's blocks are 48 kHz.
+    static constexpr qint64 kStationRateHz = 48000;
+    QTimer timer;
+    qint64 startedNs = 0;
+    qint64 fedFrames = 0;
+    explicit ClockedSource(Test::RemoteAudioSessionHarness& h)
+    {
+        constexpr qint64 kFrames = Test::RemoteAudioSessionHarness::kFrames;
+        timer.setInterval(10);
+        timer.setTimerType(Qt::PreciseTimer);
+        QObject::connect(&timer, &QTimer::timeout, &timer, [this, &h] {
+            const qint64 dueFrames =
+                (steadyClockNs() - startedNs) * kStationRateHz / 1'000'000'000;
+            while (fedFrames + kFrames <= dueFrames) {
                 h.feedMixedTone();
-                source.fedFrames += kFrames;
+                fedFrames += kFrames;
             }
         });
-        // Captures nothing: the bus outlives this object and its receiver
-        // reads the clock on its worker thread.
-        h.remoteBus->setPlayClockForTesting([] {
-            return qint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              std::chrono::steady_clock::now().time_since_epoch())
-                              .count());
-        });
-        speaker.setInterval(10);
-        speaker.setTimerType(Qt::PreciseTimer);
-        QObject::connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->renderDue(); });
+    }
+    void start()
+    {
+        startedNs = steadyClockNs();
+        fedFrames = 0;
+        timer.start();
+    }
+    void stop() { timer.stop(); }
+};
+
+// The station's tone and this computer's speaker, both on the steady clock.
+struct PacedRemoteAudio {
+    ClockedSource source;
+    ClockedDevice speaker;
+
+    explicit PacedRemoteAudio(Test::RemoteAudioSessionHarness& h)
+        : source(h), speaker(&h.remoteBus)
+    {
         source.start();
-        speaker.start();
     }
     void stop()
     {
@@ -8186,25 +8224,52 @@ private slots:
         //    The Core's clock is the window's own plus 10 s. Every receiver
         //    built without a clock reads one steady clock, counted from the
         //    process's first read, so this one (never started) reads the
-        //    clock the window stamps t0 and t3 on.
+        //    clock the window stamps t0 and t3 on. The probe's t0 is checked
+        //    between two readings of it, so a different clock fails either
+        //    way.
         constexpr qint64 kCoreAheadNs = 10'000'000'000;
         const RemoteAudioReceiver windowClock(static_cast<AudioEngine*>(nullptr));
         const auto coreNow = [&] { return windowClock.nowNs() + kCoreAheadNs; };
+        // The window clock just after each probe left, by probe id. The
+        // window reads t0 and sends in one call, and a probe goes only after
+        // the one before it has gone, so probe k's t0 lies between the
+        // readings after probes k - 1 and k.
+        QHash<qint64, qint64> probeSentBy;
+        const QMetaObject::Connection probeSends = connect(
+            clientLink, &Test::LoopbackTransport::outboundText, clientLink,
+            [&](const QByteArray& wire) {
+                SessionMessage message;
+                if (SessionMessages::decode(wire, &message)
+                    && message.kind == SessionMessageKind::MediaControl
+                    && message.mediaPayload.value(QStringLiteral("op"))
+                        == QStringLiteral("clock-probe")) {
+                    probeSentBy.insert(
+                        message.mediaPayload.value(QStringLiteral("id")).toInteger(),
+                        windowClock.nowNs());
+                }
+            });
         QJsonObject probe;
         qint64 t1 = -1;
         const QMetaObject::Connection probeArrival = connect(
             &server, &StationServer::mediaControlReceived, &server,
             [&](const QJsonObject& payload, quint64) {
                 if (probe.isEmpty()
-                    && payload.value(QStringLiteral("op")) == QStringLiteral("clock-probe")) {
+                    && payload.value(QStringLiteral("op")) == QStringLiteral("clock-probe")
+                    && probeSentBy.contains(
+                        payload.value(QStringLiteral("id")).toInteger() - 1)) {
                     t1 = coreNow();
                     probe = payload;
                 }
             });
-        QTRY_VERIFY_WITH_TIMEOUT(!probe.isEmpty(), 3000);
+        // Two probes, a second apart (kClockProbeIntervalMs).
+        QTRY_VERIFY_WITH_TIMEOUT(!probe.isEmpty(), 5000);
         disconnect(probeArrival);
+        disconnect(probeSends);
         const qint64 t0 = probe.value(QStringLiteral("t0")).toInteger();
-        QVERIFY2(t1 - kCoreAheadNs >= t0, "the window's clock is not the one read here");
+        const qint64 probeId = probe.value(QStringLiteral("id")).toInteger();
+        QVERIFY(probeSentBy.contains(probeId));
+        QVERIFY2(probeSentBy.value(probeId - 1) <= t0 && t0 <= probeSentBy.value(probeId),
+                 "the window's clock is not the one read here");
         // Read just after the window takes the echo and its t3: the window
         // made its connection when it was built, so its slot runs first.
         qint64 echoTakenNs = -1;
@@ -12093,16 +12158,11 @@ private slots:
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
         DaemonMediaController daemonMedia(&h.server, &h.station);
         QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
-        QTimer source;
-        source.setInterval(10);
-        source.setTimerType(Qt::PreciseTimer);
-        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
-        QTimer speaker; // 10 ms of the speaker's own rate at a time
-        speaker.setInterval(10);
-        speaker.setTimerType(Qt::PreciseTimer);
-        connect(&speaker, &QTimer::timeout, &speaker, [&h, rate] { h.remoteBus->render(rate / 100); });
+        // Both on the steady clock; the speaker plays at the rate it was
+        // opened at.
+        ClockedSource source(h);
+        ClockedDevice speaker(&h.remoteBus);
         source.start();
-        speaker.start();
         h.connectSession();
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
                                   h.mediaStage(remoteMedia).constData(),
@@ -12859,13 +12919,7 @@ private slots:
         const int sliceA = h.sliceA;
         const auto release = qScopeGuard([&] { remoteMedia.releaseReceiverAudio(sliceA, &app); });
         PacedRemoteAudio audio(h);
-        QTimer headphones;
-        headphones.setInterval(10);
-        headphones.setTimerType(Qt::PreciseTimer);
-        connect(&headphones, &QTimer::timeout, &headphones, [&h] {
-            h.remoteHeadphonesBus->render(Test::RemoteAudioSessionHarness::kFrames);
-        });
-        headphones.start();
+        ClockedDevice headphones(&h.remoteHeadphonesBus);
         h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
         h.connectSession();
         QVERIFY(h.client.capabilities().txStateVersion >= 1);
@@ -14442,13 +14496,7 @@ private slots:
             remoteMedia.findChild<QTimer*>(QStringLiteral("remoteAudioLinkTrialTimer"));
         QVERIFY(trialTimer);
         PacedRemoteAudio audio(h);
-        QTimer headphones;
-        headphones.setInterval(10);
-        headphones.setTimerType(Qt::PreciseTimer);
-        connect(&headphones, &QTimer::timeout, &headphones, [&h] {
-            h.remoteHeadphonesBus->render(Test::RemoteAudioSessionHarness::kFrames);
-        });
-        headphones.start();
+        ClockedDevice headphones(&h.remoteHeadphonesBus);
         h.remote.audioEngine()->setMasterMuted(true);
         h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
         h.connectSession();
@@ -14505,13 +14553,7 @@ private slots:
         QSignalSpy problems(&remoteMedia, &RemoteMediaController::headphonesProblemChanged);
         QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
         PacedRemoteAudio audio(h);
-        QTimer headphones;
-        headphones.setInterval(10);
-        headphones.setTimerType(Qt::PreciseTimer);
-        connect(&headphones, &QTimer::timeout, &headphones, [&h] {
-            h.remoteHeadphonesBus->render(Test::RemoteAudioSessionHarness::kFrames);
-        });
-        headphones.start();
+        ClockedDevice headphones(&h.remoteHeadphonesBus);
         h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
         h.connectSession();
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state
