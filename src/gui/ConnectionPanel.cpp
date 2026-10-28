@@ -1592,7 +1592,7 @@ void ConnectionPanel::updateDetailPanel()
         default:                         protoStr = QStringLiteral("Unknown"); break;
     }
     m_detailProtoLabel->setText(QStringLiteral("Protocol: %1").arg(protoStr));
-    m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareVersion));
+    m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareText()));
     QString ifaceStr;
     switch (info.iface) {
         case IfaceVersion::IP:   ifaceStr = QStringLiteral("UDP/IP");  break;

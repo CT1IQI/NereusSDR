@@ -1,4 +1,3 @@
-#pragma once
 
 // =================================================================
 // src/core/G2XdmaRadioConnection.h  (NereusSDR)

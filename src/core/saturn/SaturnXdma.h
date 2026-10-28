@@ -51,8 +51,6 @@
 
 #ifndef SATURNXDMA_H
 #define SATURNXDMA_H
-#ifndef SATURNXDMA_H
-#define SATURNXDMA_H
 /* 2026 -  Martinus Stroomer, CT1IQI
  * This source code supports use of the xdma interface on a Saturn board,
  * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
