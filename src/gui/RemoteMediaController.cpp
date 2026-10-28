@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-27: passive audioRestartTimingForTest captures the exact retry
+//               scheduling inputs and selected delay. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
 //               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -1866,6 +1869,8 @@ struct RemoteMediaController::Private {
     std::vector<std::function<void()>> heldAudioRestartSteps;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
+    // Last scheduling decision only; reading never changes retry state.
+    RemoteMediaController::AudioRestartTimingForTest audioRestartTimingForTest;
     // R-R3-51: the speakers' receiver ran out of packets while the Core
     // transmits (it sends the keying device no receive audio), so it was
     // stopped and nothing was asked for; the end of the Core's transmit
@@ -5015,6 +5020,14 @@ bool RemoteMediaController::audioRestartPendingForTest() const
     return d->audioRetryPending;
 }
 
+RemoteMediaController::AudioRestartTimingForTest
+RemoteMediaController::audioRestartTimingForTest() const
+{
+    AudioRestartTimingForTest timing = d->audioRestartTimingForTest;
+    timing.requestMs = d->lastAudioRequestMs;
+    return timing;
+}
+
 void RemoteMediaController::setSpeakerDeviceListWaitForTest(qint64 ms)
 {
     d->speakerDeviceListWaitMs = ms;
@@ -6911,8 +6924,13 @@ void RemoteMediaController::scheduleAudioRetry()
     d->audioRetryPending = true;
     const quint64 generation = d->audioRetryGeneration;
     const quint32 revision = d->audioRevision;
-    const int delay = int(d->audioRestartBackoff.nextDelayMs(d->clock.elapsed(),
-                                                             d->lastAudioRequestMs));
+    const qint64 scheduledAtMs = d->clock.elapsed();
+    const qint64 scheduledFromRequestMs = d->lastAudioRequestMs;
+    const int delay = int(d->audioRestartBackoff.nextDelayMs(scheduledAtMs,
+                                                           scheduledFromRequestMs));
+    d->audioRestartTimingForTest = {scheduledFromRequestMs, scheduledAtMs,
+                                   scheduledFromRequestMs, delay,
+                                   d->audioRestartBackoff.streak(), revision};
     const auto step = [this, generation, revision] {
         if (generation != d->audioRetryGeneration
             || revision != d->audioRevision) { return; }
